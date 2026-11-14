@@ -267,7 +267,7 @@ test("invalid session ids are rejected; the pool has 6 slots: a 7th command wait
     }
     // No free slot: the 7th waits for the whole wait, then errors.
     const t0 = Date.now();
-    expect(await call(editor, "s6", "open", { url: `${site}/me` })).toEqual({ error: "too many parallel browser sessions" });
+    expect(await call(editor, "s6", "open", { url: `${site}/me` })).toEqual({ error: expect.stringContaining("too many parallel browser sessions") });
     expect(Date.now() - t0).toBeGreaterThanOrEqual(700);
     // An existing session still works at the cap.
     expect((await call(editor, "s1", "read")).error).toBeUndefined();

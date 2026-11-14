@@ -198,7 +198,16 @@ describe("browse_agent isolated QA run", () => {
     expect(loop.reset).toHaveBeenCalledWith("chat-1");
   });
 
-  it("a non-QA run keeps the shared bridge even when isolation exists", async () => {
+  it("a non-QA run is isolated too and its session is closed", async () => {
+    await browseAgent({ goal: "g", url: "https://a.test" }, ctx);
+    expect(iso.open).toHaveBeenCalled();
+    expect(shared.open).not.toHaveBeenCalled();
+    expect(isolated).toHaveBeenCalledTimes(1);
+    expect(closeSession).toHaveBeenCalledWith(runId());
+  });
+
+  it("a non-QA run on a shell without isolation keeps the shared bridge", async () => {
+    install(false);
     await browseAgent({ goal: "g", url: "https://a.test" }, ctx);
     expect(shared.open).toHaveBeenCalled();
     expect(isolated).not.toHaveBeenCalled();
@@ -298,11 +307,12 @@ describe("browse_agent isolated QA run", () => {
       });
     });
 
-    it("resuming an isolated checkpoint in a shared run fails with a fixed error", async () => {
+    it("resuming an isolated checkpoint in a shared run (shell without isolation) fails with a fixed error", async () => {
+      install(false);
       useBrowseCheckpointStore.getState().add("chat-1", { fixture: CAPTURED as never, complete: true, summary: "s", isolated: true });
       const out = JSON.parse(await browseAgent({ goal: "g", resume: "cp_1" }, ctx));
       expect(out).toMatchObject({ status: "setup_failed", setupStage: "validate" });
-      expect(out.error).toContain("checkpoint cp_1 was recorded in an isolated QA run and can be resumed only by another QA run (qa: true); for a plain task, start again with url or setup");
+      expect(out.error).toContain("checkpoint cp_1 was recorded in an isolated browser session and can be resumed only by a run that has one; start again with url or setup");
       expect(shared.applyFixture).not.toHaveBeenCalled();
       expect(isolated).not.toHaveBeenCalled();
     });
@@ -432,5 +442,62 @@ describe("browse_agent isolated QA run", () => {
         vi.useRealTimers();
       }
     });
+  });
+});
+
+describe("browse_agent parallel sessions (every call is isolated)", () => {
+  it("two non-QA calls started together get distinct isolated sessions and run concurrently", async () => {
+    // The nested chat of each run answers only once BOTH sessions exist: a serial implementation would deadlock here.
+    let openGate: () => void = () => {};
+    const bothStarted = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      if (isolated.mock.calls.length >= 2) openGate();
+      await bothStarted;
+      return textTurn("ok");
+    }));
+    const results = await Promise.all([
+      browseAgent({ goal: "g1", url: "https://a.test" }, { sessionId: "chat-1", toolCallId: "p1" }),
+      browseAgent({ goal: "g2", url: "https://b.test" }, { sessionId: "chat-1", toolCallId: "p2" }),
+    ]);
+    expect(results.map((r) => JSON.parse(r).status)).not.toContain("error");
+    const ids = isolated.mock.calls.map((c) => c[0] as string);
+    expect(new Set(ids).size).toBe(2);
+    expect(shared.open).not.toHaveBeenCalled();
+    expect(closeSession.mock.calls.map((c) => c[0]).sort()).toEqual([...ids].sort());
+  });
+
+  it("closes the session of a non-QA call when the run throws", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
+    await browseAgent({ goal: "g", url: "https://a.test" }, ctx);
+    expect(closeSession).toHaveBeenCalledWith(runId());
+  });
+
+  it("closes the session of a non-QA call when it is aborted mid-run", async () => {
+    let release: () => void = () => {};
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((r) => { release = () => r(textTurn("late")); })));
+    const ac = new AbortController();
+    const run = browseAgent({ goal: "g", url: "https://a.test" }, { ...ctx, signal: ac.signal });
+    await vi.waitFor(() => expect(iso.open).toHaveBeenCalled());
+    ac.abort();
+    release();
+    expect(JSON.parse(await run).status).toBe("aborted");
+    expect(closeSession).toHaveBeenCalledWith(runId());
+  });
+
+  it("still closes the session and frees the slot when closeSession itself rejects", async () => {
+    closeSession.mockRejectedValueOnce(new Error("ipc gone"));
+    await browseAgent({ goal: "g", url: "https://a.test" }, ctx);
+    expect(browseRunCounts().active).toBe(0);
+  });
+
+  it("a shell session-pool error reaches the model as the run's open error and the session is still closed", async () => {
+    const poolError = { error: "too many parallel browser sessions: all browser slots stayed busy for 60 s" };
+    iso.open.mockResolvedValue(poolError as never);
+    iso.snapshot.mockResolvedValue(poolError as never);
+    const out = await browseAgent({ goal: "g", url: "https://a.test" }, ctx);
+    expect(typeof out).toBe("string");
+    expect(closeSession).toHaveBeenCalledWith(runId());
   });
 });

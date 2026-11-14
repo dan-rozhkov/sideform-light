@@ -50,7 +50,7 @@ import { createChatTransport, CLIENT_CAPABILITIES } from "@/lib/chatTransport";
 import type { ToolHandler } from "../../toolRegistry";
 import { CLOSE_SESSION_TIMEOUT_MS, closeBrowserSession, getBrowserBridge, type BrowserBridge } from "./bridge";
 import { peBase } from "./shared";
-import { isIsolatedQaCall, rememberRunSession, runSessionId } from "./isolation";
+import { isIsolatedBrowseCall, rememberRunSession, runSessionId } from "./isolation";
 import { acquireBrowseSlot } from "@/lib/browseRunLimiter";
 import { tracesForAllRuns } from "@/lib/browseTracePref";
 import { canSaveBrowseTrace, saveBrowseTrace } from "@/lib/browseTraces";
@@ -437,7 +437,7 @@ const runWithCleanup = async (
   outerEnd: number,
   judgeSignal: AbortSignal,
 ): Promise<RunOutcome> => {
-  if (!isIsolatedQaCall(args)) return runBrowseAgent(args, context, undefined, undefined, outerEnd, judgeSignal);
+  if (!isIsolatedBrowseCall(args)) return runBrowseAgent(args, context, undefined, undefined, outerEnd, judgeSignal);
   const waitStart = Date.now();
   const slot = await acquireBrowseSlot(context?.signal ?? new AbortController().signal);
   if (!slot) return JSON.stringify({ status: "aborted", steps: 0 });
@@ -727,7 +727,7 @@ const runBrowseAgentBody = async (
   const checkpointChat = parentSessionId;
   // An isolated run has its own browser and journal: its session id is the key,
   // so parallel isolated runs each record.
-  const recordingKey = (qaOn ? runSession : undefined) ?? DESKTOP_RECORDING_KEY;
+  const recordingKey = runSession ?? DESKTOP_RECORDING_KEY;
 
   // Checkpoint (spec 2026-10-16-checkpoint-design.md): the package's
   // createRunCheckpoint owns the lifecycle (bounded start, capture conditions,
@@ -773,7 +773,7 @@ const runBrowseAgentBody = async (
       useBrowseCheckpointStore.getState().add(checkpointChat, {
         fixture: taken.fixture,
         // Holds the test account's cookies: resumable only in an isolated run.
-        ...(qaOn && runSession ? { isolated: true as const } : {}),
+        ...(runSession ? { isolated: true as const } : {}),
         ...(network && network.length > 0 ? { network } : {}),
         complete: taken.complete,
         ...(taken.gap !== undefined ? { gap: taken.gap } : {}),
@@ -944,10 +944,10 @@ const runBrowseAgentBody = async (
           ok: false,
           error: `checkpoint ${resumeId} not found — older checkpoints are dropped when newer ones arrive, and all checkpoints are lost when the editor reloads; start again with url or setup`,
         };
-      } else if (entry.isolated && !(qaOn && runSession)) {
+      } else if (entry.isolated && !runSession) {
         parsed = {
           ok: false,
-          error: `checkpoint ${resumeId} was recorded in an isolated QA run and can be resumed only by another QA run (qa: true); for a plain task, start again with url or setup`,
+          error: `checkpoint ${resumeId} was recorded in an isolated browser session and can be resumed only by a run that has one; start again with url or setup`,
         };
       } else {
         parsed = parsePageFixture({ ...entry.fixture, ...(entry.network ? { network: entry.network } : {}) });

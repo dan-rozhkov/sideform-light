@@ -98,8 +98,17 @@ describe("parallel isolated QA browse_agent calls", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("starts non-QA browse_agent calls in parallel too (every call is isolated in Light)", async () => {
+    stubTurns(callsTurn([{ id: "a", input: { goal: "g1" } }, { id: "b", input: { goal: "g2" } }]));
+    const { result } = renderHook(() => useDesignChat({ sessionId: "plain-par-session" }));
+    await send(result);
+    await waitFor(() => expect(runs.map((r) => r.id)).toEqual(["a", "b"]));
+    await act(async () => runs.forEach((r) => r.finish('{"status":"done"}')));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 3000 });
+  });
+
   it.each([
-    ["non-QA browse_agent calls", true, false],
+    ["calls when the shell has no browser.isolated", false, false],
     ["QA calls when the shell has no browser.isolated", false, true],
   ])("keeps %s sequential", async (_label, isolated, qa) => {
     install(isolated);

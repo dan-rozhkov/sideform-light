@@ -2,7 +2,7 @@
  * A click on a browse tool chip in the agent panel's chat brings forward the browser tab the agent drives.
  * No-op outside the agent panel and for tools that do not run in the browser. Never throws.
  */
-import { isIsolatedQaCall, runSessionForCall } from "@/lib/tools/browser/isolation";
+import { isIsolatedBrowseCall, runSessionForCall } from "@/lib/tools/browser/isolation";
 
 interface RevealArgs {
   toolCallId: string;
@@ -22,7 +22,7 @@ export async function revealToolTab({ toolName, toolCallId, input }: RevealArgs)
       session = runSessionForCall(toolCallId);
       // An isolated run never uses the shared browser: no remembered session (still waiting for a slot, or the
       // panel reloaded) means nothing to show. A finished run has no tabs left either: the shell answers false.
-      if (session === undefined && input !== null && typeof input === "object" && isIsolatedQaCall(input as Record<string, unknown>)) return;
+      if (session === undefined && input !== null && typeof input === "object" && isIsolatedBrowseCall(input as Record<string, unknown>)) return;
     }
     await browser.revealAgentTab(session);
   } catch {

@@ -21,17 +21,14 @@ const NONCE_CHARS = 6;
 const nonce = () => Math.random().toString(36).slice(2, 2 + NONCE_CHARS).padEnd(NONCE_CHARS, "0");
 
 /**
- * The single predicate for "this browse_agent call is an isolated QA run": QA
- * mode, a goal and a shell that can isolate. `resume` does not matter: a QA call
- * with `resume` on an isolating shell continues a scenario in its own session. The hook (do not await) and the handler (take a slot) both use it.
+ * The single predicate for "this browse_agent call runs in its own isolated
+ * session": a goal and a shell that can isolate. In Light EVERY browse_agent
+ * call qualifies (QA or not, `resume` or not), so several calls of one step run
+ * together, each in a private browser. The hook (do not await) and the handler
+ * (take a slot) both use it.
  */
-export function isIsolatedQaCall(args: Record<string, unknown>): boolean {
-  return (
-    args.qa === true &&
-    typeof args.goal === "string" &&
-    args.goal.trim() !== "" &&
-    isolatedBrowseAvailable()
-  );
+export function isIsolatedBrowseCall(args: Record<string, unknown>): boolean {
+  return typeof args.goal === "string" && args.goal.trim() !== "" && isolatedBrowseAvailable();
 }
 
 /** `<prefix>-<hash of chat>-<tool call id>-<nonce>`, at most 64 chars; an over-long tool call id is cut and ends in its own hash. */

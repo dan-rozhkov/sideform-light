@@ -30,7 +30,8 @@ export const TOMBSTONE_LIMIT = 10_000;
 
 export const ERR_INVALID_SESSION_ID = "invalid session id";
 export const ERR_INVALID_CHAT_ID = "Invalid chat id.";
-export const ERR_TOO_MANY_SESSIONS = "too many parallel browser sessions";
+export const ERR_TOO_MANY_SESSIONS =
+  "too many parallel browser sessions: all browser slots stayed busy for 60 s; run fewer browse_agent calls at once and call again";
 export const ERR_SESSION_NOT_OWNED = "browser session belongs to another editor tab";
 export const ERR_SESSION_CLOSED = "browser session closed";
 export const ERR_NO_SUCH_SESSION = "no such browser session";

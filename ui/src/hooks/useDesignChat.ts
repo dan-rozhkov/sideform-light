@@ -13,7 +13,7 @@ import { useChatStore } from "@/store/chatStore";
 import { toolHandlers, type ToolExecutionContext, type ToolHandler } from "@/lib/toolRegistry";
 import type { ChatLaunchPayload } from "@/types/chat";
 import type { UIMessage } from "ai";
-import { isIsolatedQaCall } from "@/lib/tools/browser/isolation";
+import { isIsolatedBrowseCall } from "@/lib/tools/browser/isolation";
 import { BROWSE_AGENT_OUTER_TIMEOUT_MS } from "@/lib/tools/browser/browseAgent";
 import { useOwnedChat } from "@/hooks/useOwnedChat";
 import { notifyChatState } from "@/lib/chats/desktopChatPersistence";
@@ -341,7 +341,7 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
         return;
       }
       // Isolated QA runs: start, do not await. Everything else stays awaited.
-      if (toolCall.toolName === "browse_agent" && isIsolatedQaCall((toolCall.input ?? {}) as Record<string, unknown>)) {
+      if (toolCall.toolName === "browse_agent" && isIsolatedBrowseCall((toolCall.input ?? {}) as Record<string, unknown>)) {
         startParallelBrowseRun(toolCall);
         return;
       }
