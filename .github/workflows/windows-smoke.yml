@@ -1,0 +1,48 @@
+name: windows-smoke
+
+# Installs a released .exe on a Windows runner, starts the app against the production backend,
+# sends one agent task and uploads screenshots. Run manually.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to test (for example v0.1.1)"
+        required: true
+      task:
+        description: "Message to send to the agent"
+        default: "Run two browse_agent calls in parallel: (1) on https://news.ycombinator.com report the top story title; (2) on https://en.wikipedia.org/wiki/Electron_(software_framework) report the original author. Then summarize both."
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Download and install
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ inputs.tag }}" -p "*.exe" -D installer
+          $exe = Get-ChildItem installer\*.exe | Select-Object -First 1
+          Start-Process $exe.FullName -ArgumentList "/S" -Wait
+          Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Sideform Light.exe" | Select-Object -ExpandProperty FullName
+      - name: Start the app
+        shell: pwsh
+        run: |
+          $app = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Sideform Light.exe" | Select-Object -First 1
+          New-Item -ItemType Directory -Force shots | Out-Null
+          Start-Process $app.FullName -ArgumentList "--remote-debugging-port=9333" -RedirectStandardOutput shots\app-stdout.log -RedirectStandardError shots\app-stderr.log
+      - name: Drive the app
+        shell: pwsh
+        run: |
+          npm install --no-save --prefix .github/smoke playwright-core@1.64.1
+          node .github/smoke/drive.mjs shots "${{ inputs.task }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-screenshots
+          path: shots
