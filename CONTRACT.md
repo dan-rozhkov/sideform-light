@@ -29,8 +29,8 @@ and serves `ui/dist` with `protocol.handle("app", ...)` on the default session:
 
 - host must be `sideform`; any other host → 404.
 - path that maps to an existing file inside the ui dist dir → that file (correct MIME). Path traversal outside the dir → 404.
-- any other path (no file) → `index.html` (SPA fallback).
-- response header `Content-Security-Policy`: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' <backend origin>; frame-src 'none'; object-src 'none'; base-uri 'none'`.
+- any other path (no file) → `index.html` (SPA fallback) ONLY when it is route-like: no file extension in the last segment and not under `/assets/`; otherwise 404.
+- response header `Content-Security-Policy`: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' data: blob: <backend origin>; frame-src 'none'; object-src 'none'; base-uri 'none'`.
 
 Packaged app: ui dist is copied to `app/dist/ui` by `app`'s build (`copy-static`), path resolved relative to `__dirname` of main. Dev override: env `SIDEFORM_LIGHT_UI_URL` (e.g. `http://localhost:5174`) makes the shell load pages from the Vite dev server instead; then the page origin is that URL's origin and all origin checks use it.
 
@@ -68,8 +68,9 @@ window.penAgentPanel = {
   version: 3,
   browser,            // makeBrowser(): open, act, findImages, snapshot, perform, assert, read, screenshot, tabs,
                       // applyFixture, releaseFixture, clearActEmulation, fillLogin, startJournal, stopJournal,
-                      // captureCheckpoint, requests, isolated(sessionId), closeSession(sessionId), revealAgentTab
-                      // REMOVED: capture, launchApp, releaseApp, nativeApps, forChat
+                      // captureCheckpoint, requests, capture, isolated(sessionId), closeSession(sessionId), revealAgentTab
+                      // `capture({ forTrace: true })` is used only for trace DOM snapshots of failed steps.
+                      // REMOVED: launchApp, releaseApp, nativeApps, forChat
   chats,              // list, read, save, remove
   traces,             // save, open, listTabs, read
   settings,           // open(section?: "appearance" | "browser")
