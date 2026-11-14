@@ -183,3 +183,13 @@ export function traceIdOfUrl(rawUrl: string): string | null {
     return null;
   }
 }
+
+/**
+ * The dock icon for an UNPACKAGED run on macOS (`npm start`, `npx electron .`): Electron's own icon otherwise shows,
+ * because the app icon of package.json (`build.mac.icon`) is applied by electron-builder only. A packaged app, or any
+ * other platform, keeps what it has: null.
+ */
+export function resolveDevDockIconPath(opts: { platform: NodeJS.Platform; isPackaged: boolean; appPath: string }): string | null {
+  if (opts.platform !== "darwin" || opts.isPackaged) return null;
+  return `${opts.appPath.replace(/[\\/]+$/, "")}/assets/app-icons/black.png`;
+}

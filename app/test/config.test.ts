@@ -8,6 +8,7 @@ import {
   isOnUiOrigin,
   isSettingsPageOn,
   isValidSettingsSection,
+  resolveDevDockIconPath,
   resolveMcpPort,
   isValidTraceId,
   originOf,
@@ -195,5 +196,24 @@ describe("resolveMcpPort", () => {
   });
   it("anything else falls back to the default", () => {
     for (const v of ["0", "65536", "-1", "1.5", "abc", "47821x", "1e3", "123456"]) expect(resolveMcpPort({ SIDEFORM_LIGHT_MCP_PORT: v }), v).toBe(47821);
+  });
+});
+
+describe("resolveDevDockIconPath", () => {
+  it("points an unpackaged macOS run at the black app icon", () => {
+    expect(resolveDevDockIconPath({ platform: "darwin", isPackaged: false, appPath: "/repo/app" })).toBe("/repo/app/assets/app-icons/black.png");
+    expect(resolveDevDockIconPath({ platform: "darwin", isPackaged: false, appPath: "/repo/app/" })).toBe("/repo/app/assets/app-icons/black.png");
+  });
+
+  it("leaves a packaged app and other platforms alone", () => {
+    expect(resolveDevDockIconPath({ platform: "darwin", isPackaged: true, appPath: "/Applications/x.app/Contents/Resources/app.asar" })).toBeNull();
+    expect(resolveDevDockIconPath({ platform: "win32", isPackaged: false, appPath: "C:\\repo\\app" })).toBeNull();
+    expect(resolveDevDockIconPath({ platform: "linux", isPackaged: false, appPath: "/repo/app" })).toBeNull();
+  });
+
+  it("names an icon that exists in the repo", async () => {
+    const { existsSync } = await import("node:fs");
+    const path = await import("node:path");
+    expect(existsSync(path.join(__dirname, "..", "assets", "app-icons", "black.png"))).toBe(true);
   });
 });

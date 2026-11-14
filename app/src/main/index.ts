@@ -7,6 +7,7 @@ import {
   BUILD_CONFIG_FILE,
   DISPLAY_APP_NAME,
   isAdBlockDisabledByEnv,
+  resolveDevDockIconPath,
   resolveMcpPort,
   parseBuildConfigBackendUrl,
   resolveBackendOrigin,
@@ -191,6 +192,9 @@ app.whenReady().then(() => {
   // The visible product name (app menu labels, About box); the userData path and the Keychain item
   // name are already fixed above.
   app.setAboutPanelOptions({ applicationName: DISPLAY_APP_NAME });
+  // Unpackaged macOS run: show the app icon in the dock instead of Electron's.
+  const devDockIcon = resolveDevDockIconPath({ platform: process.platform, isPackaged: app.isPackaged, appPath: app.getAppPath() });
+  if (devDockIcon && fs.existsSync(devDockIcon)) app.dock?.setIcon(devDockIcon);
 
   // Only the bundled ui may be served this way; with a dev server override nothing is registered.
   if (uiOrigin.startsWith(`${APP_SCHEME}:`)) serveUi();

@@ -42,7 +42,7 @@
         "dmg",
         "zip"
       ],
-      "icon": "assets/app-icons/white.icon",
+      "icon": "assets/app-icons/black.icon",
       "category": "public.app-category.graphics-design",
       "identity": "-",
       "hardenedRuntime": false
@@ -56,7 +56,7 @@
           ]
         }
       ],
-      "icon": "assets/app-icons/white.png"
+      "icon": "assets/app-icons/black.png"
     },
     "nsis": {
       "oneClick": false,
