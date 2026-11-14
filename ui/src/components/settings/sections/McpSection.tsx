@@ -27,6 +27,13 @@ function statusText(view: McpSettingsView): string {
   }
 }
 
+const STATUS_DOT: Record<McpSettingsView["status"]["state"], string> = {
+  off: "bg-muted-foreground/60",
+  starting: "bg-amber-500",
+  listening: "bg-emerald-500",
+  error: "bg-destructive",
+};
+
 function CopyButton({ text, label, size = "icon" }: { text: string; label: string; size?: "icon" | "icon-sm" }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -154,11 +161,16 @@ function McpControls({ api }: { api: NonNullable<NonNullable<typeof window.penDe
       </SettingsGroup>
 
       <SettingsGroup title="Status">
-        <p role="status" data-testid="mcp-status" className="text-sm text-text-primary">
-          {view ? statusText(view) : error ? "Unknown" : "Loading…"}
+        <p
+          role="status"
+          data-testid="mcp-status"
+          className="inline-flex h-7 max-w-full items-center gap-2 rounded-control bg-secondary px-3 text-xs text-text-primary"
+        >
+          <span aria-hidden className={`size-2 shrink-0 rounded-full ${view ? STATUS_DOT[view.status.state] : STATUS_DOT.off}`} />
+          <span className="truncate">{view ? statusText(view) : error ? "Unknown" : "Loading…"}</span>
         </p>
         {error && (
-          <p role="alert" className="text-xs text-destructive">
+          <p role="alert" className="mt-2 text-xs text-destructive">
             {error}
           </p>
         )}
@@ -193,21 +205,22 @@ function McpControls({ api }: { api: NonNullable<NonNullable<typeof window.penDe
               </IconButton>
               <CopyButton text={token} label="Copy token" />
             </div>
-            <div>
+            <div className="mt-3">
               <Button type="button" variant="outline" size="lg" disabled={busy} onClick={() => void run(() => api.regenerateToken())}>
                 Regenerate token
               </Button>
-              <p className="mt-1 text-xs text-text-muted">Clients using the old token stop working.</p>
             </div>
           </SettingsGroup>
 
           <SettingsGroup title="Connect a client" description="Tasks run with everything the Sideform agent can do, including saved logins.">
-            <Snippet
-              title="Hermes Agent (~/.hermes/config.yaml)"
-              text={hermesSnippet(url, token)}
-              shown={hermesSnippet(url, shownToken)}
-            />
-            <Snippet title="Claude Code" text={claudeCodeSnippet(url, token)} shown={claudeCodeSnippet(url, shownToken)} />
+            <div className="flex flex-col gap-4">
+              <Snippet
+                title="Hermes Agent (~/.hermes/config.yaml)"
+                text={hermesSnippet(url, token)}
+                shown={hermesSnippet(url, shownToken)}
+              />
+              <Snippet title="Claude Code" text={claudeCodeSnippet(url, token)} shown={claudeCodeSnippet(url, shownToken)} />
+            </div>
           </SettingsGroup>
         </>
       )}
