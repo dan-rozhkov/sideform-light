@@ -113,8 +113,8 @@ Task state returned by `get_task`:
 - In the panel, a small module (e.g. `lib/mcpTasks.ts` + a hook mounted once in `ChatPanel`) maps the
   requests onto `chatStore` and the session actions:
   - start: `createChat({ activate: false })`, set title if given, `queueLaunchPayload(id, { text })`, mark it
-    as an MCP task (`ChatSummary.source = "mcp"`, persisted with the chat). The chat list shows a small
-    marker for MCP tasks and the new chat is unread; the active chat never changes.
+    as an MCP task (`ChatSummary.source = "mcp"`, persisted with the chat). An MCP task looks like any other chat in the chat list (no
+    marker; decided 2026-11-15); the new chat is unread; the active chat never changes.
   - status: derived from `isBusy`, `needsAnswer`, the last turn's error state, a stop, and `getMessages()`.
   - answer / message / stop: through actions each mounted `ChatSession` publishes (extend
     `ChatSessionActions` with `answerAskUser`, `sendText`, `stop`).
