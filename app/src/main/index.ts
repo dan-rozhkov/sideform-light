@@ -2,7 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { app, BaseWindow, ipcMain, net, protocol, safeStorage, session } from "electron";
 import { KEEP_RENDERING_WHEN_OCCLUDED_SWITCH } from "./agentActivity";
-import { APP_SCHEME, DISPLAY_APP_NAME, isAdBlockDisabledByEnv, resolveBackendOrigin, resolveUiOrigin, resolveUserDataDir } from "./config";
+import {
+  APP_SCHEME,
+  BUILD_CONFIG_FILE,
+  DISPLAY_APP_NAME,
+  isAdBlockDisabledByEnv,
+  parseBuildConfigBackendUrl,
+  resolveBackendOrigin,
+  resolveUiOrigin,
+  resolveUserDataDir,
+} from "./config";
 import { APP_SCHEME_PRIVILEGES, buildCsp, resolveAppRequest } from "./localProtocol";
 import { createMainWindow, flushAllForQuit, hasQuitFlushWork, isLiveTabbar, type HistoryServices } from "./window";
 import { createQuitFlush } from "./quitFlush";
@@ -31,7 +40,14 @@ import {
 } from "./browser/adBlock";
 
 const uiOrigin = resolveUiOrigin(process.env);
-const backendOrigin = resolveBackendOrigin(process.env);
+function readBuildConfigText(): string | null {
+  try {
+    return fs.readFileSync(path.join(__dirname, "..", BUILD_CONFIG_FILE), "utf8");
+  } catch {
+    return null;
+  }
+}
+const backendOrigin = resolveBackendOrigin(process.env, parseBuildConfigBackendUrl(readBuildConfigText()));
 /** The bundled ui: `dist/ui` (`__dirname` is `dist/main`, which also holds inside the asar). */
 const UI_DIST_DIR = path.join(__dirname, "../ui");
 

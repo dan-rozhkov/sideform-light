@@ -49,18 +49,39 @@ export function resolveUiOrigin(env: NodeJS.ProcessEnv): string {
   return APP_ORIGIN;
 }
 
-/** The origin of the backend, from SIDEFORM_LIGHT_BACKEND_URL (http/https only), else `http://localhost:3001`. */
-export function resolveBackendOrigin(env: NodeJS.ProcessEnv): string {
-  const raw = env.SIDEFORM_LIGHT_BACKEND_URL;
-  if (raw) {
-    try {
-      const url = new URL(raw);
-      if (url.protocol === "http:" || url.protocol === "https:") return `${url.protocol}//${url.host}`;
-    } catch {
-      // fall through to the default
-    }
+/** Parses an http(s) URL into its origin, or returns null for anything else. */
+function httpOrigin(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol === "http:" || url.protocol === "https:") return `${url.protocol}//${url.host}`;
+  } catch {
+    // not a URL
   }
-  return DEFAULT_BACKEND_URL;
+  return null;
+}
+
+/**
+ * The origin of the backend. Order: SIDEFORM_LIGHT_BACKEND_URL at run time, then `builtIn` (the
+ * SIDEFORM_LIGHT_BACKEND_URL of the build, from dist/build-config.json), then `http://localhost:3001`.
+ * A released app has no env var, so without `builtIn` its CSP would block the production backend.
+ */
+export function resolveBackendOrigin(env: NodeJS.ProcessEnv, builtIn?: string | null): string {
+  return httpOrigin(env.SIDEFORM_LIGHT_BACKEND_URL) ?? httpOrigin(builtIn) ?? DEFAULT_BACKEND_URL;
+}
+
+/** File name, inside dist/, of the build-time config that copy-static writes. */
+export const BUILD_CONFIG_FILE = "build-config.json";
+
+/** Reads `backendUrl` from the build-time config JSON text. Returns null for a missing or broken file. */
+export function parseBuildConfigBackendUrl(text: string | null): string | null {
+  if (!text) return null;
+  try {
+    const value = (JSON.parse(text) as { backendUrl?: unknown }).backendUrl;
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The agent panel page. */

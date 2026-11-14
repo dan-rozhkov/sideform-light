@@ -11,6 +11,7 @@ import {
   isValidTraceId,
   originOf,
   resolveAgentPanelUrl,
+  parseBuildConfigBackendUrl,
   resolveBackendOrigin,
   resolveBrowserCursorEnabled,
   resolveSettingsTabUrl,
@@ -68,6 +69,22 @@ describe("resolveBackendOrigin", () => {
     expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "http://127.0.0.1:4000" })).toBe("http://127.0.0.1:4000");
     expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "ftp://x" })).toBe("http://localhost:3001");
     expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "nope" })).toBe("http://localhost:3001");
+  });
+  it("uses the build-time URL when the env var is absent, and the env var wins over it", () => {
+    const prod = "https://pen-editor-backend.onrender.com";
+    expect(resolveBackendOrigin({}, prod)).toBe(prod);
+    expect(resolveBackendOrigin({}, "not a url")).toBe("http://localhost:3001");
+    expect(resolveBackendOrigin({}, null)).toBe("http://localhost:3001");
+    expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "http://localhost:3011" }, prod)).toBe("http://localhost:3011");
+  });
+});
+
+describe("parseBuildConfigBackendUrl", () => {
+  it("reads backendUrl and tolerates a missing or broken file", () => {
+    expect(parseBuildConfigBackendUrl('{"backendUrl":"https://b.example"}')).toBe("https://b.example");
+    expect(parseBuildConfigBackendUrl('{"backendUrl":null}')).toBeNull();
+    expect(parseBuildConfigBackendUrl("{oops")).toBeNull();
+    expect(parseBuildConfigBackendUrl(null)).toBeNull();
   });
 });
 
