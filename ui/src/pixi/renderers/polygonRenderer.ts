@@ -1,0 +1,43 @@
+import { Container, Graphics } from "pixi.js";
+import type { PolygonNode } from "@/types/scene";
+import { applyFills, applyStroke, hasBasePaintPropsChanged } from "./fillStrokeHelpers";
+import { isOutlineRenderMode, strokeOutlinePath } from "./outlineHelpers";
+
+export function createPolygonContainer(node: PolygonNode): Container {
+  const container = new Container();
+  const gfx = new Graphics();
+  gfx.label = "polygon-gfx";
+  drawPolygon(gfx, node);
+  container.addChild(gfx);
+  return container;
+}
+
+export function updatePolygonContainer(
+  container: Container,
+  node: PolygonNode,
+  prev: PolygonNode,
+): void {
+  if (node.points !== prev.points || hasBasePaintPropsChanged(node, prev)) {
+    const gfx = container.getChildByLabel("polygon-gfx") as Graphics;
+    if (gfx) {
+      gfx.clear();
+      drawPolygon(gfx, node);
+    }
+  }
+}
+
+export function drawPolygon(gfx: Graphics, node: PolygonNode): void {
+  const points = node.points;
+  if (!points || points.length < 6) return;
+
+  const drawShape = (target: Graphics) => target.poly(points, true);
+  if (isOutlineRenderMode()) {
+    drawShape(gfx);
+    strokeOutlinePath(gfx);
+    return;
+  }
+  const pathReady = applyFills(gfx, node, node.width, node.height, drawShape);
+  // Skip rebuilding the geometry for the stroke when the last fill already left
+  // a reusable path on `gfx`.
+  applyStroke(gfx, node, node.width, node.height, drawShape, pathReady);
+}

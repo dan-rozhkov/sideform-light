@@ -1,0 +1,334 @@
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
+import type { ComponentProps, ReactNode } from "react";
+import { FillSection } from "../FillSection";
+import { useStyleStore } from "@/store/styleStore";
+import type { Paint, SceneNode } from "@/types/scene";
+
+// The gradient/image editors open portals / run their own effects and are not
+// the unit under test here — stub them out so they don't pollute the DOM or
+// emit act() warnings. The solid color row stays real (its text input is the
+// stable lever we drive).
+vi.mock("@/components/properties/GradientEditor", () => ({
+  GradientEditor: () => <div data-testid="gradient-editor" />,
+}));
+vi.mock("@/components/properties/ImageFillSection", () => ({
+  ImageFillEditor: () => <div data-testid="image-editor" />,
+}));
+
+// The per-fill detail editor now lives in a base-ui popover, which portals and
+// is flaky to drive open in happy-dom. Render trigger + content inline so the
+// detail controls (type select, color, blend, reorder) are always in the DOM —
+// the same approach used for the color picker stub below.
+vi.mock("@/components/ui/popover", () => ({
+  Popover: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  PopoverTrigger: ({ children, ...props }: ComponentProps<"button">) => (
+    <button {...props}>{children}</button>
+  ),
+  PopoverContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("@/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  // `render` is the actual trigger element (e.g. an <IconButton>) — render it
+  // directly so its own logic (title/tooltip wiring) runs for real, instead of
+  // just lifting its props onto a bare <button> (which broke once the trigger
+  // became a component that computes `title` internally from `tooltip`).
+  DropdownMenuTrigger: ({ render }: { children?: ReactNode; render: ReactNode }) => render,
+  DropdownMenuContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuItem: ({ children, onClick }: ComponentProps<"button">) => (
+    <button onClick={onClick}>{children}</button>
+  ),
+  DropdownMenuRadioGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuRadioItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+function solid(id: string, color: string, extra: Partial<Paint> = {}): Paint {
+  return { id, type: "solid", color, ...extra } as Paint;
+}
+
+function makeNode(fills: Paint[], type: SceneNode["type"] = "rect"): SceneNode {
+  return { id: "n1", type, x: 0, y: 0, width: 100, height: 100, fills } as SceneNode;
+}
+
+function baseProps(node: SceneNode, onUpdate = vi.fn()) {
+  return {
+    node,
+    onUpdate,
+    colorVariables: [],
+    activeTheme: "light" as const,
+  };
+}
+
+afterEach(() => cleanup());
+
+describe("<FillSection />", () => {
+  it("renders nothing for an empty fill stack but keeps the Add button", () => {
+    render(<FillSection {...baseProps(makeNode([]))} />);
+    expect(screen.getByLabelText("Add fill")).toBeTruthy();
+    expect(screen.queryByText("Mixed")).toBeNull();
+    // No paint rows -> no remove buttons.
+    expect(screen.queryByLabelText("Remove fill")).toBeNull();
+  });
+
+  it("renders a row per fill with its current color value", () => {
+    render(
+      <FillSection {...baseProps(makeNode([solid("a", "#ff0000"), solid("b", "#00ff00")]))} />,
+    );
+    const colorInputs = screen.getAllByPlaceholderText("#000000") as HTMLInputElement[];
+    // Two solid rows -> two color text inputs. Rows render top-of-stack first,
+    // so the last array element ("#00ff00") renders before "#ff0000".
+    // ColorInput displays hex uppercased.
+    expect(colorInputs).toHaveLength(2);
+    expect(colorInputs[0].value).toBe("#00FF00");
+    expect(colorInputs[1].value).toBe("#FF0000");
+  });
+
+  it("adds a solid fill via the Add button", () => {
+    const onUpdate = vi.fn();
+    render(<FillSection {...baseProps(makeNode([]), onUpdate)} />);
+
+    fireEvent.click(screen.getByLabelText("Add fill"));
+
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    const arg = onUpdate.mock.calls[0][0];
+    expect(arg.fills).toHaveLength(1);
+    expect(arg.fills[0]).toMatchObject({ type: "solid", color: "#cccccc" });
+    // Legacy single-fill props are cleared in the same update.
+    expect(arg).toMatchObject({
+      fill: undefined,
+      gradientFill: undefined,
+      imageFill: undefined,
+    });
+  });
+
+  it("updates a fill color when the text input changes", () => {
+    const onUpdate = vi.fn();
+    render(<FillSection {...baseProps(makeNode([solid("a", "#ff0000")]), onUpdate)} />);
+
+    const input = screen.getByPlaceholderText("#000000");
+    fireEvent.change(input, { target: { value: "#123456" } });
+
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdate.mock.calls[0][0].fills[0]).toMatchObject({
+      id: "a",
+      color: "#123456",
+    });
+  });
+
+  it("removes a fill", () => {
+    const onUpdate = vi.fn();
+    render(
+      <FillSection {...baseProps(makeNode([solid("a", "#ff0000"), solid("b", "#00ff00")]), onUpdate)} />,
+    );
+
+    // First rendered row is top-of-stack = array index 1 ("b").
+    fireEvent.click(screen.getAllByLabelText("Remove fill")[0]);
+
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    const remaining = onUpdate.mock.calls[0][0].fills as Paint[];
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe("a");
+  });
+
+  it("toggles fill visibility", () => {
+    const onUpdate = vi.fn();
+    render(<FillSection {...baseProps(makeNode([solid("a", "#ff0000")]), onUpdate)} />);
+
+    // Visible by default -> button reads "Hide fill".
+    fireEvent.click(screen.getByLabelText("Hide fill"));
+    expect(onUpdate.mock.calls[0][0].fills[0]).toMatchObject({ visible: false });
+  });
+
+  it("reorders fills with the move buttons", () => {
+    const onUpdate = vi.fn();
+    render(
+      <FillSection {...baseProps(makeNode([solid("a", "#ff0000"), solid("b", "#00ff00")]), onUpdate)} />,
+    );
+
+    // The bottom-of-stack row ("a", array index 0) can move up; it's the second
+    // rendered row, so its "Move up" button is the last one.
+    const moveUps = screen.getAllByLabelText("Move up");
+    fireEvent.click(moveUps[moveUps.length - 1]);
+
+    const reordered = onUpdate.mock.calls[0][0].fills as Paint[];
+    // "a" moved toward the top (end of array): order is now [b, a].
+    expect(reordered.map((p) => p.id)).toEqual(["b", "a"]);
+  });
+
+  it("disables the move-up button for the topmost fill", () => {
+    render(
+      <FillSection {...baseProps(makeNode([solid("a", "#ff0000"), solid("b", "#00ff00")]))} />,
+    );
+    // First rendered row is the top of the stack -> cannot move up further.
+    const moveUps = screen.getAllByLabelText("Move up") as HTMLButtonElement[];
+    expect(moveUps[0].disabled).toBe(true);
+    // The bottom row can move up.
+    expect(moveUps[moveUps.length - 1].disabled).toBe(false);
+  });
+
+  it("shows the current fill kind label in the type selector", () => {
+    // base-ui Select dropdowns are flaky in happy-dom, so assert the selected
+    // value's label text renders rather than driving the dropdown open.
+    render(<FillSection {...baseProps(makeNode([solid("a", "#ff0000")]))} />);
+    expect(screen.getByText("Solid")).toBeTruthy();
+  });
+
+  it("renders the gradient editor (stubbed) for a gradient fill", () => {
+    const gradientFill = {
+      id: "g",
+      type: "gradient",
+      gradient: {
+        type: "linear",
+        angle: 0,
+        stops: [
+          { color: "#000000", position: 0 },
+          { color: "#ffffff", position: 1 },
+        ],
+      },
+    } as unknown as Paint;
+    render(<FillSection {...baseProps(makeNode([gradientFill]))} />);
+    expect(screen.getByTestId("gradient-editor")).toBeTruthy();
+    // Gradient rows have no caret toggle (only solids collapse).
+    expect(screen.queryByLabelText(/Collapse|Expand/)).toBeNull();
+  });
+
+  it("renders the image editor (stubbed) for an image fill on image-capable nodes", () => {
+    const imageFill = {
+      id: "i",
+      type: "image",
+      image: { url: "http://x/y.png", mode: "fill" },
+    } as Paint;
+    render(<FillSection {...baseProps(makeNode([imageFill], "frame"))} />);
+    expect(screen.getByTestId("image-editor")).toBeTruthy();
+  });
+
+  it("exposes the blend-mode icon dropdown in the fill detail popover", () => {
+    render(<FillSection {...baseProps(makeNode([solid("a", "#ff0000")]))} />);
+
+    // Details (incl. the blend dropdown) live in the popover; there is no longer
+    // an inline caret toggle on the row.
+    expect(screen.queryByLabelText(/Collapse|Expand/)).toBeNull();
+    expect(screen.getByLabelText("Blend mode: Normal")).toBeTruthy();
+  });
+
+  it("shows a Mixed placeholder when fills are mixed across the selection", () => {
+    render(
+      <FillSection
+        {...baseProps(makeNode([solid("a", "#ff0000")]))}
+        mixedKeys={new Set(["fills"])}
+      />,
+    );
+    expect(screen.getByText("Mixed")).toBeTruthy();
+    // No editable rows are rendered in mixed mode.
+    expect(screen.queryByPlaceholderText("#000000")).toBeNull();
+  });
+
+  it("renders solid rows on non-image-capable nodes (e.g. line)", () => {
+    render(<FillSection {...baseProps(makeNode([solid("a", "#ff0000")], "line"))} />);
+    expect(screen.getByPlaceholderText("#000000")).toBeTruthy();
+  });
+
+  it("shows the fill opacity as a percent in the Opacity input", () => {
+    render(
+      <FillSection {...baseProps(makeNode([solid("a", "#ff0000", { opacity: 0.5 })]))} />,
+    );
+    expect(screen.getByText("Opacity")).toBeTruthy();
+    const opacityInput = screen.getByRole("spinbutton") as HTMLInputElement;
+    expect(opacityInput.value).toBe("50");
+  });
+
+  it("defaults the Opacity input to 100 when the paint has no opacity", () => {
+    render(<FillSection {...baseProps(makeNode([solid("a", "#ff0000")]))} />);
+    const opacityInput = screen.getByRole("spinbutton") as HTMLInputElement;
+    expect(opacityInput.value).toBe("100");
+  });
+
+  it("updates fill opacity when the Opacity input changes", () => {
+    const onUpdate = vi.fn();
+    render(
+      <FillSection
+        {...baseProps(makeNode([solid("a", "#ff0000", { opacity: 0.5 })]), onUpdate)}
+      />,
+    );
+
+    const opacityInput = screen.getByRole("spinbutton");
+    fireEvent.focus(opacityInput);
+    fireEvent.change(opacityInput, { target: { value: "25" } });
+    fireEvent.blur(opacityInput);
+
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    const arg = onUpdate.mock.calls[0][0];
+    expect(arg.fills[0]).toMatchObject({ id: "a", opacity: 0.25 });
+    expect(arg).toMatchObject({
+      fill: undefined,
+      gradientFill: undefined,
+      imageFill: undefined,
+    });
+  });
+
+  describe("allowedFillKinds", () => {
+    it("omits Video from the type selector's options when it isn't in the allowlist", () => {
+      render(
+        <FillSection
+          {...baseProps(makeNode([solid("a", "#ff0000")], "frame"))}
+          allowedFillKinds={["solid", "linear", "radial", "image", "pattern"]}
+        />,
+      );
+      // The listbox only mounts once opened.
+      fireEvent.click(screen.getByRole("combobox"));
+      expect(screen.queryByText("Video")).toBeNull();
+      expect(screen.getByText("Pattern")).toBeTruthy();
+    });
+
+    it("offers every kind including Video when allowedFillKinds is omitted (unchanged default)", () => {
+      render(<FillSection {...baseProps(makeNode([solid("a", "#ff0000")], "frame"))} />);
+      fireEvent.click(screen.getByRole("combobox"));
+      expect(screen.getByText("Video")).toBeTruthy();
+    });
+  });
+
+  describe("detachedNode", () => {
+    afterEach(() => {
+      act(() => {
+        useStyleStore.getState().setFillStyles([]);
+      });
+    });
+
+    it("hides the fill-style picker when detachedNode is set, even with named styles available", () => {
+      useStyleStore.getState().setFillStyles([{ id: "fs1", name: "Brand red", paint: solid("p1", "#ff0000") }]);
+      render(
+        <FillSection
+          {...baseProps(makeNode([solid("a", "#ff0000")]))}
+          detachedNode
+        />,
+      );
+      // The dropdown-menu mock above renders the StylePicker trigger via its
+      // `render` prop (a plain <Button title="Apply a fill style">), so the
+      // trigger's title is what's queryable here rather than its (dropped)
+      // children text.
+      expect(screen.queryByTitle("Apply a fill style")).toBeNull();
+      // The rest of the row (color editing) is unaffected.
+      expect(screen.getByPlaceholderText("#000000")).toBeTruthy();
+    });
+
+    it("shows the fill-style picker when detachedNode is unset (unchanged default)", () => {
+      useStyleStore.getState().setFillStyles([{ id: "fs1", name: "Brand red", paint: solid("p1", "#ff0000") }]);
+      render(<FillSection {...baseProps(makeNode([solid("a", "#ff0000")]))} />);
+      expect(screen.getByTitle("Apply a fill style")).toBeTruthy();
+    });
+
+    it("still allows editing a fill's color when detachedNode is set (only the style picker is hidden)", () => {
+      const onUpdate = vi.fn();
+      render(
+        <FillSection
+          {...baseProps(makeNode([solid("a", "#ff0000")]), onUpdate)}
+          detachedNode
+        />,
+      );
+      fireEvent.change(screen.getByPlaceholderText("#000000"), {
+        target: { value: "#123456" },
+      });
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+    });
+  });
+});

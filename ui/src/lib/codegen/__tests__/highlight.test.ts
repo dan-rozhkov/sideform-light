@@ -1,0 +1,94 @@
+import { describe, expect, it } from "vitest";
+import { highlightCode, type Token } from "@/lib/codegen/highlight";
+
+/** Concatenating every token's `text` must always reproduce the original input exactly. */
+function joined(tokens: Token[]): string {
+  return tokens.map((t) => t.text).join("");
+}
+
+describe("highlightCode", () => {
+  it("tokenizes a CSS declaration into property/punctuation/plain-value parts", () => {
+    const code = ".box {\n  background-color: #fff;\n}";
+    const tokens = highlightCode(code, "css");
+    expect(joined(tokens)).toBe(code);
+    expect(tokens.some((t) => t.kind === "property" && t.text === "background-color")).toBe(true);
+    expect(tokens.some((t) => t.kind === "punctuation" && t.text === ":")).toBe(true);
+  });
+
+  it("tokenizes a CSS comment", () => {
+    const code = "/* a comment */\n.box { color: red; }";
+    const tokens = highlightCode(code, "css");
+    expect(joined(tokens)).toBe(code);
+    expect(tokens.some((t) => t.kind === "comment" && t.text === "/* a comment */")).toBe(true);
+  });
+
+  it("tokenizes a CSS number/unit value", () => {
+    const code = ".box { width: 12px; }";
+    const tokens = highlightCode(code, "css");
+    expect(joined(tokens)).toBe(code);
+    expect(tokens.some((t) => t.kind === "number" && t.text.includes("12"))).toBe(true);
+  });
+
+  it("tokenizes tsx keywords", () => {
+    const code = "export function Foo() {\n  return <div />;\n}";
+    const tokens = highlightCode(code, "tsx");
+    expect(joined(tokens)).toBe(code);
+    expect(tokens.some((t) => t.kind === "keyword" && t.text === "export")).toBe(true);
+    expect(tokens.some((t) => t.kind === "keyword" && t.text === "function")).toBe(true);
+    expect(tokens.some((t) => t.kind === "keyword" && t.text === "return")).toBe(true);
+  });
+
+  it("tokenizes tsx strings", () => {
+    const code = 'const x = "hello";';
+    const tokens = highlightCode(code, "tsx");
+    expect(joined(tokens)).toBe(code);
+    expect(tokens.some((t) => t.kind === "string" && t.text === '"hello"')).toBe(true);
+  });
+
+  it("tokenizes tsx JSX tags", () => {
+    const code = "<div className=\"box\">hi</div>";
+    const tokens = highlightCode(code, "tsx");
+    expect(joined(tokens)).toBe(code);
+    expect(tokens.some((t) => t.kind === "tag" && t.text.includes("div"))).toBe(true);
+  });
+
+  it("tokenizes html tags and class attributes", () => {
+    const code = '<div class="box"></div>';
+    const tokens = highlightCode(code, "html");
+    expect(joined(tokens)).toBe(code);
+    expect(tokens.some((t) => t.kind === "tag" && t.text.includes("div"))).toBe(true);
+    expect(tokens.some((t) => t.kind === "string" && t.text === '"box"')).toBe(true);
+  });
+
+  it("falls through unknown/unclassifiable input as plain tokens that reproduce it exactly", () => {
+    // Includes an escaped NUL (never a literal one — that would make git treat
+    // this file as binary) plus printable junk; all of it must survive the
+    // plain-token fallback byte-for-byte.
+    const code = "~~~ weird \u0000 input \t\n with \\ odd chars ###";
+    for (const lang of ["css", "html", "tsx"] as const) {
+      const tokens = highlightCode(code, lang);
+      expect(joined(tokens)).toBe(code);
+    }
+  });
+
+  it("handles empty input", () => {
+    expect(highlightCode("", "css")).toEqual([]);
+  });
+
+  it("round-trips a large multi-line CSS block exactly", () => {
+    const code = [
+      ":root {",
+      "  --gap: 8px;",
+      "}",
+      "",
+      ".card {",
+      "  /* shadow */",
+      "  box-shadow: 0 1px 2px rgba(0,0,0,0.2);",
+      "  border-radius: 8px;",
+      "  color: var(--text, #111);",
+      "}",
+    ].join("\n");
+    const tokens = highlightCode(code, "css");
+    expect(joined(tokens)).toBe(code);
+  });
+});

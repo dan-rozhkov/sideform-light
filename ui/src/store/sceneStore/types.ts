@@ -1,0 +1,157 @@
+import type {
+  SceneNode,
+  FlatSceneNode,
+  FlatSnapshot,
+  HistorySnapshot,
+} from "../../types/scene";
+import type { BooleanOpKind } from "../../lib/booleanOps";
+
+// ----- SceneState Interface -----
+
+export interface SceneState {
+  // Primary flat storage
+  nodesById: Record<string, FlatSceneNode>;
+  parentById: Record<string, string | null>;
+  childrenById: Record<string, string[]>;
+  rootIds: string[];
+
+  // Backward compat: lazily cached tree
+  _cachedTree: SceneNode[] | null;
+
+  // UI state
+  expandedFrameIds: Set<string>;
+  pageBackground: string;
+
+  /**
+   * Persistent presentation order of top-level frame/embed ids ("slides"),
+   * independent of canvas x/y and of `rootIds` (tree/z-order). The single
+   * source of truth for both SlidesPanel and Present mode; resolve against
+   * the current scene via `resolveSlideOrder` (drops deleted ids, appends
+   * new top-level frames) rather than reading it raw.
+   */
+  slideOrder: string[];
+
+  // Get full tree (lazy, cached)
+  getNodes: () => SceneNode[];
+
+  // Mutations
+  addNode: (node: SceneNode) => void;
+  addChildToFrame: (frameId: string, child: SceneNode) => void;
+  updateNode: (id: string, updates: Partial<SceneNode>) => void;
+  updateMultipleNodes: (ids: string[], updates: Partial<SceneNode>) => void;
+  /**
+   * Like `updateMultipleNodes`, but for each key in `deepMergeKeys` the
+   * sub-object is merged per-node (`{ ...existing[key], ...updates[key] }`)
+   * instead of overwritten, so a partial sub-object update (e.g. `sizing`,
+   * `layout`) doesn't stamp the first node's value over every other node's
+   * other sub-keys.
+   */
+  updateMultipleNodesMerged: (
+    ids: string[],
+    updates: Partial<SceneNode>,
+    deepMergeKeys: readonly string[],
+  ) => void;
+  updateNodeWithoutHistory: (id: string, updates: Partial<SceneNode>) => void;
+  updateNodesWithoutHistory: (
+    updatesById: Record<string, Partial<SceneNode>>,
+  ) => void;
+  /** Batched per-id update (each id gets its own partial updates), recorded as a single history entry. */
+  updateNodesById: (updatesById: Record<string, Partial<SceneNode>>) => void;
+  deleteNode: (id: string) => void;
+  clearNodes: () => void;
+  setNodes: (nodes: SceneNode[]) => void;
+  setNodesWithoutHistory: (nodes: SceneNode[]) => void;
+  restoreSnapshot: (snapshot: FlatSnapshot | HistorySnapshot) => void;
+  reorderNode: (fromIndex: number, toIndex: number) => void;
+  /**
+   * Reorder the slide presentation order (`slideOrder`) only — indices are
+   * into the resolved slide order (see `resolveSlideOrder`), NOT into
+   * `rootIds`. Does not touch `nodesById`/`rootIds`/coordinates/z-order;
+   * writes history so it round-trips through undo/redo.
+   */
+  reorderSlide: (fromIndex: number, toIndex: number) => void;
+  setVisibility: (id: string, visible: boolean) => void;
+  toggleVisibility: (id: string) => void;
+  /**
+   * Sets a slide (top-level frame)'s speaker notes, recording one history
+   * entry. Empty/whitespace-only text is normalized to `undefined`.
+   */
+  setSpeakerNotes: (id: string, text: string) => void;
+  /**
+   * Same as `setSpeakerNotes` but does not write history — used while typing
+   * so a run of keystrokes collapses into the single history entry saved
+   * when the textarea gains focus (mirrors InlineTextEditor's pattern).
+   */
+  setSpeakerNotesWithoutHistory: (id: string, text: string) => void;
+  toggleFrameExpanded: (id: string) => void;
+  setFrameExpanded: (id: string, expanded: boolean) => void;
+  expandAncestors: (ids: string[]) => void;
+  collapseAllFrames: () => void;
+  moveNode: (
+    nodeId: string,
+    newParentId: string | null,
+    newIndex: number,
+  ) => void;
+  groupNodes: (ids: string[]) => string | null;
+  ungroupNodes: (ids: string[]) => string[];
+  convertNodeType: (id: string) => boolean;
+  wrapInAutoLayoutFrame: (ids: string[]) => string | null;
+  /**
+   * Turn on auto-layout for an existing frame, deriving direction/gap/padding/
+   * alignment and visual child order from its current child geometry (see
+   * `inferAutoLayoutFromGeometry`) so the layout looks the same before/after
+   * (FIR-60). Returns false (no-op, no history) if `frameId` isn't a frame.
+   */
+  enableAutoLayoutOnFrame: (frameId: string) => boolean;
+  /**
+   * Proportionally scale the given nodes AND their entire descendant
+   * subtree by `factor` — geometry, typography, strokes, radii, effects,
+   * and auto-layout gap/padding all scale together as one history entry.
+   * `anchors` (optional, keyed by root id, in that root's parent-local
+   * coordinate space) pins the fixed point of the scale for each root; a
+   * root without an anchor entry scales from {0,0} in its parent's space.
+   * `baseSizes` (per root id) overrides the stored width/height used as the
+   * scale base — pass a gesture's effective (layout) size so the committed
+   * geometry matches what was dragged. Overlapping roots (a root that is a
+   * descendant of another root) are deduped.
+   */
+  scaleNodes: (
+    ids: string[],
+    factor: number,
+    anchors?: Record<string, { x: number; y: number }>,
+    baseSizes?: Record<string, { width: number; height: number }>,
+  ) => void;
+  booleanOperation: (ids: string[], op: BooleanOpKind) => string | null;
+  convertEmbedToDesign: (id: string) => Promise<string | null>;
+  convertDesignToEmbed: (id: string) => string | null;
+  setPageBackground: (color: string) => void;
+}
+
+// ----- Constants -----
+
+// Properties that affect text measurement
+export const TEXT_MEASURE_PROPS = new Set([
+  "text",
+  "fontSize",
+  "fontFamily",
+  "fontWeight",
+  "fontStyle",
+  "letterSpacing",
+  "lineHeight",
+  "paragraphSpacing",
+  // wght/wdth/opsz axis values change glyph advance widths, same as fontWeight.
+  "fontVariations",
+  "textWidthMode",
+  "textTransform",
+  // maxLines caps auto-height; both re-derive the rendered/measured line set
+  "maxLines",
+  "truncateText",
+  // sizing can force a textWidthMode normalization (fill width => wrap)
+  "sizing",
+  // list markers + indent change wrapping/auto-width (see textWrap.layoutTextParagraphs)
+  "paragraphs",
+  // In path mode, "auto width" resizes to the path's own bbox (see
+  // `measureTextAutoSize`'s textPath special case) — a geometry edit
+  // (dragging an anchor via pathEditMode) must re-run that resync.
+  "textPath",
+]);

@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'"
+    />
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="empty.css" />
+  </head>
+  <body>
+    <main class="empty" id="empty-state">
+      <header class="intro">
+        <h1 class="headline">Where shall we start?</h1>
+        <p class="hint">Canvas, browser and document tabs open here.</p>
+      </header>
+      <p class="note" id="sessions-note" hidden>Background browser sessions are running.</p>
+      <div class="cards">
+        <button id="new-canvas" class="card" aria-labelledby="canvas-cta" aria-describedby="canvas-desc">
+          <span class="preview preview-canvas" aria-hidden="true">
+            <span class="frame frame-a"><span class="bar"></span><span class="line"></span><span class="line short"></span></span>
+            <span class="frame frame-b"><span class="block"></span></span>
+            <span class="frame frame-c"><span class="bar"></span></span>
+            <svg class="cursor" viewBox="-2.4 -2.6 24.2 24.4"><polygon class="arrow-rim" points="2.2,1.6 17.6,8.5 10.8,12.4 6.2,17.7" stroke-width="7.8" stroke-linejoin="round" stroke-linecap="round" /><polygon class="arrow-body" points="2.2,1.6 17.6,8.5 10.8,12.4 6.2,17.7" stroke-width="5.4" stroke-linejoin="round" stroke-linecap="round" /></svg>
+          </span>
+          <span class="body">
+            <span class="title">Canvas</span>
+            <span class="desc" id="canvas-desc">Design screens with the agent on an open canvas.</span>
+            <span class="cta"><span class="cta-label" id="canvas-cta">New canvas tab</span></span>
+          </span>
+        </button>
+        <button id="new-browser" class="card" aria-labelledby="browser-cta" aria-describedby="browser-desc">
+          <span class="preview" aria-hidden="true">
+            <span class="window">
+              <span class="chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="address">sideform.pro</span></span>
+              <span class="page"><span class="line"></span><span class="line short"></span><span class="tile"></span><span class="tile"></span></span>
+            </span>
+          </span>
+          <span class="body">
+            <span class="title">Browser</span>
+            <span class="desc" id="browser-desc">Open a site. The agent can read, test and capture it.</span>
+            <span class="cta"><span class="cta-label" id="browser-cta">New browser tab</span></span>
+          </span>
+        </button>
+        <button id="new-doc" class="card" aria-labelledby="doc-cta" aria-describedby="doc-desc">
+          <span class="preview" aria-hidden="true">
+            <span class="sheet sheet-back"></span>
+            <span class="sheet">
+              <span class="heading"></span><span class="line"></span><span class="line"></span><span class="line short"></span>
+              <span class="check"><span class="box"></span><span class="line"></span></span>
+            </span>
+          </span>
+          <span class="body">
+            <span class="title">Document</span>
+            <span class="desc" id="doc-desc">Write notes, briefs and specs in Markdown.</span>
+            <span class="cta"><span class="cta-label" id="doc-cta">New document</span></span>
+          </span>
+        </button>
+      </div>
+      <section class="recent" id="recent" aria-labelledby="recent-heading" hidden>
+        <div class="recent-header" id="recent-header">
+          <div class="recent-bar" id="recent-bar">
+            <h2 class="recent-heading" id="recent-heading">Recent</h2>
+            <div class="recent-tools">
+              <div class="recent-search-wrap" id="recent-search-wrap" hidden>
+                <span class="recent-search-icon" data-pen-slot="MagnifyingGlass"></span>
+                <input class="recent-search" id="recent-search" type="search" placeholder="Search" aria-label="Search" autocomplete="off" spellcheck="false" />
+                <button class="recent-search-clear" id="recent-search-clear" type="button" aria-label="Clear search" title="Clear search" hidden><span class="recent-search-clear-icon" data-pen-slot="X"></span></button>
+              </div>
+              <button class="recent-tool" id="recent-search-toggle" type="button" aria-label="Search" title="Search" aria-expanded="false"><span class="recent-tool-icon" data-pen-slot="MagnifyingGlass"></span></button>
+              <button class="recent-tool" id="recent-filter-toggle" type="button" aria-label="Filter" title="Filter" aria-haspopup="menu" aria-expanded="false"><span class="recent-tool-icon" data-pen-slot="FunnelSimple"></span></button>
+            </div>
+          </div>
+          <div class="recent-selbar" id="recent-selbar" hidden>
+            <button class="recent-tool" id="recent-clear-selection" type="button" aria-label="Clear selection" title="Clear selection"><span class="recent-tool-icon" data-pen-slot="X"></span></button>
+            <span class="recent-count" id="recent-count" role="status"></span>
+            <span class="recent-note" id="recent-note" role="status"></span>
+            <button class="recent-text-btn" id="recent-select-all" type="button">Select all</button>
+            <button class="recent-text-btn recent-delete" id="recent-delete" type="button"><span class="recent-tool-icon" data-pen-slot="Trash"></span><span>Delete</span></button>
+          </div>
+        </div>
+        <div class="recent-body" id="recent-body">
+        <ul class="recent-list" id="recent-list"></ul>
+        <div class="recent-empty" id="recent-empty" hidden>
+          <p class="recent-empty-text">No matching files</p>
+          <button class="recent-more" id="recent-clear-filters" type="button">Clear search and filters</button>
+        </div>
+        <button class="recent-more" id="recent-more" type="button" hidden></button>
+        </div>
+      </section>
+    </main>
+    <script src="glyphs.js"></script>
+    <script src="relativeTime.js"></script>
+    <script src="recentFilter.js"></script>
+    <script src="emptyRenderer.js"></script>
+  </body>
+</html>

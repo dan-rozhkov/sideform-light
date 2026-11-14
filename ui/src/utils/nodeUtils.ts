@@ -1,0 +1,673 @@
+import type {
+  SceneNode,
+  FrameNode,
+  GroupNode,
+  FlatFrameNode,
+  FlatGroupNode,
+  FlatSceneNode,
+} from "../types/scene";
+import type { ThemeName } from "../types/variable";
+import { isContainerNode } from "../types/scene";
+import { getPreparedNodeEffectiveSize, prepareFrameNode } from "@/utils/instanceUtils";
+import { rectsIntersect } from "@/utils/dragUtils";
+
+export interface ParentContext {
+  parent: FrameNode | GroupNode | null;
+  isInsideAutoLayout: boolean;
+}
+
+/**
+ * Find parent container (Frame or Group) for a node by its ID
+ * Returns parent context with isInsideAutoLayout flag
+ */
+export function findParentFrame(
+  nodes: SceneNode[],
+  targetId: string,
+): ParentContext {
+  // Recursive search in children
+  function searchInChildren(
+    children: SceneNode[],
+    parent: FrameNode | GroupNode | null,
+  ): ParentContext | null {
+    for (const node of children) {
+      if (node.id === targetId) {
+        return {
+          parent,
+          isInsideAutoLayout:
+            (parent?.type === "frame" && parent?.layout?.autoLayout) ?? false,
+        };
+      }
+
+      if (isContainerNode(node)) {
+        const found = searchInChildren(node.children, node);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  // First check top level
+  for (const node of nodes) {
+    if (node.id === targetId) {
+      return { parent: null, isInsideAutoLayout: false };
+    }
+  }
+
+  // Search in container children
+  for (const node of nodes) {
+    if (isContainerNode(node)) {
+      const found = searchInChildren(node.children, node);
+      if (found) return found;
+    }
+  }
+
+  return { parent: null, isInsideAutoLayout: false };
+}
+
+export interface FlatParentContext {
+  parent: FlatFrameNode | FlatGroupNode | null;
+  isInsideAutoLayout: boolean;
+}
+
+/**
+ * O(1) flat-map equivalent of findParentFrame, for panel code that subscribes
+ * to nodesById/parentById instead of the scene tree. Mirrors the
+ * isInsideAutoLayout semantics of findParentFrame.
+ */
+export function getParentContextFlat(
+  nodesById: Record<string, FlatSceneNode>,
+  parentById: Record<string, string | null>,
+  id: string,
+): FlatParentContext {
+  const parentId = parentById[id] ?? null;
+  const raw = parentId ? nodesById[parentId] : null;
+  const parent =
+    raw && (raw.type === "frame" || raw.type === "group") ? raw : null;
+  return {
+    parent,
+    isInsideAutoLayout:
+      parent?.type === "frame" && !!parent.layout?.autoLayout,
+  };
+}
+
+/**
+ * Recursively find a node by ID in the scene tree
+ */
+export function findNodeById(nodes: SceneNode[], id: string): SceneNode | null {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    if (isContainerNode(node)) {
+      const found = findNodeById(node.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * "Slides" = top-level frames, in canvas order (rootIds order — not sorted by
+ * position). Non-frame root nodes (rectangles, text, etc.) and nested frames
+ * are excluded.
+ */
+export function getTopLevelFramesFlat(
+  nodesById: Record<string, FlatSceneNode>,
+  rootIds: string[],
+): FlatFrameNode[] {
+  return rootIds
+    .map((id) => nodesById[id])
+    .filter((node): node is FlatFrameNode => !!node && node.type === "frame");
+}
+
+/**
+ * Get absolute position of a node by traversing parent chain
+ * Returns the accumulated x,y from all parent frames
+ */
+export function getNodeAbsolutePosition(
+  nodes: SceneNode[],
+  targetId: string,
+): { x: number; y: number } | null {
+  function findWithPath(
+    searchNodes: SceneNode[],
+    accX: number,
+    accY: number,
+  ): { x: number; y: number } | null {
+    for (const node of searchNodes) {
+      if (node.id === targetId) {
+        return { x: accX + node.x, y: accY + node.y };
+      }
+      if (isContainerNode(node)) {
+        const found = findWithPath(node.children, accX + node.x, accY + node.y);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  return findWithPath(nodes, 0, 0);
+}
+
+/**
+ * Check if targetId is a descendant of ancestorId anywhere in the node tree.
+ * Used for nested selection to determine if a container is an ancestor of the entered container.
+ */
+export function isDescendantOf(
+  nodes: SceneNode[],
+  ancestorId: string,
+  targetId: string,
+): boolean {
+  // First find the ancestor node
+  const ancestor = findNodeById(nodes, ancestorId);
+  if (!ancestor || !isContainerNode(ancestor)) return false;
+
+  // Then check if targetId is nested inside it
+  function searchIn(children: SceneNode[]): boolean {
+    for (const child of children) {
+      if (child.id === targetId) return true;
+      if (isContainerNode(child)) {
+        if (searchIn(child.children)) return true;
+      }
+    }
+    return false;
+  }
+
+  return searchIn(ancestor.children);
+}
+
+/**
+ * Collect `rootIds` plus every descendant id reachable through `childrenById`
+ * (pre-order, duplicates included if roots overlap — callers that need a
+ * dedup'd/pruned set should wrap in `new Set(...)`).
+ *
+ * Used to build narrow, shallow-comparable store subscriptions: selecting
+ * `ids.map(id => nodesById[id])` via `useShallow` re-renders only when a node
+ * *inside these specific subtrees* changes (its `nodesById[id]` entry gets a
+ * new reference), not on every scene mutation — `basicMutations.ts` only
+ * replaces the touched id's entry in `nodesById`/`childrenById`, so untouched
+ * entries keep their original object identity across mutations.
+ */
+export function collectSubtreeIds(
+  rootIds: readonly string[],
+  childrenById: Record<string, string[]>,
+): string[] {
+  const ids: string[] = [];
+  const stack: string[] = [...rootIds];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    ids.push(id);
+    const children = childrenById[id];
+    if (children) {
+      for (const childId of children) {
+        stack.push(childId);
+      }
+    }
+  }
+  return ids;
+}
+
+/**
+ * Get all ancestor IDs for a node by walking the parent chain upwards.
+ * Returns ancestors from immediate parent to root (bottom-up order).
+ */
+export function getAncestorIds(
+  parentById: Record<string, string | null>,
+  nodeId: string,
+): string[] {
+  const ancestors: string[] = [];
+  let current = parentById[nodeId];
+  while (current != null) {
+    ancestors.push(current);
+    current = parentById[current];
+  }
+  return ancestors;
+}
+
+/**
+ * Result of `findHiddenSelfOrAncestor`: identifies the single node — the
+ * target itself, or the nearest ancestor walking up `parentById` — whose own
+ * `visible === false` or `enabled === false` makes the target effectively
+ * invisible on the real canvas. `null` means the target actually renders
+ * (every node in its ancestor chain, itself included, is both visible and
+ * enabled).
+ */
+export interface HiddenAncestorResult {
+  /** The id of the node carrying the hiding flag. */
+  nodeId: string;
+  /** True when it's the target node itself, false when it's an ancestor. */
+  isSelf: boolean;
+  /** Which flag made the node hidden — `enabled` covers instance overrides. */
+  reason: "visible" | "enabled";
+}
+
+/**
+ * A node is only actually drawn on the canvas when it — AND every one of its
+ * ancestors — has `visible !== false` AND `enabled !== false` (Figma/Pixi
+ * containment: a hidden or disabled frame/group takes its whole subtree off
+ * screen; `enabled` in particular is how a `ref` instance's overrides hide a
+ * component-internal node, see `enabled?: boolean` on scene nodes in
+ * `types/scene.ts`). `EmbedLayer.tsx` and `collectHiddenNodeIds` in
+ * `webmcp/sharedViewRedaction.ts` apply the same containment rule for the
+ * same reason. Reuses `getAncestorIds` rather than re-walking `parentById` —
+ * mirror, don't duplicate, that walk.
+ *
+ * Returns the *nearest* hidden node in the chain (self checked first, then
+ * immediate parent upward) so a caller can report specifically what needs to
+ * become visible/enabled again — reporting only "something is hidden" would
+ * leave an agent guessing between the node and an ancestor several levels up.
+ */
+export function findHiddenSelfOrAncestor(
+  nodesById: Record<string, { visible?: boolean; enabled?: boolean }>,
+  parentById: Record<string, string | null>,
+  nodeId: string,
+): HiddenAncestorResult | null {
+  const hiddenReason = (node: { visible?: boolean; enabled?: boolean } | undefined) => {
+    if (node?.visible === false) return "visible" as const;
+    if (node?.enabled === false) return "enabled" as const;
+    return null;
+  };
+
+  const selfReason = hiddenReason(nodesById[nodeId]);
+  if (selfReason) {
+    return { nodeId, isSelf: true, reason: selfReason };
+  }
+  for (const ancestorId of getAncestorIds(parentById, nodeId)) {
+    const ancestorReason = hiddenReason(nodesById[ancestorId]);
+    if (ancestorReason) {
+      return { nodeId: ancestorId, isSelf: false, reason: ancestorReason };
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve effective theme for a node by walking ancestor frames.
+ * Frame `themeOverride` affects descendants, not the frame itself.
+ */
+export function getThemeFromAncestorFrames(
+  parentById: Record<string, string | null>,
+  nodesById: Record<string, { type: string; themeOverride?: ThemeName }>,
+  nodeId: string,
+  fallbackTheme: ThemeName,
+): ThemeName {
+  const ancestors = getAncestorIds(parentById, nodeId);
+  let theme: ThemeName = fallbackTheme;
+
+  // Apply from root ancestor down to immediate parent.
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    const ancestor = nodesById[ancestors[i]];
+    if (ancestor?.type === "frame" && ancestor.themeOverride) {
+      theme = ancestor.themeOverride;
+    }
+  }
+
+  return theme;
+}
+
+/**
+ * Resolve effective theme for a target node inside an arbitrary scene subtree.
+ */
+export function findEffectiveThemeInTree(
+  nodes: SceneNode[],
+  targetId: string,
+  fallbackTheme: ThemeName,
+): ThemeName | null {
+  const search = (items: SceneNode[], inheritedTheme: ThemeName): ThemeName | null => {
+    for (const node of items) {
+      if (node.id === targetId) {
+        return inheritedTheme;
+      }
+      if (isContainerNode(node)) {
+        const childTheme =
+          node.type === "frame" && node.themeOverride
+            ? node.themeOverride
+            : inheritedTheme;
+        const found = search(node.children, childTheme);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  return search(nodes, fallbackTheme);
+}
+
+/**
+ * Compute absolute position of a node by walking up the flat parent chain.
+ * Works with the flat store representation (nodesById / parentById).
+ */
+export function getAbsolutePositionFlat(
+  nodeId: string,
+  nodesById: Record<string, { x: number; y: number }>,
+  parentById: Record<string, string | null>,
+): { x: number; y: number } {
+  let absX = 0;
+  let absY = 0;
+  let currentId: string | null = nodeId;
+
+  while (currentId) {
+    const node = nodesById[currentId];
+    if (node) {
+      absX += node.x;
+      absY += node.y;
+    }
+    currentId = parentById[currentId] ?? null;
+  }
+
+  return { x: absX, y: absY };
+}
+
+/**
+ * Check if targetId is a descendant of ancestorId using the flat parentById map.
+ * O(depth) instead of O(n) — walks the parent chain from targetId upwards.
+ */
+export function isDescendantOfFlat(
+  parentById: Record<string, string | null>,
+  ancestorId: string,
+  targetId: string,
+): boolean {
+  let current = parentById[targetId];
+  while (current != null) {
+    if (current === ancestorId) return true;
+    current = parentById[current];
+  }
+  return false;
+}
+
+/**
+ * Get absolute position of a node, taking into account Yoga layout calculations
+ * for auto-layout frames. This is necessary because children inside auto-layout
+ * frames have their positions computed by Yoga, not stored in node.x/y.
+ */
+export function getNodeAbsolutePositionWithLayout(
+  nodes: SceneNode[],
+  targetId: string,
+  calculateLayoutForFrame: (frame: FrameNode) => SceneNode[],
+): { x: number; y: number } | null {
+  function findWithPath(
+    searchNodes: SceneNode[],
+    accX: number,
+    accY: number,
+    parentFrame: FrameNode | null,
+  ): { x: number; y: number } | null {
+    // If parent is an auto-layout frame, use prepared children for consistent layout resolution.
+    let effectiveNodes = searchNodes;
+    if (parentFrame?.layout?.autoLayout) {
+      effectiveNodes = prepareFrameNode(parentFrame, calculateLayoutForFrame).layoutChildren;
+    }
+
+    for (const node of effectiveNodes) {
+      if (node.id === targetId) {
+        return { x: accX + node.x, y: accY + node.y };
+      }
+      if (isContainerNode(node)) {
+        const found = findWithPath(
+          node.children,
+          accX + node.x,
+          accY + node.y,
+          node.type === "frame" ? node : null,
+        );
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  return findWithPath(nodes, 0, 0, null);
+}
+
+/**
+ * Get effective size of a node, taking into account Yoga layout calculations.
+ * For nodes inside auto-layout frames, width/height may be computed by Yoga.
+ * For fit_content frames, intrinsic size is calculated.
+ */
+export function getNodeEffectiveSize(
+  nodes: SceneNode[],
+  targetId: string,
+  calculateLayoutForFrame: (frame: FrameNode) => SceneNode[],
+): { width: number; height: number } | null {
+  function findWithPath(
+    searchNodes: SceneNode[],
+    parentFrame: FrameNode | null,
+  ): { width: number; height: number } | null {
+    // If parent is an auto-layout frame, use prepared children for consistent layout resolution.
+    let effectiveNodes = searchNodes;
+    if (parentFrame?.layout?.autoLayout) {
+      effectiveNodes = prepareFrameNode(parentFrame, calculateLayoutForFrame).layoutChildren;
+    }
+
+    for (const node of effectiveNodes) {
+      if (node.id === targetId) {
+        return getPreparedNodeEffectiveSize(node, nodes, calculateLayoutForFrame);
+      }
+      if (isContainerNode(node)) {
+        const found = findWithPath(
+          node.children,
+          node.type === "frame" ? node : null,
+        );
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  return findWithPath(nodes, null);
+}
+
+/** Whether `child` is visible/enabled and contains the given local point. */
+function isChildHitAt(child: SceneNode, localX: number, localY: number): boolean {
+  if (child.visible === false || child.enabled === false) return false;
+  return (
+    localX >= child.x &&
+    localX <= child.x + child.width &&
+    localY >= child.y &&
+    localY <= child.y + child.height
+  );
+}
+
+/**
+ * Find a child node at the given local coordinates (relative to parent)
+ * Returns the ID of the child at that position, or null if none found
+ * Searches from top to bottom (last child to first) for correct z-order
+ */
+export function findChildAtPosition(
+  children: SceneNode[],
+  localX: number,
+  localY: number,
+): string | null {
+  for (let i = children.length - 1; i >= 0; i--) {
+    const child = children[i];
+    if (isChildHitAt(child, localX, localY)) {
+      return child.id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Find the deepest (most nested) child node at the given local coordinates.
+ * Coordinates are relative to the current parent node.
+ */
+export function findDeepestChildAtPosition(
+  children: SceneNode[],
+  localX: number,
+  localY: number,
+): string | null {
+  for (let i = children.length - 1; i >= 0; i--) {
+    const child = children[i];
+    if (isChildHitAt(child, localX, localY)) {
+      if (isContainerNode(child)) {
+        const nestedId = findDeepestChildAtPosition(
+          child.children,
+          localX - child.x,
+          localY - child.y,
+        );
+        if (nestedId) return nestedId;
+      }
+      return child.id;
+    }
+  }
+  return null;
+}
+
+interface AbsoluteRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface FrameHitResult {
+  frame: FrameNode;
+  absoluteX: number;
+  absoluteY: number;
+}
+
+function rectContains(outer: AbsoluteRect, inner: AbsoluteRect): boolean {
+  return (
+    inner.x >= outer.x &&
+    inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width &&
+    inner.y + inner.height <= outer.y + outer.height
+  );
+}
+
+/**
+ * Generic frame-tree search that walks nodes in reverse z-order,
+ * resolving auto-layout positions, and delegates hit-testing to callbacks.
+ */
+function searchFrameTree(
+  nodes: SceneNode[],
+  targetRect: AbsoluteRect,
+  calculateLayoutForFrame: (frame: FrameNode) => SceneNode[],
+  options: {
+    /** Return true to skip this node before computing its rect. */
+    skipNode?: (node: SceneNode) => boolean;
+    /** Return true if the node should be considered a candidate (pre-recursion check). */
+    testRect: (nodeRect: AbsoluteRect, targetRect: AbsoluteRect) => boolean;
+    /** Return true if a frame node should be returned as a hit (post-recursion check). */
+    acceptFrame?: (nodeRect: AbsoluteRect, targetRect: AbsoluteRect) => boolean;
+  },
+): FrameHitResult | null {
+  const { skipNode, testRect, acceptFrame } = options;
+
+  function search(
+    searchNodes: SceneNode[],
+    accX: number,
+    accY: number,
+    parentFrame: FrameNode | null,
+  ): FrameHitResult | null {
+    let effectiveNodes = searchNodes;
+    if (parentFrame?.layout?.autoLayout) {
+      effectiveNodes = prepareFrameNode(parentFrame, calculateLayoutForFrame).layoutChildren;
+    }
+
+    for (let i = effectiveNodes.length - 1; i >= 0; i--) {
+      const node = effectiveNodes[i];
+      if (node.visible === false || node.enabled === false) continue;
+      if (skipNode?.(node)) continue;
+
+      const { width, height } = getPreparedNodeEffectiveSize(
+        node,
+        nodes,
+        calculateLayoutForFrame,
+      );
+      const absX = accX + node.x;
+      const absY = accY + node.y;
+      const nodeRect: AbsoluteRect = { x: absX, y: absY, width, height };
+
+      if (!testRect(nodeRect, targetRect)) continue;
+
+      if (isContainerNode(node)) {
+        const childHit = search(
+          node.children,
+          absX,
+          absY,
+          node.type === "frame" ? node : null,
+        );
+        if (childHit) return childHit;
+      }
+
+      if (node.type === "frame") {
+        const shouldAccept = acceptFrame
+          ? acceptFrame(nodeRect, targetRect)
+          : true;
+        if (shouldAccept) {
+          return { frame: node, absoluteX: absX, absoluteY: absY };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  return search(nodes, 0, 0, null);
+}
+
+/**
+ * Find the top-most/deepest frame that intersects with a world-space rectangle.
+ * Useful for inserting freshly created nodes into a frame under them.
+ */
+export function findTopmostFrameIntersectingRectWithLayout(
+  nodes: SceneNode[],
+  targetRect: AbsoluteRect,
+  calculateLayoutForFrame: (frame: FrameNode) => SceneNode[],
+): FrameHitResult | null {
+  return searchFrameTree(nodes, targetRect, calculateLayoutForFrame, {
+    testRect: (nodeRect, target) => rectsIntersect(target, nodeRect),
+  });
+}
+
+/**
+ * Find the top-most/deepest frame that fully contains a world-space rectangle.
+ * Use this when deciding whether a newly drawn node should become a child.
+ */
+export function findTopmostFrameContainingRectWithLayout(
+  nodes: SceneNode[],
+  targetRect: AbsoluteRect,
+  calculateLayoutForFrame: (frame: FrameNode) => SceneNode[],
+): FrameHitResult | null {
+  return searchFrameTree(nodes, targetRect, calculateLayoutForFrame, {
+    skipNode: (node) => node.type !== "frame" && node.type !== "group",
+    testRect: (nodeRect, target) => rectContains(nodeRect, target),
+  });
+}
+
+/**
+ * Find the top-most/deepest frame that is fully contained by a world-space rectangle.
+ * Useful when a newly drawn frame should become parent of an existing frame under it.
+ */
+export function findTopmostFrameContainedByRectWithLayout(
+  nodes: SceneNode[],
+  targetRect: AbsoluteRect,
+  calculateLayoutForFrame: (frame: FrameNode) => SceneNode[],
+): FrameHitResult | null {
+  return searchFrameTree(nodes, targetRect, calculateLayoutForFrame, {
+    testRect: (nodeRect, target) => rectsIntersect(target, nodeRect),
+    acceptFrame: (nodeRect, target) => rectContains(target, nodeRect),
+  });
+}
+
+/**
+ * Find the nearest parent frame for a node inside a component tree.
+ * Used for Shift+Enter to select the parent container in instance editing.
+ */
+export function findParentFrameInComponent(
+  children: SceneNode[],
+  targetId: string,
+  parent: FrameNode,
+): FrameNode | null {
+  for (const child of children) {
+    if (child.id === targetId) return parent;
+    if (child.type === "frame") {
+      const found = findParentFrameInComponent(child.children, targetId, child);
+      if (found) return found;
+    } else if (child.type === "group") {
+      const found = findParentFrameInComponent(
+        (child as GroupNode).children,
+        targetId,
+        parent,
+      );
+      if (found) return found;
+    }
+  }
+  return null;
+}

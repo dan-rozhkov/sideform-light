@@ -1,0 +1,174 @@
+"use client";
+
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
+import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
+
+import { cn } from "@/lib/utils";
+import { usePointerDragGesture } from "@/hooks/usePointerDragGesture";
+import {
+  DRAGGABLE_SURFACE_CLASS,
+  DraggableSurfaceHandle,
+} from "@/components/ui/DraggableSurface";
+import {
+  clampPositionToViewport,
+  computeDragPosition,
+  type DragOrigin,
+  type Point,
+} from "@/components/ui/popoverDrag";
+
+function Popover({ ...props }: PopoverPrimitive.Root.Props) {
+  return <PopoverPrimitive.Root data-slot="popover" {...props} />;
+}
+
+function PopoverTrigger({ ...props }: PopoverPrimitive.Trigger.Props) {
+  return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />;
+}
+
+function PopoverContent({
+  align = "start",
+  alignOffset = 0,
+  side = "left",
+  sideOffset = 8,
+  className,
+  draggable = false,
+  dragHandleContent = "Popover",
+  children,
+  ...props
+}: PopoverPrimitive.Popup.Props &
+  Pick<
+    PopoverPrimitive.Positioner.Props,
+    "align" | "alignOffset" | "side" | "sideOffset"
+  > & {
+    /**
+     * Opt-in Figma-style tear-off: renders a drag handle above the content
+     * and lets the user grab it to place the popover anywhere on screen,
+     * switching from trigger-anchored positioning to a fixed viewport
+     * position clamped to stay on screen (see `popoverDrag.ts`). Not the
+     * native HTML5 `draggable` attribute — this never reaches the DOM.
+     * Position always resets to anchored on the next open: the popover
+     * subtree unmounts on close (no `keepMounted`), taking this component's
+     * local drag state with it.
+     */
+    draggable?: boolean;
+    /** Title or other content displayed beside the drag icon in the handle. */
+    dragHandleContent?: ReactNode;
+  }) {
+  const positionerRef = useRef<HTMLDivElement>(null);
+  const [tornOffPosition, setTornOffPosition] = useState<Point | null>(null);
+  // Pointer-capture drag/window-listener wiring, shared with PluginPanels'
+  // titlebar drag and resize handle (`usePointerDragGesture.ts`).
+  const drag = usePointerDragGesture();
+
+  const handleDragHandlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      const positionerEl = positionerRef.current;
+      if (!positionerEl) return;
+
+      const rect = positionerEl.getBoundingClientRect();
+      const origin: DragOrigin = {
+        pointer: { x: event.clientX, y: event.clientY },
+        position: { x: rect.left, y: rect.top },
+      };
+      const size = { width: rect.width, height: rect.height };
+      // Tear off immediately at the current (anchored) position — no visual
+      // jump before the first pointer move.
+      setTornOffPosition(origin.position);
+
+      drag.start(event, (moveEvent) => {
+        setTornOffPosition(
+          computeDragPosition(
+            origin,
+            { x: moveEvent.clientX, y: moveEvent.clientY },
+            size,
+            { width: window.innerWidth, height: window.innerHeight },
+          ),
+        );
+      });
+    },
+    [drag],
+  );
+
+  // Tear down a drag that is still active when the popover unmounts (e.g.
+  // dismissed mid-drag), so its window listeners don't outlive the component.
+  useEffect(() => () => drag.cancel(), [drag]);
+
+  // Keep a torn-off popover on screen when the viewport shrinks (window resize
+  // / orientation change), matching the clamp applied during the drag itself.
+  const isTornOff = tornOffPosition !== null;
+  useEffect(() => {
+    if (!isTornOff) return;
+    const onResize = () => {
+      const positionerEl = positionerRef.current;
+      if (!positionerEl) return;
+      const rect = positionerEl.getBoundingClientRect();
+      setTornOffPosition((current) =>
+        current
+          ? clampPositionToViewport(
+              current,
+              { width: rect.width, height: rect.height },
+              { width: window.innerWidth, height: window.innerHeight },
+            )
+          : current,
+      );
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [isTornOff]);
+
+  const positionerStyle = tornOffPosition
+    ? {
+        position: "fixed" as const,
+        top: tornOffPosition.y,
+        left: tornOffPosition.x,
+        right: "auto",
+        bottom: "auto",
+        transform: "none",
+      }
+    : undefined;
+
+  return (
+    <PopoverPrimitive.Portal>
+      <PopoverPrimitive.Positioner
+        ref={positionerRef}
+        className="isolate z-[10050] outline-none"
+        align={align}
+        alignOffset={alignOffset}
+        side={side}
+        sideOffset={sideOffset}
+        style={positionerStyle}
+      >
+        <PopoverPrimitive.Popup
+          data-slot="popover-content"
+          className={cn(
+            // Mirrors the existing color-picker popover surface so all popovers
+            // in the editor read as the same object.
+            "data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-99 data-open:zoom-in-97 z-50 flex w-[220px] flex-col gap-2 p-3 data-open:duration-250 data-closed:duration-150 ease-smooth-out",
+            DRAGGABLE_SURFACE_CLASS,
+            className,
+          )}
+          {...props}
+        >
+          {draggable && (
+            // Plain in-flow bar (no edge-bleed negative margins) so it looks
+            // right regardless of a consumer's own padding overrides (e.g.
+            // TypographySection's text-styles popover uses `p-0`).
+            <DraggableSurfaceHandle onPointerDown={handleDragHandlePointerDown}>
+              {dragHandleContent}
+            </DraggableSurfaceHandle>
+          )}
+          {children}
+        </PopoverPrimitive.Popup>
+      </PopoverPrimitive.Positioner>
+    </PopoverPrimitive.Portal>
+  );
+}
+
+export { Popover, PopoverTrigger, PopoverContent };

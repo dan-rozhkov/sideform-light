@@ -1,0 +1,52 @@
+import {
+  TextAaIcon,
+  DatabaseIcon,
+  ImageIcon,
+  MagnifyingGlassIcon,
+  type Icon,
+} from "@/components/icons";
+
+/**
+ * A one-click prompt shown in the on-canvas frame agent popup. Clicking an
+ * action launches a fresh Design Agent chat seeded with `prompt`, scoped to
+ * the selected frame. No screenshot is attached (`launchFrameAgentChat`) —
+ * the frame's id rides along in canvasContext, and a prompt that needs to
+ * see the frame should tell the agent to call `get_screenshot` itself.
+ */
+export interface FrameQuickAction {
+  id: string;
+  label: string;
+  icon: Icon;
+  prompt: string;
+}
+
+export const FRAME_QUICK_ACTIONS: FrameQuickAction[] = [
+  {
+    id: "rename-layers",
+    label: "Rename layers",
+    icon: TextAaIcon,
+    prompt:
+      "Rename the layers inside this frame to short, meaningful names based on their content and role (e.g. \"Heading\", \"Price\", \"CTA button\"). Don't change any visuals — only the layer names.",
+  },
+  {
+    id: "fill-real-data",
+    label: "Fill with real data",
+    icon: DatabaseIcon,
+    prompt:
+      "Replace the placeholder text and content in this frame with realistic, plausible real-world data (real-sounding names, prices, dates, copy) that fits the design's purpose. Keep all styling, layout, spacing and fonts exactly as they are.",
+  },
+  {
+    id: "generate-image",
+    label: "Generate image",
+    icon: ImageIcon,
+    prompt:
+      "Use the `generate_frame_image` tool to generate an image for this frame and set it as the frame's fill in a single step. If you need to see the frame first to decide what imagery fits its purpose (e.g. a hero background, a product photo, a textured backdrop), call `get_screenshot` with the selected frame's id — if that tool isn't available, work from the frame's existing content and context instead. Then call `generate_frame_image` with a detailed prompt and this frame's id. Do NOT use `generate_image` + a manual fill, and do NOT use placeholder/stock images (no picsum) — the real generated image must land on the frame.",
+  },
+  {
+    id: "find-references",
+    label: "Find references",
+    icon: MagnifyingGlassIcon,
+    prompt:
+      "Find reference screens and design patterns similar to this frame's layout and purpose. Show inspiring real-world examples I can learn from.",
+  },
+];

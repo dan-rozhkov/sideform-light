@@ -1,0 +1,254 @@
+import { CanvasTextMetrics, Container, Graphics } from "pixi.js";
+import { useLayoutStore } from "@/store/layoutStore";
+import { useSceneStore } from "@/store/sceneStore";
+import { useViewportStore } from "@/store/viewportStore";
+import { getNodeAbsolutePositionWithLayout, getNodeEffectiveSize } from "@/utils/nodeUtils";
+import type {
+  FlatSceneNode,
+  TextNode,
+} from "@/types/scene";
+import { applyTextTransform, wrapTextToLines } from "@/utils/textMeasure";
+import { buildTextStyle } from "@/pixi/renderers/textRenderer";
+import { HATCH_SPACING, SELECTION_COLOR } from "./constants";
+
+export type Rect = { x: number; y: number; width: number; height: number };
+
+/**
+ * Snap a node's draw rect to the rounding/clamping embeds render with
+ * (integer x/y, width/height floored to at least 1px) — embeds are DOM
+ * content rasterized at integer pixel boundaries, so a fractional rect would
+ * disagree with what's actually drawn. Non-embed nodes pass through
+ * unchanged. Pure function (no store/Pixi dependency) so it can be reused
+ * anywhere a node's rect needs to match the selection overlay exactly —
+ * e.g. `measureToolController`'s `defaultGetRect`.
+ */
+export function getEmbedAwareDrawRect(
+  node: FlatSceneNode,
+  absPos: { x: number; y: number },
+  size: { width: number; height: number },
+): Rect {
+  if (node.type !== "embed") {
+    return { x: absPos.x, y: absPos.y, width: size.width, height: size.height };
+  }
+  return {
+    x: Math.round(absPos.x),
+    y: Math.round(absPos.y),
+    width: Math.max(1, Math.round(size.width)),
+    height: Math.max(1, Math.round(size.height)),
+  };
+}
+
+export function createOverlayHelpers(sceneRoot: Container) {
+  function findNodeContainerById(
+    root: Container,
+    nodeId: string,
+  ): Container | null {
+    for (const child of root.children) {
+      if (!(child instanceof Container)) continue;
+      if (child.label === nodeId) return child;
+      const found = findNodeContainerById(child, nodeId);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function getRenderedNodeRect(nodeId: string): Rect | null {
+    const nodeContainer = findNodeContainerById(sceneRoot, nodeId);
+    if (!nodeContainer) return null;
+    const b = nodeContainer.getBounds();
+    if (!Number.isFinite(b.x) || !Number.isFinite(b.y) || !Number.isFinite(b.width) || !Number.isFinite(b.height)) {
+      return null;
+    }
+    const { x: viewportX, y: viewportY, scale } = useViewportStore.getState();
+    const safeScale = scale || 1;
+    return {
+      x: (b.x - viewportX) / safeScale,
+      y: (b.y - viewportY) / safeScale,
+      width: b.width / safeScale,
+      height: b.height / safeScale,
+    };
+  }
+
+  function getAbsolutePosition(nodeId: string): { x: number; y: number } | null {
+    const nodes = useSceneStore.getState().getNodes();
+    const calculateLayoutForFrame = useLayoutStore.getState().calculateLayoutForFrame;
+    const layoutPos = getNodeAbsolutePositionWithLayout(
+      nodes,
+      nodeId,
+      calculateLayoutForFrame,
+    );
+    if (layoutPos) return layoutPos;
+
+    const renderedRect = getRenderedNodeRect(nodeId);
+    if (!renderedRect) return null;
+    return { x: renderedRect.x, y: renderedRect.y };
+  }
+
+  function getEffectiveSize(nodeId: string): { width: number; height: number } | null {
+    const state = useSceneStore.getState();
+    const node = state.nodesById[nodeId];
+    if (!node) return null;
+
+    const sceneNodes = state.getNodes();
+    const calculateLayoutForFrame = useLayoutStore.getState().calculateLayoutForFrame;
+    const layoutSize = getNodeEffectiveSize(sceneNodes, nodeId, calculateLayoutForFrame);
+    if (layoutSize) return layoutSize;
+
+    const renderedRect = getRenderedNodeRect(nodeId);
+    if (renderedRect) {
+      return { width: renderedRect.width, height: renderedRect.height };
+    }
+
+    return { width: node.width, height: node.height };
+  }
+
+  function getSelectionColor(): number {
+    return SELECTION_COLOR;
+  }
+
+  const getDrawRect = getEmbedAwareDrawRect;
+
+  /** Combines getAbsolutePosition + getEffectiveSize + getDrawRect for a single node. */
+  function getNodeDrawRect(nodeId: string): Rect | null {
+    const node = useSceneStore.getState().nodesById[nodeId];
+    if (!node) return null;
+    const absPos = getAbsolutePosition(nodeId);
+    if (!absPos) return null;
+    const effectiveSize = getEffectiveSize(nodeId);
+    const width = effectiveSize?.width ?? node.width;
+    const height = effectiveSize?.height ?? node.height;
+    return getDrawRect(node, absPos, { width, height });
+  }
+
+  return {
+    getAbsolutePosition,
+    getEffectiveSize,
+    getSelectionColor,
+    getDrawRect,
+    getNodeDrawRect,
+  };
+}
+
+export type OverlayHelpers = ReturnType<typeof createOverlayHelpers>;
+
+/** Draw text baseline indicators for a text node. */
+export function drawTextBaselines(
+  gfx: Graphics,
+  node: TextNode,
+  absX: number,
+  absY: number,
+  width: number,
+  scale: number,
+  color: number,
+): void {
+  const style = buildTextStyle(node);
+  // The renderer pre-wraps text itself (style has wordWrap off), so wrapped
+  // modes must measure the wrapped lines, not the raw text.
+  const isWrapped =
+    node.textWidthMode === "fixed" || node.textWidthMode === "fixed-height";
+  const measuredText = isWrapped
+    ? wrapTextToLines(node, width).join("\n")
+    : applyTextTransform(node.text ?? "", node.textTransform);
+  const metrics = CanvasTextMetrics.measureText(measuredText, style);
+  const lineWidths = metrics.lineWidths ?? [];
+  const lineCount = Math.max(1, metrics.lines?.length ?? 0);
+  const lineHeight =
+    metrics.lineHeight || (node.fontSize ?? 16) * (node.lineHeight ?? 1.2);
+  const fontAscent = metrics.fontProperties?.ascent ?? (node.fontSize ?? 16) * 0.8;
+  const fontPixelSize =
+    metrics.fontProperties?.fontSize ?? (node.fontSize ?? 16);
+  const baselineOffset = fontAscent + Math.max(0, (lineHeight - fontPixelSize) / 2);
+  const textAlign = node.textAlign ?? "left";
+  const maxLineWidth = lineWidths.length > 0 ? Math.max(...lineWidths) : width;
+  const textBoxWidth =
+    node.textWidthMode === "fixed" || node.textWidthMode === "fixed-height"
+      ? width
+      : maxLineWidth;
+
+  for (let i = 0; i < lineCount; i++) {
+    const lineWidth = lineWidths[i] ?? 0;
+    if (lineWidth <= 0) continue;
+
+    let lineX = absX;
+    if (textAlign === "center") {
+      lineX += (textBoxWidth - lineWidth) / 2;
+    } else if (textAlign === "right") {
+      lineX += textBoxWidth - lineWidth;
+    }
+
+    const lineY = absY + i * lineHeight + baselineOffset;
+    gfx.moveTo(lineX, lineY);
+    gfx.lineTo(lineX + lineWidth, lineY);
+    gfx.stroke({ color, width: 1 / scale });
+  }
+}
+
+/** Draw a semi-transparent filled rect with diagonal hatching lines. */
+export function drawHatchedRect(
+  gfx: Graphics,
+  rect: Rect,
+  color: number,
+  scale: number,
+  alpha: number,
+): void {
+  const { x, y, width: w, height: h } = rect;
+  if (w <= 0 || h <= 0) return;
+
+  // Semi-transparent fill
+  gfx.rect(x, y, w, h);
+  gfx.fill({ color, alpha });
+
+  // Diagonal hatching lines (bottom-left to top-right, 45°)
+  const spacing = HATCH_SPACING / scale;
+  const totalSpan = w + h;
+  const lineWidth = 1 / scale;
+  const maxLines = 200;
+  const effectiveSpacing = Math.max(spacing, totalSpan / maxLines);
+
+  for (let d = effectiveSpacing; d < totalSpan; d += effectiveSpacing) {
+    // Line from (x, y + d) to (x + d, y), clipped to rect
+    const x1 = x + Math.max(0, d - h);
+    const y1 = y + Math.min(d, h);
+    const x2 = x + Math.min(d, w);
+    const y2 = y + Math.max(0, d - w);
+    gfx.moveTo(x1, y1);
+    gfx.lineTo(x2, y2);
+  }
+  gfx.stroke({ color, alpha: alpha * 4, width: lineWidth });
+}
+
+/** Draw a dashed rectangle outline (axis-aligned). */
+export function drawDashedRect(
+  gfx: Graphics,
+  rect: Rect,
+  color: number,
+  scale: number,
+): void {
+  const dash = 4 / scale;
+  const seg = dash * 2; // dash + gap (equal size)
+  const { x, y, width: w, height: h } = rect;
+
+  const drawDashes = (x1: number, y1: number, x2: number, y2: number) => {
+    const horizontal = y1 === y2;
+    const len = horizontal ? Math.abs(x2 - x1) : Math.abs(y2 - y1);
+    const dir = horizontal ? Math.sign(x2 - x1) : Math.sign(y2 - y1);
+    let d = 0;
+    while (d < len) {
+      const end = Math.min(d + dash, len);
+      if (horizontal) {
+        gfx.moveTo(x1 + dir * d, y1);
+        gfx.lineTo(x1 + dir * end, y1);
+      } else {
+        gfx.moveTo(x1, y1 + dir * d);
+        gfx.lineTo(x1, y1 + dir * end);
+      }
+      d += seg;
+    }
+  };
+
+  drawDashes(x, y, x + w, y);         // top
+  drawDashes(x + w, y, x + w, y + h); // right
+  drawDashes(x + w, y + h, x, y + h); // bottom
+  drawDashes(x, y + h, x, y);         // left
+  gfx.stroke({ color, width: 1 / scale });
+}

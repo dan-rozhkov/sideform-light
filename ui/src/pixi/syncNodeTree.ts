@@ -1,0 +1,353 @@
+import { Container, Text } from "pixi.js";
+import { useSelectionStore } from "@/store/selectionStore";
+import { useSceneStore } from "@/store/sceneStore";
+import { useEditorModeStore } from "@/store/editorModeStore";
+import type { FlatSceneNode } from "@/types/scene";
+import type { SceneState } from "@/store/sceneStore";
+import { createNodeContainer } from "./renderers";
+import { applySiblingMasks } from "./renderers/maskHelpers";
+import { isOutlineRenderMode } from "./renderers/outlineHelpers";
+import { withAncestorThemes, getChildrenHost, type SyncContext } from "./syncHelpers";
+
+export function createNodeTreeManager(
+  ctx: SyncContext,
+  getAppliedTextResolution: () => number,
+  onNodeRemoved?: (id: string) => void,
+) {
+  const { sceneRoot, registry } = ctx;
+  let lastOverriddenIds = new Set<string>();
+
+  /**
+   * The set of ids whose container visibility is currently overridden away
+   * from their own `baseVisible` — the edited node (text/embed editing) plus,
+   * while presenting, every root except the active slide. Computed fresh on
+   * every call; compared against the previous call's result so a targeted
+   * pass can visit exactly the ids whose override state might have changed.
+   */
+  function computeOverrides(): Set<string> {
+    const { editingNodeId, editingMode } = useSelectionStore.getState();
+    const overrides = new Set<string>();
+    if ((editingMode === "text" || editingMode === "embed") && editingNodeId) {
+      overrides.add(editingNodeId);
+    }
+
+    // Play/Present isolates the active slide by hiding every other top-level
+    // container (see PresentController, which applies this directly on
+    // enter/index-change/exit). Re-derive the same hide set here too so any
+    // resync this function runs for (selection change, theme update, a full
+    // rebuild off a font-load event, ...) can't clobber it back to visible —
+    // this loop is otherwise the single place that decides final container
+    // visibility on every resync.
+    const modeState = useEditorModeStore.getState();
+    if (modeState.mode === "present") {
+      const activeFrameId = modeState.presentFrameIds[modeState.presentIndex];
+      for (const id of useSceneStore.getState().rootIds) {
+        if (id !== activeFrameId) overrides.add(id);
+      }
+    }
+    return overrides;
+  }
+
+  /**
+   * Re-derives final container visibility from each node's own props plus
+   * any active override (text/embed editing, present-mode isolation).
+   *
+   * Without `affectedIds`: a full registry pass — used by `fullRebuild` and
+   * `incrementalThemeUpdate`, where every container's node reference may
+   * have moved regardless of a scene diff.
+   *
+   * With `affectedIds`: only visits `affectedIds ∪ lastOverriddenIds ∪
+   * newOverrides` — the override state for any id outside that union cannot
+   * have changed, since it wasn't touched by the scene flush and isn't part
+   * of an override transition.
+   */
+  function applyTextEditingVisibility(affectedIds?: Iterable<string>): void {
+    const { editingMode, editingNodeId } = useSelectionStore.getState();
+    const isTextEditing = editingMode === "text" && editingNodeId != null;
+    const isEmbedEditing = editingMode === "embed" && editingNodeId != null;
+
+    const overrides = computeOverrides();
+    const targets = affectedIds == null
+      ? registry.keys()
+      : new Set([...affectedIds, ...lastOverriddenIds, ...overrides]);
+
+    // Play/Present isolates the active slide by hiding every other top-level
+    // container (see PresentController, which applies this directly on
+    // enter/index-change/exit). Re-derive the same hide set here too so any
+    // resync this function runs for (selection change, theme update, a full
+    // rebuild off a font-load event, ...) can't clobber it back to visible —
+    // this loop is otherwise the single place that decides final container
+    // visibility on every resync.
+    const modeState = useEditorModeStore.getState();
+    const isPresenting = modeState.mode === "present";
+    const activeFrameId = modeState.presentFrameIds[modeState.presentIndex];
+    const rootIds = isPresenting ? new Set(useSceneStore.getState().rootIds) : null;
+
+    for (const id of targets) {
+      const entry = registry.get(id);
+      if (!entry) continue;
+      const baseVisible = entry.node.visible !== false && entry.node.enabled !== false;
+      const hideWhileEditing = (
+        (isTextEditing && entry.node.type === "text" && editingNodeId === id) ||
+        (isEmbedEditing && entry.node.type === "embed" && editingNodeId === id)
+      );
+      const hideForPresentIsolation = rootIds !== null && rootIds.has(id) && id !== activeFrameId;
+      entry.container.visible = baseVisible && !hideWhileEditing && !hideForPresentIsolation;
+    }
+
+    lastOverriddenIds = overrides;
+  }
+
+  function buildNodeTree(
+    ids: string[],
+    nodesById: Record<string, FlatSceneNode>,
+    childrenById: Record<string, string[]>,
+    parent: Container,
+  ): void {
+    for (const id of ids) {
+      const node = nodesById[id];
+      if (!node) continue;
+
+      const container = createNodeContainer(node, nodesById, childrenById);
+      registry.set(id, { container, node });
+      parent.addChild(container);
+
+      // Note: children are already created inside createNodeContainer for frames/groups
+      // We still need to register them in our registry
+      registerChildrenRecursive(id, nodesById, childrenById, container);
+    }
+
+    // Root-level nodes are siblings of one another under `parent` too — a
+    // root-level `isMask` node must clip its root-level siblings the same
+    // way frame/group renderers clip their own children internally. Skipped
+    // in outline mode, which never applies masks.
+    if (!isOutlineRenderMode()) {
+      applySiblingMasks(ids, nodesById, (id) => parent.getChildByLabel(id), parent);
+    }
+  }
+
+  function registerChildrenRecursive(
+    nodeId: string,
+    nodesById: Record<string, FlatSceneNode>,
+    childrenById: Record<string, string[]>,
+    parentContainer: Container,
+  ): void {
+    const childIds = childrenById[nodeId] ?? [];
+    const childrenHost = getChildrenHost(parentContainer);
+
+    if (!childrenHost || childIds.length === 0) return;
+
+    for (let i = 0; i < childIds.length; i++) {
+      const childId = childIds[i];
+      const childNode = nodesById[childId];
+      if (!childNode) continue;
+
+      const childContainer = childrenHost.children[i] as Container | undefined;
+      if (childContainer) {
+        registry.set(childId, { container: childContainer, node: childNode });
+        // Recurse for nested containers
+        registerChildrenRecursive(childId, nodesById, childrenById, childContainer);
+      }
+    }
+  }
+
+  function createAndAttachNode(id: string, state: SceneState): void {
+    if (registry.has(id)) return;
+
+    const node = state.nodesById[id];
+    if (!node) return;
+
+    const parentId = state.parentById[id];
+    // Parent containers create/register their subtree in one go.
+    // If parent isn't ready yet, avoid creating a duplicate detached child container.
+    if (parentId && !registry.has(parentId)) return;
+
+    // Push ancestor theme overrides so colors resolve correctly
+    let container: Container;
+    withAncestorThemes(id, state.parentById, state.nodesById, () => {
+      container = createNodeContainer(
+        node,
+        state.nodesById,
+        state.childrenById,
+      );
+    });
+    // createNodeContainer is always assigned inside withAncestorThemes callback
+    const createdContainer = container!;
+
+    registry.set(id, { container: createdContainer, node });
+
+    // Find parent and attach
+    if (parentId) {
+      const parentEntry = registry.get(parentId);
+      if (parentEntry) {
+        const childrenHost = getChildrenHost(parentEntry.container);
+        if (childrenHost) {
+          childrenHost.addChild(createdContainer);
+          // A new sibling can shift masking (become a masker, or land inside/
+          // outside an existing masked run) — re-resolve the whole host.
+          // Skipped in outline mode, which never applies masks.
+          if (!isOutlineRenderMode()) {
+            applySiblingMasks(
+              state.childrenById[parentId] ?? [],
+              state.nodesById,
+              (siblingId) => childrenHost.getChildByLabel(siblingId),
+              childrenHost,
+            );
+          }
+        }
+      }
+    } else {
+      // Root node
+      sceneRoot.addChild(createdContainer);
+    }
+
+    // Register any nested children
+    registerChildrenRecursive(id, state.nodesById, state.childrenById, createdContainer);
+
+    if (node.type === "text") {
+      const appliedTextResolution = getAppliedTextResolution();
+      const textObj = createdContainer.getChildByLabel("text-content");
+      if (textObj instanceof Text && textObj.resolution !== appliedTextResolution) {
+        textObj.resolution = appliedTextResolution;
+      }
+    }
+  }
+
+  function removeNode(
+    id: string,
+    prevChildrenById: Record<string, string[]>,
+    nextNodesById: Record<string, FlatSceneNode>,
+  ): void {
+    const entry = registry.get(id);
+    if (!entry) return;
+
+    const childIds = prevChildrenById[id] ?? [];
+    for (const childId of childIds) {
+      // If a child still exists in the next state, it was reparented.
+      // Keep its container and let reconcileChildren attach it to the new host.
+      if (nextNodesById[childId]) {
+        const childEntry = registry.get(childId);
+        if (childEntry?.container.parent) {
+          childEntry.container.parent.removeChild(childEntry.container);
+        }
+        continue;
+      }
+      removeNode(childId, prevChildrenById, nextNodesById);
+    }
+
+    if (!entry.container.destroyed) {
+      entry.container.parent?.removeChild(entry.container);
+      entry.container.destroy({ children: true });
+    }
+    registry.delete(id);
+    onNodeRemoved?.(id);
+  }
+
+  function reconcileChildren(state: SceneState, prev: SceneState): void {
+    // Reconcile root level
+    if (state.rootIds !== prev.rootIds) {
+      reconcileChildList(state.rootIds, sceneRoot, state.nodesById);
+    }
+
+    // Reconcile changed parent containers
+    for (const id of Object.keys(state.childrenById)) {
+      if (state.childrenById[id] !== prev.childrenById[id]) {
+        const entry = registry.get(id);
+        if (entry) {
+          const childrenHost = getChildrenHost(entry.container);
+          if (childrenHost) {
+            reconcileChildList(
+              state.childrenById[id],
+              childrenHost,
+              state.nodesById,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  function reconcileChildList(
+    expectedIds: string[],
+    parent: Container,
+    nodesById: Record<string, FlatSceneNode>,
+  ): void {
+    const expectedContainers = new Set<Container>();
+    for (let i = 0; i < expectedIds.length; i++) {
+      const id = expectedIds[i];
+      const entry = registry.get(id);
+      if (!entry) continue;
+      expectedContainers.add(entry.container);
+
+      const currentParent = entry.container.parent;
+      if (currentParent !== parent) {
+        // Reparent
+        currentParent?.removeChild(entry.container);
+        parent.addChildAt(entry.container, Math.min(i, parent.children.length));
+      } else {
+        // Reorder within same parent
+        const currentIndex = parent.getChildIndex(entry.container);
+        if (currentIndex !== i && i < parent.children.length) {
+          parent.setChildIndex(entry.container, Math.min(i, parent.children.length - 1));
+        }
+      }
+    }
+
+    // Remove stale/duplicate children that are not expected in this host.
+    // This prevents ghost copies after move/reparent operations.
+    let registryContainers: Set<Container> | null = null;
+    for (let i = parent.children.length - 1; i >= 0; i--) {
+      const child = parent.children[i];
+      // SAFETY: children hosts (frame-children / group-children) and sceneRoot
+      // only ever receive createNodeContainer outputs, which are Containers, so
+      // `child` is always a Container. The instanceof guard makes that explicit
+      // and skips any unexpected non-Container rather than operating on it blindly.
+      if (!(child instanceof Container)) continue;
+      if (!expectedContainers.has(child)) {
+        parent.removeChild(child);
+        // Destroy true orphans; keep containers still referenced from the
+        // registry (e.g. mid-reparent) — reconcile will re-attach those.
+        if (!registryContainers) {
+          registryContainers = new Set();
+          for (const entry of registry.values()) {
+            registryContainers.add(entry.container);
+          }
+        }
+        if (!subtreeHasRegisteredContainer(child, registryContainers)) {
+          child.destroy({ children: true });
+        }
+      }
+    }
+
+    // Reorders/inserts/removals can all shift masking — re-resolve the host.
+    // Skipped in outline mode, which never applies masks.
+    if (!isOutlineRenderMode()) {
+      applySiblingMasks(expectedIds, nodesById, (id) => parent.getChildByLabel(id), parent);
+    }
+  }
+
+  function subtreeHasRegisteredContainer(
+    container: Container,
+    registered: Set<Container>,
+  ): boolean {
+    if (registered.has(container)) return true;
+    for (const child of container.children) {
+      if (
+        child instanceof Container &&
+        subtreeHasRegisteredContainer(child, registered)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  return {
+    buildNodeTree,
+    registerChildrenRecursive,
+    createAndAttachNode,
+    removeNode,
+    reconcileChildren,
+    applyTextEditingVisibility,
+  };
+}

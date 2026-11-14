@@ -1,0 +1,599 @@
+import type {
+  FlatSceneNode,
+  FlatSnapshot,
+  HistorySnapshot,
+  SceneNode,
+} from "../../types/scene";
+import {
+  isContainerNode,
+  toFlatNode,
+  flattenTree,
+  collectDescendantIds,
+} from "../../types/scene";
+import { loadGoogleFontsFromNodes } from "../../utils/fontUtils";
+import { resolveSlideOrder } from "../../utils/slideOrder";
+import { saveHistory } from "./helpers/history";
+import { useGuidesStore } from "../guidesStore";
+import { useSelectionStore } from "../selectionStore";
+import { useVariableStore } from "../variableStore";
+import { useTextStyleStore } from "../textStyleStore";
+import { useStyleStore } from "../styleStore";
+import { useMeasurementsStore } from "../measurementsStore";
+import {
+  syncTextDimensions,
+  hasTextMeasureProps,
+  syncAllTextDimensionsFlat,
+  resyncAllTextNodeDimensionsInStore,
+} from "./helpers/textSync";
+import {
+  insertTreeIntoFlat,
+  removeNodeAndDescendants,
+  removeOrphanedConnectors,
+} from "./helpers/flatStoreHelpers";
+import { flattenRefNodes } from "../migrations/flattenRefNodes";
+import { markNodesDirty } from "./dirtyTracking";
+import type { SceneState } from "./types";
+import type { StoreApi } from "zustand";
+
+type SetState = StoreApi<SceneState>["setState"];
+type GetState = StoreApi<SceneState>["getState"];
+
+function computeUpdatedNode(
+  existing: FlatSceneNode,
+  updates: Partial<SceneNode>,
+  deepMergeKeys?: readonly string[],
+): FlatSceneNode {
+  let updated = { ...existing, ...updates } as FlatSceneNode;
+  if (deepMergeKeys) {
+    const existingRecord = existing as unknown as Record<string, unknown>;
+    const updatedRecord = updated as unknown as Record<string, unknown>;
+    const updatesRecord = updates as Record<string, unknown>;
+    for (const key of deepMergeKeys) {
+      const existingSub = existingRecord[key];
+      const updateSub = updatesRecord[key];
+      if (
+        existingSub &&
+        typeof existingSub === "object" &&
+        updateSub &&
+        typeof updateSub === "object"
+      ) {
+        updatedRecord[key] = { ...existingSub, ...updateSub };
+      }
+    }
+  }
+  if (updated.type === "text" && hasTextMeasureProps(updates)) {
+    updated = syncTextDimensions(updated);
+  }
+  return updated;
+}
+
+function applySingleNodeUpdate(
+  state: SceneState,
+  id: string,
+  existing: FlatSceneNode,
+  updates: Partial<SceneNode>,
+) {
+  const updated = computeUpdatedNode(existing, updates);
+  const newNodesById = { ...state.nodesById, [id]: updated };
+  return { newNodesById };
+}
+
+function applyNodeUpdatesById(
+  state: SceneState,
+  ids: string[],
+  updatesById: Record<string, Partial<SceneNode>>,
+) {
+  const newNodesById = { ...state.nodesById };
+  for (const id of ids) {
+    const existing = state.nodesById[id];
+    newNodesById[id] = computeUpdatedNode(existing, updatesById[id]);
+  }
+  return { newNodesById };
+}
+
+function applySameUpdateToNodes(
+  newNodesById: Record<string, FlatSceneNode>,
+  ids: string[],
+  updates: Partial<SceneNode>,
+  deepMergeKeys?: readonly string[],
+) {
+  for (const id of ids) {
+    const existing = newNodesById[id];
+    if (!existing) continue;
+    newNodesById[id] = computeUpdatedNode(existing, updates, deepMergeKeys);
+  }
+}
+
+export function createBasicMutations(set: SetState, get: GetState) {
+  return {
+    addNode: (node: SceneNode) => {
+      set((state) => {
+        saveHistory(state);
+        const flat = node.type === "text" ? syncTextDimensions(toFlatNode(node)) : toFlatNode(node);
+        const newNodesById = { ...state.nodesById, [node.id]: flat };
+        const newParentById = { ...state.parentById, [node.id]: null };
+        const newChildrenById = { ...state.childrenById };
+        const newRootIds = [...state.rootIds, node.id];
+
+        // If node is a container with children, insert descendants
+        if (isContainerNode(node) && node.children.length > 0) {
+          newChildrenById[node.id] = node.children.map((c) => c.id);
+          for (const child of node.children) {
+            insertTreeIntoFlat(child, node.id, newNodesById, newParentById, newChildrenById);
+          }
+        }
+
+        return {
+          nodesById: newNodesById,
+          parentById: newParentById,
+          childrenById: newChildrenById,
+          rootIds: newRootIds,
+          _cachedTree: null,
+        };
+      });
+      loadGoogleFontsFromNodes([node]);
+    },
+
+    addChildToFrame: (frameId: string, child: SceneNode) => {
+      set((state) => {
+        saveHistory(state);
+        const newNodesById = { ...state.nodesById };
+        const newParentById = { ...state.parentById };
+        const newChildrenById = { ...state.childrenById };
+
+        // Insert the child (and its subtree) into flat storage
+        insertTreeIntoFlat(child, frameId, newNodesById, newParentById, newChildrenById);
+
+        // Update parent's children list
+        const existingChildren = newChildrenById[frameId] ?? [];
+        newChildrenById[frameId] = [...existingChildren, child.id];
+
+        return {
+          nodesById: newNodesById,
+          parentById: newParentById,
+          childrenById: newChildrenById,
+          _cachedTree: null,
+        };
+      });
+      loadGoogleFontsFromNodes([child]);
+    },
+
+    updateNode: (id: string, updates: Partial<SceneNode>) =>
+      set((state) => {
+        const existing = state.nodesById[id];
+        if (!existing) return state;
+        saveHistory(state);
+
+        const { newNodesById } = applySingleNodeUpdate(
+          state,
+          id,
+          existing,
+          updates,
+        );
+
+        // Marked right before returning the changed state — NOT before this
+        // `set(...)` call — because zustand skips the subscriber notification
+        // entirely when a guard above returns `state` unchanged (Object.is
+        // check), which would leave `armed` stuck true and wrongly bless the
+        // next, unrelated mutation as tracked.
+        markNodesDirty([id]);
+        return { nodesById: newNodesById, _cachedTree: null };
+      }),
+
+    updateMultipleNodes: (ids: string[], updates: Partial<SceneNode>) => {
+      markNodesDirty(ids);
+      set((state) => {
+        saveHistory(state);
+        const newNodesById = { ...state.nodesById };
+        applySameUpdateToNodes(newNodesById, ids, updates);
+
+        return { nodesById: newNodesById, _cachedTree: null };
+      });
+    },
+
+    updateMultipleNodesMerged: (
+      ids: string[],
+      updates: Partial<SceneNode>,
+      deepMergeKeys: readonly string[],
+    ) => {
+      markNodesDirty(ids);
+      set((state) => {
+        saveHistory(state);
+        const newNodesById = { ...state.nodesById };
+        applySameUpdateToNodes(newNodesById, ids, updates, deepMergeKeys);
+
+        return { nodesById: newNodesById, _cachedTree: null };
+      });
+    },
+
+    updateNodeWithoutHistory: (id: string, updates: Partial<SceneNode>) =>
+      set((state) => {
+        const existing = state.nodesById[id];
+        if (!existing) return state;
+
+        const { newNodesById } = applySingleNodeUpdate(
+          state,
+          id,
+          existing,
+          updates,
+        );
+
+        markNodesDirty([id]);
+        return { nodesById: newNodesById, _cachedTree: null };
+      }),
+
+    updateNodesWithoutHistory: (updatesById: Record<string, Partial<SceneNode>>) =>
+      set((state) => {
+        const ids = Object.keys(updatesById).filter((id) => state.nodesById[id]);
+        if (ids.length === 0) return state;
+
+        const { newNodesById } = applyNodeUpdatesById(
+          state,
+          ids,
+          updatesById,
+        );
+
+        markNodesDirty(ids);
+        return { nodesById: newNodesById, _cachedTree: null };
+      }),
+
+    updateNodesById: (updatesById: Record<string, Partial<SceneNode>>) =>
+      set((state) => {
+        const ids = Object.keys(updatesById).filter((id) => state.nodesById[id]);
+        if (ids.length === 0) return state;
+        saveHistory(state);
+
+        const { newNodesById } = applyNodeUpdatesById(
+          state,
+          ids,
+          updatesById,
+        );
+
+        markNodesDirty(ids);
+        return { nodesById: newNodesById, _cachedTree: null };
+      }),
+
+    deleteNode: (id: string) =>
+      set((state) => {
+        if (!state.nodesById[id]) return state;
+        saveHistory(state);
+
+        const parentId = state.parentById[id];
+        const newNodesById = { ...state.nodesById };
+        const newParentById = { ...state.parentById };
+        const newChildrenById = { ...state.childrenById };
+
+        // Remove from parent's children list
+        if (parentId !== null && parentId !== undefined) {
+          newChildrenById[parentId] = (newChildrenById[parentId] ?? []).filter(
+            (cid) => cid !== id,
+          );
+        }
+
+        // Capture the full set of ids being removed (node + descendants) so
+        // connectors anchored to any of them — not just the top node — are cleaned.
+        const removedNodeIds = new Set<string>([
+          id,
+          ...collectDescendantIds(id, state.childrenById),
+        ]);
+
+        // Remove node and all descendants
+        removeNodeAndDescendants(id, newNodesById, newParentById, newChildrenById);
+
+        // Remove connectors that referenced any removed node
+        const orphanedConnectorIds = removeOrphanedConnectors(
+          removedNodeIds,
+          newNodesById,
+          newParentById,
+          newChildrenById,
+        );
+
+        // Drop any pinned measurement touching the deleted node or its
+        // descendants. This is part of the same undo step as the delete
+        // itself: `saveHistory(state)` above already recorded the
+        // pre-deletion state (including the pre-cleanup measurements list),
+        // and `removeMeasurementsForNodes` saves no history of its own.
+        useMeasurementsStore.getState().removeMeasurementsForNodes([...removedNodeIds]);
+
+        // Update rootIds — filter deleted node + orphaned connectors in one pass
+        const removedIds = new Set([id, ...orphanedConnectorIds]);
+        const newRootIds = (parentId === null || parentId === undefined)
+          ? state.rootIds.filter((rid) => !removedIds.has(rid))
+          : (orphanedConnectorIds.length > 0
+              ? state.rootIds.filter((rid) => !removedIds.has(rid))
+              : state.rootIds);
+
+        return {
+          nodesById: newNodesById,
+          parentById: newParentById,
+          childrenById: newChildrenById,
+          rootIds: newRootIds,
+          _cachedTree: null,
+        };
+      }),
+
+    clearNodes: () =>
+      set({
+        nodesById: {},
+        parentById: {},
+        childrenById: {},
+        rootIds: [],
+        _cachedTree: null,
+      }),
+
+    setNodes: (nodes: SceneNode[]) => {
+      const state = get();
+      saveHistory(state);
+      const flat = flattenRefNodes(flattenTree(nodes));
+
+      const synced = syncAllTextDimensionsFlat(flat.nodesById);
+      set({
+        nodesById: synced,
+        parentById: flat.parentById,
+        childrenById: flat.childrenById,
+        rootIds: flat.rootIds,
+        _cachedTree: null,
+      });
+      loadGoogleFontsFromNodes(nodes);
+      // Re-sync once the browser finishes loading any in-flight fonts
+      // (covers custom @font-face fonts, not only Google Fonts).
+      if (typeof document !== "undefined" && "fonts" in document) {
+        document.fonts.ready.then(() => {
+          resyncAllTextNodeDimensionsInStore(get, set);
+        });
+      }
+    },
+
+    setNodesWithoutHistory: (nodes: SceneNode[]) => {
+      const flat = flattenTree(nodes);
+      set({
+        nodesById: flat.nodesById,
+        parentById: flat.parentById,
+        childrenById: flat.childrenById,
+        rootIds: flat.rootIds,
+        _cachedTree: null,
+      });
+    },
+
+    restoreSnapshot: (snapshot: FlatSnapshot | HistorySnapshot) => {
+      const validIds = new Set(Object.keys(snapshot.nodesById));
+      const historySelection = "selection" in snapshot ? snapshot.selection : null;
+      set({
+        nodesById: snapshot.nodesById,
+        parentById: snapshot.parentById,
+        childrenById: snapshot.childrenById,
+        rootIds: snapshot.rootIds,
+        slideOrder: snapshot.slideOrder ?? [],
+        _cachedTree: null,
+      });
+      // Restore variables when the snapshot carries them (all createSnapshot-based
+      // snapshots do), so undo/redo of variable edits round-trips. Snapshots that
+      // omit variables (unknown sources) leave the variable store untouched.
+      if (snapshot.variables) {
+        useVariableStore.setState({ variables: snapshot.variables });
+      }
+      // Restore persistent ruler guides when the snapshot carries them (all
+      // createSnapshot-based snapshots do), mirroring the variables restore
+      // above, so guide create/move/delete round-trips through undo/redo.
+      if (snapshot.guides) {
+        useGuidesStore.getState().setGuides(snapshot.guides);
+      }
+      // Restore text styles when the snapshot carries them (all createSnapshot-based
+      // snapshots do), mirroring the variables restore above, so text-style
+      // add/update/delete round-trips through undo/redo.
+      if (snapshot.textStyles) {
+        useTextStyleStore.setState({ textStyles: snapshot.textStyles });
+      }
+      // Restore shared fill/effect styles the same way (all createSnapshot-based
+      // snapshots carry them), so style add/update/delete/apply/detach
+      // round-trips through undo/redo.
+      if (snapshot.fillStyles) {
+        useStyleStore.setState({ fillStyles: snapshot.fillStyles });
+      }
+      if (snapshot.effectStyles) {
+        useStyleStore.setState({ effectStyles: snapshot.effectStyles });
+      }
+      // Restore persistent pinned measurements the same way (all
+      // createSnapshot-based snapshots carry them), so measurement
+      // add/delete round-trips through undo/redo.
+      if (snapshot.measurements) {
+        useMeasurementsStore.getState().setMeasurements(snapshot.measurements);
+      }
+      if (!historySelection) return;
+      useSelectionStore.setState({
+        selectedIds: historySelection.selectedIds.filter((id) => validIds.has(id)),
+        enteredContainerId:
+          historySelection.enteredContainerId &&
+          validIds.has(historySelection.enteredContainerId)
+            ? historySelection.enteredContainerId
+            : null,
+        lastSelectedId:
+          historySelection.lastSelectedId &&
+          validIds.has(historySelection.lastSelectedId)
+            ? historySelection.lastSelectedId
+            : null,
+        editingNodeId: null,
+        editingMode: null,
+        activeEmbedId: null,
+      });
+    },
+
+    reorderNode: (fromIndex: number, toIndex: number) =>
+      set((state) => {
+        saveHistory(state);
+        const newRootIds = [...state.rootIds];
+        const [removed] = newRootIds.splice(fromIndex, 1);
+        newRootIds.splice(toIndex, 0, removed);
+        return { rootIds: newRootIds, _cachedTree: null };
+      }),
+
+    // Reorders the resolved slide order only — does NOT touch nodesById,
+    // rootIds, or any node coordinates/z-order. `fromIndex`/`toIndex` are
+    // indices into the caller's resolved order (see resolveSlideOrder),
+    // which is persisted verbatim as the new slideOrder.
+    reorderSlide: (fromIndex: number, toIndex: number) =>
+      set((state) => {
+        const currentOrder = resolveSlideOrder(
+          state.nodesById,
+          state.rootIds,
+          state.slideOrder,
+        );
+        if (
+          fromIndex < 0 ||
+          fromIndex >= currentOrder.length ||
+          toIndex < 0 ||
+          toIndex >= currentOrder.length ||
+          fromIndex === toIndex
+        ) {
+          return state;
+        }
+        saveHistory(state);
+        const newOrder = [...currentOrder];
+        const [removed] = newOrder.splice(fromIndex, 1);
+        newOrder.splice(toIndex, 0, removed);
+        return { slideOrder: newOrder };
+      }),
+
+    setVisibility: (id: string, visible: boolean) =>
+      set((state) => {
+        const existing = state.nodesById[id];
+        if (!existing) return state;
+        saveHistory(state);
+        return {
+          nodesById: { ...state.nodesById, [id]: { ...existing, visible } },
+          _cachedTree: null,
+        };
+      }),
+
+    toggleVisibility: (id: string) =>
+      set((state) => {
+        const existing = state.nodesById[id];
+        if (!existing) return state;
+        saveHistory(state);
+        return {
+          nodesById: {
+            ...state.nodesById,
+            [id]: { ...existing, visible: existing.visible === false ? true : false },
+          },
+          _cachedTree: null,
+        };
+      }),
+
+    setSpeakerNotes: (id: string, text: string) =>
+      set((state) => {
+        const existing = state.nodesById[id];
+        if (!existing) return state;
+        saveHistory(state);
+        const speakerNotes = text.trim() === "" ? undefined : text;
+        return {
+          nodesById: { ...state.nodesById, [id]: { ...existing, speakerNotes } },
+          _cachedTree: null,
+        };
+      }),
+
+    setSpeakerNotesWithoutHistory: (id: string, text: string) =>
+      set((state) => {
+        const existing = state.nodesById[id];
+        if (!existing) return state;
+        const speakerNotes = text.trim() === "" ? undefined : text;
+        return {
+          nodesById: { ...state.nodesById, [id]: { ...existing, speakerNotes } },
+          _cachedTree: null,
+        };
+      }),
+
+    toggleFrameExpanded: (id: string) =>
+      set((state) => {
+        const newSet = new Set(state.expandedFrameIds);
+        if (newSet.has(id)) {
+          newSet.delete(id);
+        } else {
+          newSet.add(id);
+        }
+        return { expandedFrameIds: newSet };
+      }),
+
+    setFrameExpanded: (id: string, expanded: boolean) =>
+      set((state) => {
+        const newSet = new Set(state.expandedFrameIds);
+        if (expanded) {
+          newSet.add(id);
+        } else {
+          newSet.delete(id);
+        }
+        return { expandedFrameIds: newSet };
+      }),
+
+    expandAncestors: (ids: string[]) =>
+      set((state) => {
+        const allExpanded = ids.every((id) => state.expandedFrameIds.has(id));
+        if (allExpanded) return state;
+        const newSet = new Set(state.expandedFrameIds);
+        for (const id of ids) newSet.add(id);
+        return { expandedFrameIds: newSet };
+      }),
+
+    collapseAllFrames: () => set({ expandedFrameIds: new Set<string>() }),
+
+    moveNode: (nodeId: string, newParentId: string | null, newIndex: number) =>
+      set((state) => {
+        const node = state.nodesById[nodeId];
+        if (!node) return state;
+
+        // Guard against creating a cycle: a node cannot become its own parent or
+        // a child of one of its own descendants. Walk up from the target parent;
+        // if we reach nodeId, the move would form a cycle (which would later
+        // stack-overflow tree traversal), so reject it as a no-op.
+        if (newParentId !== null) {
+          let ancestor: string | null | undefined = newParentId;
+          while (ancestor !== null && ancestor !== undefined) {
+            if (ancestor === nodeId) return state;
+            ancestor = state.parentById[ancestor];
+          }
+        }
+
+        const oldParentId = state.parentById[nodeId];
+        saveHistory(state);
+
+        const newParentById = { ...state.parentById, [nodeId]: newParentId };
+        const newChildrenById = { ...state.childrenById };
+        let newRootIds = [...state.rootIds];
+
+        // Remove from old parent
+        if (oldParentId !== null && oldParentId !== undefined) {
+          newChildrenById[oldParentId] = (newChildrenById[oldParentId] ?? []).filter(
+            (cid) => cid !== nodeId,
+          );
+        } else {
+          newRootIds = newRootIds.filter((rid) => rid !== nodeId);
+        }
+
+        // Insert into new parent
+        if (newParentId !== null) {
+          const siblings = [...(newChildrenById[newParentId] ?? [])];
+          siblings.splice(newIndex, 0, nodeId);
+          newChildrenById[newParentId] = siblings;
+        } else {
+          newRootIds.splice(newIndex, 0, nodeId);
+        }
+
+        // Mark the moved node plus both parents whose childrenById entry just
+        // changed identity (old parent lost a child, new parent gained one).
+        // Marked here — right before this `set` callback returns — rather
+        // than before the outer `set(...)` call, since oldParentId is only
+        // known once we're inside the callback with `state`.
+        markNodesDirty(
+          [nodeId, oldParentId, newParentId].filter(
+            (id): id is string => id !== null && id !== undefined,
+          ),
+        );
+
+        return {
+          parentById: newParentById,
+          childrenById: newChildrenById,
+          rootIds: newRootIds,
+          _cachedTree: null,
+        };
+      }),
+  };
+}

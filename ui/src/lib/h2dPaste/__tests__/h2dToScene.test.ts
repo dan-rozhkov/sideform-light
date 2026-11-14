@@ -1,0 +1,741 @@
+import { describe, expect, it } from 'vitest'
+import type { FrameNode, ShadowEffect, TextNode } from '@/types/scene'
+import type { Variable } from '@/types/variable'
+import { calculateFrameLayout } from '@/utils/yogaLayout'
+import { convertH2dToSceneNodes } from '../h2dToScene'
+import { parseH2dClipboardHtml } from '../parseH2dClipboard'
+import { H2D_FIXTURE_HTML } from './h2dFixtureHtml'
+import { buildDocument, el, rect, svgEl, text } from './h2dFixture'
+
+function convertFixture() {
+  const { document } = parseH2dClipboardHtml(H2D_FIXTURE_HTML)
+  return convertH2dToSceneNodes(document)
+}
+
+function findByName(node: FrameNode, name: string): FrameNode | undefined {
+  if (node.name === name) return node
+  for (const child of node.children) {
+    if (child.type === 'frame') {
+      const found = findByName(child as FrameNode, name)
+      if (found) return found
+    }
+  }
+  return undefined
+}
+
+function collectTexts(node: FrameNode, out: TextNode[] = []): TextNode[] {
+  for (const child of node.children) {
+    if (child.type === 'text') out.push(child as TextNode)
+    else if (child.type === 'frame') collectTexts(child as FrameNode, out)
+  }
+  return out
+}
+
+describe('convertH2dToSceneNodes (real fixture)', () => {
+  it('produces a single root frame named after the document title, sized like BODY', () => {
+    const { nodes } = convertFixture()
+    expect(nodes).toHaveLength(1)
+    const root = nodes[0] as FrameNode
+    expect(root.type).toBe('frame')
+    expect(root.name).toBe('Capture test page')
+    expect(root.x).toBe(0)
+    expect(root.y).toBe(0)
+    expect(root.width).toBeCloseTo(1920, 0)
+    expect(root.height).toBeCloseTo(534, 0)
+  })
+
+  it('excludes the PLASMO-CSUI extension node and the react-scan toast overlay', () => {
+    const { nodes } = convertFixture()
+    const root = nodes[0] as FrameNode
+    const texts = collectTexts(root)
+    expect(texts.some((t) => t.text.includes('Copied to clipboard'))).toBe(false)
+    expect(findByName(root, 'PLASMO-CSUI')).toBeUndefined()
+  })
+
+  it('converts the hero SECTION into a frame with a linear gradient fill and bottom corner radii', () => {
+    const { nodes } = convertFixture()
+    const root = nodes[0] as FrameNode
+    // The hero is the first frame child of the root.
+    const hero = root.children.find((c) => c.type === 'frame') as FrameNode
+    expect(hero).toBeTruthy()
+    expect(hero.x).toBe(0)
+    expect(hero.y).toBe(0)
+    expect(hero.gradientFill).toBeTruthy()
+    expect(hero.gradientFill!.stops).toHaveLength(2)
+    expect(hero.gradientFill!.stops[0].color.toLowerCase()).toBe('#4f46e5')
+    expect(hero.gradientFill!.stops[1].color.toLowerCase()).toBe('#9333ea')
+    expect(hero.cornerRadiusPerCorner?.bottomLeft).toBe(24)
+    expect(hero.cornerRadiusPerCorner?.bottomRight).toBe(24)
+  })
+
+  it('converts H1 into a text node with the resolved typography, positioned relative to its parent', () => {
+    const { nodes } = convertFixture()
+    const root = nodes[0] as FrameNode
+    const hero = root.children.find((c) => c.type === 'frame') as FrameNode
+    const h1 = hero.children.find((c) => c.type === 'text' && (c as TextNode).text === 'Capture me') as TextNode
+    expect(h1).toBeTruthy()
+    expect(h1.fontSize).toBe(40)
+    expect(h1.fontWeight).toBe('700')
+    expect(h1.fill?.toLowerCase()).toBe('#ffffff')
+    // H1 abs x=48,y=48; SECTION abs x=0,y=0 => relative 48,48
+    expect(h1.x).toBeCloseTo(48, 0)
+    expect(h1.y).toBeCloseTo(48, 0)
+  })
+
+  it('converts BUTTON into a white pill frame containing a text node', () => {
+    const { nodes } = convertFixture()
+    const root = nodes[0] as FrameNode
+    const hero = root.children.find((c) => c.type === 'frame') as FrameNode
+    const button = hero.children.find(
+      (c) => c.type === 'frame' && collectTexts(c as FrameNode).some((t) => t.text === 'Get started'),
+    ) as FrameNode
+    expect(button).toBeTruthy()
+    expect(button.fill?.toLowerCase()).toBe('#ffffff')
+    expect(button.cornerRadius).toBeGreaterThanOrEqual(9999)
+    const label = collectTexts(button).find((t) => t.text === 'Get started')
+    expect(label).toBeTruthy()
+  })
+
+  it('resolves percentage corner radii against the captured element size', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('DIV', rect(10, 10, 28, 28), {
+        backgroundColor: 'rgb(15, 118, 110)',
+        borderTopLeftRadius: '50%',
+        borderTopRightRadius: '50%',
+        borderBottomRightRadius: '50%',
+        borderBottomLeftRadius: '50%',
+      }),
+    ])
+
+    const { nodes } = convertH2dToSceneNodes(buildDocument(body))
+    const marker = (nodes[0] as FrameNode).children[0] as FrameNode
+
+    expect(marker.cornerRadius).toBe(14)
+  })
+
+  it('converts IMG into a node with an image fill resolved to a data: URL', () => {
+    const { nodes } = convertFixture()
+    const root = nodes[0] as FrameNode
+
+    function findImage(node: FrameNode): FrameNode | undefined {
+      for (const child of node.children) {
+        if (child.type === 'frame') {
+          const f = child as FrameNode
+          if (f.imageFill) return f
+          const nested = findImage(f)
+          if (nested) return nested
+        }
+      }
+      return undefined
+    }
+
+    const image = findImage(root)
+    expect(image).toBeTruthy()
+    expect(image!.imageFill!.url.startsWith('data:')).toBe(true)
+  })
+
+  it('infers auto-layout on the hero SECTION (flex column, gap 16, padding 48) and preserves child positions exactly', () => {
+    const { nodes } = convertFixture()
+    const root = nodes[0] as FrameNode
+    const hero = root.children.find((c) => c.type === 'frame') as FrameNode
+    expect(hero.layout).toBeTruthy()
+    expect(hero.layout?.autoLayout).toBe(true)
+    expect(hero.layout?.flexDirection).toBe('column')
+    expect(hero.layout?.gap).toBe(16)
+    expect(hero.layout?.paddingTop).toBe(48)
+    expect(hero.layout?.paddingRight).toBe(48)
+    expect(hero.layout?.paddingBottom).toBe(48)
+    expect(hero.layout?.paddingLeft).toBe(48)
+
+    // Paste fidelity: replaying the engine over the applied layout must
+    // reproduce the exact captured x/y of every flow child.
+    const results = calculateFrameLayout(hero)
+    expect(results.length).toBe(hero.children.length)
+    const byId = new Map(results.map((r) => [r.id, r]))
+    for (const child of hero.children) {
+      const r = byId.get(child.id)
+      expect(r).toBeTruthy()
+      expect(r!.x).toBeCloseTo(child.x, 0)
+      expect(r!.y).toBeCloseTo(child.y, 0)
+    }
+  })
+
+  it('infers auto-layout on the cards row DIV (flex row, gap 20, padding 32/48) and preserves child positions exactly', () => {
+    const { nodes } = convertFixture()
+    const root = nodes[0] as FrameNode
+    // The cards row is the root's second frame child (after the hero SECTION).
+    const frameChildren = root.children.filter((c): c is FrameNode => c.type === 'frame')
+    const cardsRow = frameChildren[1]
+    expect(cardsRow).toBeTruthy()
+    expect(cardsRow.layout).toBeTruthy()
+    expect(cardsRow.layout?.autoLayout).toBe(true)
+    expect(cardsRow.layout?.flexDirection).toBe('row')
+    expect(cardsRow.layout?.gap).toBe(20)
+    expect(cardsRow.layout?.paddingTop).toBe(32)
+    expect(cardsRow.layout?.paddingBottom).toBe(32)
+    expect(cardsRow.layout?.paddingLeft).toBe(48)
+    expect(cardsRow.layout?.paddingRight).toBe(48)
+
+    const results = calculateFrameLayout(cardsRow)
+    expect(results.length).toBe(cardsRow.children.length)
+    const byId = new Map(results.map((r) => [r.id, r]))
+    for (const child of cardsRow.children) {
+      const r = byId.get(child.id)
+      expect(r).toBeTruthy()
+      expect(r!.x).toBeCloseTo(child.x, 0)
+      expect(r!.y).toBeCloseTo(child.y, 0)
+    }
+  })
+})
+
+describe('convertH2dToSceneNodes (synthetic cases)', () => {
+  it('falls back to converting root when no BODY is present', () => {
+    const doc = {
+      documentTitle: 'No body',
+      root: el('DIV', rect(0, 0, 50, 50), { backgroundColor: 'rgb(1, 2, 3)' }),
+      documentRect: { x: 0, y: 0, width: 50, height: 50 },
+      version: 2,
+      assets: {},
+    }
+    const { nodes } = convertH2dToSceneNodes(doc)
+    expect(nodes).toHaveLength(1)
+    expect((nodes[0] as FrameNode).width).toBe(50)
+  })
+
+  it('preserves BODY styles when h2d stores them as computed styles', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('DIV', rect(10, 10, 80, 80), { backgroundColor: 'rgb(255, 255, 255)' }),
+    ])
+    body.computedStyles = {
+      backgroundColor: 'rgb(12, 34, 56)',
+      overflow: 'hidden',
+    }
+
+    const { nodes } = convertH2dToSceneNodes(buildDocument(body))
+    const root = nodes[0] as FrameNode
+
+    expect(root.fill?.toLowerCase()).toBe('#0c2238')
+    expect(root.clip).toBe(true)
+  })
+
+  it('skips whitespace-only text nodes and zero-size elements with no visible descendants', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      text('   \n  ', rect(0, 0, 0, 0)),
+      el('DIV', rect(0, 0, 0, 0), {}, [el('SPAN', rect(0, 0, 0, 0))]),
+      el('DIV', rect(0, 0, 30, 30), { backgroundColor: 'rgb(10, 20, 30)' }),
+    ])
+    const doc = buildDocument(body)
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    expect(root.children).toHaveLength(1)
+  })
+
+  it('keeps a zero-size wrapper that has a visible descendant', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('DIV', rect(0, 0, 0, 0), {}, [text('hidden but present', rect(0, 0, 10, 10))]),
+    ])
+    const doc = buildDocument(body)
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    expect(root.children).toHaveLength(1)
+  })
+
+  it('skips SCRIPT/STYLE/display:none elements', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('SCRIPT', rect(0, 0, 100, 100), {}, [text('alert(1)', rect(0, 0, 10, 10))]),
+      el('DIV', rect(0, 0, 30, 30), { display: 'none' }),
+      el('DIV', rect(0, 0, 30, 30), { backgroundColor: 'rgb(10, 20, 30)' }),
+    ])
+    const doc = buildDocument(body)
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    expect(root.children).toHaveLength(1)
+  })
+
+  it('normalizes an SVG with no width/height/viewBox into a data URL with injected dimensions', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      svgEl(rect(10, 10, 24, 24), '<svg><path d="M0 0L10 10"/></svg>'),
+    ])
+    const { nodes } = convertH2dToSceneNodes(buildDocument(body))
+    const root = nodes[0] as FrameNode
+    const svg = root.children[0] as FrameNode
+    expect(svg.imageFill?.mode).toBe('fit')
+    const url = svg.imageFill!.url
+    expect(url.startsWith('data:image/svg+xml')).toBe(true)
+    const decoded = decodeURIComponent(url.slice(url.indexOf(',') + 1))
+    expect(decoded).toMatch(/width="24"/)
+    expect(decoded).toMatch(/height="24"/)
+    expect(decoded).toMatch(/viewBox="0 0 24 24"/)
+  })
+
+  it('derives injected width/height from an existing viewBox and does not duplicate it', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      svgEl(rect(10, 10, 24, 24), '<svg viewBox="0 0 32 16"><path d="M0 0L10 10"/></svg>'),
+    ])
+    const { nodes } = convertH2dToSceneNodes(buildDocument(body))
+    const root = nodes[0] as FrameNode
+    const svg = root.children[0] as FrameNode
+    const url = svg.imageFill!.url
+    const decoded = decodeURIComponent(url.slice(url.indexOf(',') + 1))
+    expect(decoded).toMatch(/width="32"/)
+    expect(decoded).toMatch(/height="16"/)
+    expect(decoded.match(/viewBox=/g)).toHaveLength(1)
+    expect(decoded).toMatch(/viewBox="0 0 32 16"/)
+  })
+
+  it('gives an SVG with empty content a visible gray placeholder fill instead of silently vanishing', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [svgEl(rect(10, 10, 24, 24), '')])
+    const doc = buildDocument(body)
+    const { nodes, warnings } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    const svg = root.children[0] as FrameNode
+    expect(svg.fill).toBe('#E0E0E0')
+    expect(svg.imageFill).toBeUndefined()
+    expect(warnings.some((w) => w.includes('SVG'))).toBe(true)
+  })
+
+  it('keeps inline text alongside a nested element (mixed children are not dropped)', () => {
+    // <p>Hello <a>world</a></p>
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('P', rect(0, 0, 100, 20), {}, [
+        text('Hello ', rect(0, 0, 40, 20)),
+        el('A', rect(40, 0, 40, 20), {}, [text('world', rect(40, 0, 40, 20))]),
+      ]),
+    ])
+    const doc = buildDocument(body)
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    const p = root.children[0] as FrameNode
+    expect(p.type).toBe('frame')
+    const texts = p.children.filter((c): c is TextNode => c.type === 'text').map((t) => t.text)
+    expect(texts).toContain('Hello ')
+    expect(texts).toContain('world')
+  })
+
+  it('removes source-formatting whitespace around captured text', () => {
+    const body = el('BODY', rect(0, 0, 200, 40), {}, [
+      el('BUTTON', rect(0, 0, 100, 40), { backgroundColor: 'rgb(0, 0, 0)' }, [
+        text('\n        В корзину\n      ', rect(10, 10, 80, 20)),
+      ]),
+    ])
+    const { nodes } = convertH2dToSceneNodes(buildDocument(body))
+    const button = (nodes[0] as FrameNode).children[0] as FrameNode
+    const label = button.children[0] as TextNode
+
+    expect(label.text).toBe('В корзину')
+  })
+
+  it('uses a fixed text box for content captured on multiple rendered lines', () => {
+    const capturedText = text(
+      'Заключайте сделки без посредников и комиссий напрямую с производителями',
+      rect(10, 10, 180, 40),
+    )
+    capturedText.lineCount = 2
+    const body = el('BODY', rect(0, 0, 200, 60), {}, [
+      el('P', rect(10, 10, 180, 40), { fontSize: '16px', lineHeight: '20px' }, [capturedText]),
+    ])
+    const { nodes } = convertH2dToSceneNodes(buildDocument(body))
+    const paragraph = (nodes[0] as FrameNode).children[0] as TextNode
+
+    expect(paragraph.textWidthMode).toBe('fixed-height')
+    expect(paragraph.width).toBe(180)
+    expect(paragraph.height).toBe(40)
+  })
+
+  it('preserves an explicit BR between direct text nodes as a wrapped line', () => {
+    const body = el('BODY', rect(0, 0, 390, 120), {}, [
+      el(
+        'H1',
+        rect(24, 16, 342, 88),
+        { fontSize: '36px', lineHeight: '44px', whiteSpace: 'normal' },
+        [
+          text('Morning walk', rect(24, 16, 210, 44)),
+          el('BR', rect(234, 16, 0, 0)),
+          text('with Marlowe', rect(24, 60, 220, 44)),
+        ],
+      ),
+    ])
+
+    const { nodes } = convertH2dToSceneNodes(buildDocument(body))
+    const heading = (nodes[0] as FrameNode).children[0] as TextNode
+
+    expect(heading.text).toBe('Morning walk\nwith Marlowe')
+    expect(heading.textWidthMode).toBe('fixed-height')
+    // The text box keeps H1's CSS content width, not the longest rendered
+    // line's glyph width (220px). Otherwise those already-wrapped lines wrap
+    // a second time after conversion.
+    expect(heading.width).toBe(342)
+    expect(heading.height).toBe(88)
+  })
+
+  it('converts a captured search input with placeholder, icon, and solid background', () => {
+    const input = el(
+      'INPUT',
+      rect(520, 82, 802, 48),
+      {
+        backgroundColor: 'rgb(255, 255, 255)',
+        backgroundImage: 'url("https://example.com/search.svg")',
+        backgroundPositionX: '16px',
+        backgroundPositionY: '50%',
+        backgroundRepeat: 'no-repeat',
+        fontFamily: 'Onest, sans-serif',
+        fontSize: '14px',
+        fontWeight: '500',
+        lineHeight: '20px',
+        paddingLeft: '48px',
+        paddingRight: '16px',
+      },
+      [],
+      { type: 'search', placeholder: 'Искать среди тысяч товаров...' },
+    )
+    input.pseudoElementStyles = {
+      placeholder: {
+        color: 'rgb(133, 143, 163)',
+        fontFamily: 'Onest, sans-serif',
+        fontSize: '14px',
+        fontWeight: '500',
+        height: '18px',
+        width: '734px',
+      },
+    }
+    const doc = {
+      ...buildDocument(input, {
+        assets: {
+          'https://example.com/search.svg': {
+            url: 'https://example.com/search.svg',
+            blob: {
+              type: 'image/svg+xml',
+              base64Blob: `data:application/octet-stream;base64,${btoa('<svg width="17" height="16"></svg>')}`,
+            },
+          },
+        },
+      }),
+      root: input,
+      documentTitle: 'Search field',
+    }
+
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const field = nodes[0] as FrameNode
+    const placeholder = field.children.find((child): child is TextNode => child.type === 'text')
+    const icon = field.children.find((child): child is FrameNode => child.type === 'frame' && !!child.imageFill)
+
+    expect(field.fill?.toLowerCase()).toBe('#ffffff')
+    expect(field.imageFill).toBeUndefined()
+    expect(placeholder).toMatchObject({ text: 'Искать среди тысяч товаров...', x: 48, fontFamily: 'Onest' })
+    expect(placeholder?.fill?.toLowerCase()).toBe('#858fa3')
+    expect(icon).toMatchObject({ x: 16, y: 16, width: 17, height: 16 })
+    expect(icon?.imageFill?.mode).toBe('fit')
+  })
+
+  it('parses a Tailwind-style two-layer box-shadow into sane (non-garbage) offsets', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('DIV', rect(0, 0, 30, 30), {
+        backgroundColor: 'rgb(255, 255, 255)',
+        boxShadow: 'rgba(0, 0, 0, 0.1) 0px 10px 15px -3px, rgba(0, 0, 0, 0.1) 0px 4px 6px -4px',
+      }),
+    ])
+    const doc = buildDocument(body)
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    const div = root.children[0] as FrameNode
+    expect(div.effects).toBeTruthy()
+    expect(div.effects).toHaveLength(2)
+    for (const effect of div.effects ?? []) {
+      expect(effect.type).toBe('shadow')
+      if (effect.type !== 'shadow') continue
+      expect(Number.isFinite(effect.offset.x)).toBe(true)
+      expect(Number.isFinite(effect.offset.y)).toBe(true)
+      expect(Number.isFinite(effect.blur)).toBe(true)
+      expect(Number.isFinite(effect.spread)).toBe(true)
+    }
+    // The two offsetY values (10 and 4) must survive distinctly, not collapse/garble.
+    const offsetYs = (div.effects ?? [])
+      .filter((e): e is ShadowEffect => e.type === 'shadow')
+      .map((e) => e.offset.y)
+      .sort((a, b) => a - b)
+    expect(offsetYs).toEqual([4, 10])
+  })
+
+  it('does not crash and produces no garbage numbers for an oklch() box-shadow color under the happy-dom canvas stub', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('DIV', rect(0, 0, 30, 30), {
+        boxShadow: '0px 10px 15px -3px oklch(0.5 0.1 200 / 0.4)',
+      }),
+    ])
+    const doc = buildDocument(body)
+    expect(() => convertH2dToSceneNodes(doc)).not.toThrow()
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    const div = root.children[0] as FrameNode
+    // A boxShadow was set above, so an effect must have been produced —
+    // assert that directly instead of a conditional block, so an
+    // unexpectedly-missing effect fails the test instead of vacuously
+    // passing it.
+    expect(div.effect).toBeDefined()
+    const effect = div.effect!
+    expect(effect.type).toBe('shadow')
+    expect(Number.isFinite(effect.offset.x)).toBe(true)
+    expect(Number.isFinite(effect.offset.y)).toBe(true)
+    expect(Number.isNaN(effect.offset.x)).toBe(false)
+    expect(Number.isNaN(effect.offset.y)).toBe(false)
+  })
+
+  it('defaults an empty asset blob.type to a generic MIME type instead of an invalid data: URL', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el(
+        'IMG',
+        rect(0, 0, 40, 40),
+        {},
+        [],
+        { src: 'https://example.com/icon.png' },
+      ),
+    ])
+    const doc = buildDocument(body, {
+      assets: {
+        'https://example.com/icon.png': {
+          url: 'https://example.com/icon.png',
+          blob: { type: '', base64Blob: 'data:application/octet-stream;base64,AAAA' },
+        },
+      },
+    })
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    const img = root.children[0] as FrameNode
+    expect(img.imageFill?.url).toBe('data:application/octet-stream;base64,AAAA')
+  })
+
+  it('does not compute a bogus lineHeight ratio when fontSize resolves to 0', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('SPAN', rect(0, 0, 50, 20), { fontSize: '0px', lineHeight: '20px' }, [
+        text('tiny', rect(0, 0, 50, 20)),
+      ]),
+    ])
+    const doc = buildDocument(body)
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    const span = root.children[0] as TextNode
+    expect(span.type).toBe('text')
+    expect(span.fontSize).toBeUndefined()
+    expect(span.lineHeight).toBeUndefined()
+  })
+
+  it('uses the scene default font size when capture omits the browser default', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('SPAN', rect(0, 0, 80, 24), { lineHeight: '24px' }, [
+        text('default size', rect(0, 0, 80, 24)),
+      ]),
+    ])
+
+    const { nodes } = convertH2dToSceneNodes(buildDocument(body))
+    const span = (nodes[0] as FrameNode).children[0] as TextNode
+
+    expect(span.fontSize).toBeUndefined()
+    expect(span.lineHeight).toBe(1.5)
+  })
+
+  it('approximates repeating-linear-gradient as a linear gradientFill', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('DIV', rect(0, 0, 100, 50), {
+        backgroundImage: 'repeating-linear-gradient(45deg, rgb(254, 243, 199) 0px, rgb(253, 230, 138) 16px)',
+      }),
+    ])
+    const doc = buildDocument(body)
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    expect(root.children).toHaveLength(1)
+    const div = root.children[0] as FrameNode
+    expect(div.gradientFill?.type).toBe('linear')
+  })
+
+  it('approximates repeating-radial-gradient as a radial gradientFill', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('DIV', rect(0, 0, 100, 50), {
+        backgroundImage: 'repeating-radial-gradient(circle, rgb(254, 243, 199) 0px, rgb(253, 230, 138) 16px)',
+      }),
+    ])
+    const doc = buildDocument(body)
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    expect(root.children).toHaveLength(1)
+    const div = root.children[0] as FrameNode
+    expect(div.gradientFill?.type).toBe('radial')
+  })
+
+  it('falls back to the first stop color for an unsupported gradient function', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('DIV', rect(0, 0, 100, 50), {
+        backgroundImage: 'conic-gradient(rgb(255, 0, 0), rgb(0, 0, 255))',
+      }),
+    ])
+    const doc = buildDocument(body)
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    expect(root.children).toHaveLength(1)
+    const div = root.children[0] as FrameNode
+    expect(div.gradientFill).toBeUndefined()
+    expect(div.fill?.toLowerCase()).toBe('#ff0000')
+  })
+
+  it('prefers a first-layer url(...) image over a trailing gradient layer (image-then-gradient background list)', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('DIV', rect(0, 0, 100, 50), {
+        backgroundImage:
+          'url(data:image/png;base64,AAAA), linear-gradient(90deg, rgb(255, 0, 0), rgb(0, 0, 255))',
+      }),
+    ])
+    const doc = buildDocument(body)
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    const div = root.children[0] as FrameNode
+    expect(div.imageFill?.url).toBe('data:image/png;base64,AAAA')
+    expect(div.gradientFill).toBeUndefined()
+  })
+
+  it('keeps gradient-then-url(...) resolving to a gradient fill (gradient is the top layer)', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el('DIV', rect(0, 0, 100, 50), {
+        backgroundImage:
+          'linear-gradient(90deg, rgb(255, 0, 0), rgb(0, 0, 255)), url(data:image/png;base64,AAAA)',
+      }),
+    ])
+    const doc = buildDocument(body)
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    const div = root.children[0] as FrameNode
+    expect(div.gradientFill?.type).toBe('linear')
+    expect(div.imageFill).toBeUndefined()
+  })
+
+  it('carries letterSpacing and underline through applyTextProps reuse', () => {
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [
+      el(
+        'SPAN',
+        rect(0, 0, 50, 20),
+        { letterSpacing: '0.5px', textDecorationLine: 'underline' },
+        [text('spaced', rect(0, 0, 50, 20))],
+      ),
+    ])
+    const doc = buildDocument(body)
+    const { nodes } = convertH2dToSceneNodes(doc)
+    const root = nodes[0] as FrameNode
+    const span = root.children[0] as TextNode
+    expect(span.type).toBe('text')
+    expect(span.letterSpacing).toBe(0.5)
+    expect(span.underline).toBe(true)
+  })
+})
+
+describe('convertH2dToSceneNodes — CSS variable auto-binding (colors)', () => {
+  const CSS_VARS = {
+    '--surface': { light: '#ffffff', dark: '#111111' },
+    '--line': { light: '#000000', dark: '#eeeeee' },
+    '--primary': { light: '#3b82f6', dark: '#60a5fa' },
+  }
+
+  function docWithVars(cssVariables: Record<string, { light: string; dark: string }> = CSS_VARS) {
+    const surface = {
+      ...el('DIV', rect(0, 0, 100, 50), { backgroundColor: 'rgb(255, 255, 255)' }),
+      variableStyles: { backgroundColor: '--surface' },
+    }
+    const bordered = {
+      ...el('DIV', rect(0, 60, 100, 50), {
+        backgroundColor: 'rgb(240, 240, 240)',
+        borderTopWidth: '2px',
+        borderRightWidth: '2px',
+        borderBottomWidth: '2px',
+        borderLeftWidth: '2px',
+        borderTopStyle: 'solid',
+        borderTopColor: 'rgb(0, 0, 0)',
+      }),
+      variableStyles: { borderColor: '--line' },
+    }
+    const para = {
+      ...el('P', rect(0, 120, 100, 20), { color: 'rgb(59, 130, 246)' }, [
+        text('Hello', rect(0, 120, 100, 20)),
+      ]),
+      variableStyles: { color: '--primary' },
+    }
+    const body = el('BODY', rect(0, 0, 100, 200), {}, [surface, bordered, para])
+    return buildDocument(body, { cssVariables })
+  }
+
+  function byName(vars: Variable[], name: string): Variable | undefined {
+    return vars.find((v) => v.name === name)
+  }
+
+  it('binds a background color to a newly-created color Variable with light/dark themeValues', () => {
+    const { nodes, variables } = convertH2dToSceneNodes(docWithVars())
+    const root = nodes[0] as FrameNode
+    const surface = root.children[0] as FrameNode
+    const v = byName(variables, 'surface')
+    expect(v).toBeDefined()
+    expect(v!.type).toBe('color')
+    expect(v!.themeValues).toEqual({ light: '#ffffff', dark: '#111111' })
+    expect(surface.fillBinding?.variableId).toBe(v!.id)
+    // Resolved hex is still kept as the fallback value.
+    expect(surface.fill).toBe('#ffffff')
+  })
+
+  it('binds a border color to a stroke Variable', () => {
+    const { nodes, variables } = convertH2dToSceneNodes(docWithVars())
+    const root = nodes[0] as FrameNode
+    const bordered = root.children[1] as FrameNode
+    const v = byName(variables, 'line')
+    expect(v).toBeDefined()
+    expect(bordered.strokeBinding?.variableId).toBe(v!.id)
+    expect(bordered.stroke).toBe('#000000')
+  })
+
+  it('binds a text color to the text node fill Variable', () => {
+    const { nodes, variables } = convertH2dToSceneNodes(docWithVars())
+    const root = nodes[0] as FrameNode
+    const para = root.children[2] as TextNode
+    expect(para.type).toBe('text')
+    const v = byName(variables, 'primary')
+    expect(v).toBeDefined()
+    expect(para.fillBinding?.variableId).toBe(v!.id)
+  })
+
+  it('reuses an existing Variable by name instead of creating a duplicate', () => {
+    const existing = {
+      id: 'var_existing_surface',
+      name: 'surface',
+      type: 'color' as const,
+      value: '#abcdef',
+      themeValues: { light: '#abcdef', dark: '#abcdef' },
+    }
+    const { nodes, variables } = convertH2dToSceneNodes(docWithVars(), {
+      existingVariables: [existing],
+    })
+    const root = nodes[0] as FrameNode
+    const surface = root.children[0] as FrameNode
+    expect(surface.fillBinding?.variableId).toBe('var_existing_surface')
+    // No duplicate 'surface' variable minted; the other two are still new.
+    expect(byName(variables, 'surface')).toBeUndefined()
+    expect(variables.map((v) => v.name).sort()).toEqual(['line', 'primary'])
+  })
+
+  it('leaves the color hardcoded when the token value is not a parseable color', () => {
+    // A `transparent` token has no bindable color — the resolved hex stays.
+    const { nodes, variables } = convertH2dToSceneNodes(
+      docWithVars({ '--surface': { light: 'transparent', dark: 'transparent' } }),
+    )
+    const root = nodes[0] as FrameNode
+    const surface = root.children[0] as FrameNode
+    expect(surface.fillBinding).toBeUndefined()
+    expect(surface.fill).toBe('#ffffff')
+    expect(byName(variables, 'surface')).toBeUndefined()
+  })
+
+  it('produces no variables when the document has no cssVariables', () => {
+    const surface = {
+      ...el('DIV', rect(0, 0, 100, 50), { backgroundColor: 'rgb(255, 255, 255)' }),
+      variableStyles: { backgroundColor: '--surface' },
+    }
+    const body = el('BODY', rect(0, 0, 100, 100), {}, [surface])
+    const { nodes, variables } = convertH2dToSceneNodes(buildDocument(body))
+    const root = nodes[0] as FrameNode
+    expect((root.children[0] as FrameNode).fillBinding).toBeUndefined()
+    expect(variables).toEqual([])
+  })
+})

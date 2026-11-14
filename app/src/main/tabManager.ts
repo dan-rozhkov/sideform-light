@@ -1,0 +1,1218 @@
+import type { BrowserPageHandle, BrowserTabInfo } from "@sideform/browser-agent/controller";
+import { canvasIdOfUrl, docIdOfUrl, isValidCanvasId, isValidDocId, resolveCanvasTabUrl, isDocPageOn, isWorkflowPageOn, isSettingsPageOn, isValidSettingsSection, isValidTraceId, isValidWorkflowId, resolveDocTabUrl, resolveSettingsTabUrl, resolveTraceTabUrl, resolveWorkflowTabUrl, traceIdOfUrl, workflowIdOfUrl } from "./config";
+export type UITheme = "light" | "dark";
+
+/** How a tab becomes the active one. `focus: false` shows it without moving keyboard focus into it. */
+export interface ActivationOptions {
+  focus?: boolean;
+}
+
+/**
+ * Whether a newly active tab takes keyboard focus. Only an explicit
+ * `activate: false` request (a background open that became active solely
+ * because the window had no active tab) must not: the person is typing in the
+ * agent panel. Every other activation is something the person asked to look at.
+ */
+export function decideActivationFocus(requestedActivate: boolean | undefined): boolean {
+  return requestedActivate !== false;
+}
+
+// Mirrors src/main/mcp/service.ts's McpStatus — defined here (rather than
+// imported from mcp/service.ts) so this module stays free of any dependency
+// on the MCP bridge; service.ts is the one that imports this type. "off"
+// means no local MCP server is running at all (should not normally happen
+// once the app has started); "not-published" means our server is up but a
+// different local process already owns the handshake file; "listening"
+// means our server is the one a plugin/agent will discover; "error" means
+// something that should have worked (binding the loopback server, writing
+// the handshake file) failed outright — this must render as visibly as
+// "not-published" (never as hidden "off"), since the status surface is the
+// only diagnostic a packaged user has (finding 1/3).
+export type McpStatus = "listening" | "not-published" | "off" | "error";
+
+/**
+ * Two kinds of tab. "editor" is the original (and default) kind — a
+ * WebContentsView loading the deployed pen-editor frontend, with the
+ * `preload/tab.js` bridge, MCP registration, and title/theme IPC callbacks
+ * wired the way they always have been. "browser" is the built-in browser tab
+ * (design doc `2026-09-18-builtin-browser-design.md`) — a plain web page with
+ * no preload at all, never registered with the MCP bridge, whose title/url
+ * are learned from real navigation events instead of the editor's own IPC
+ * channels. "doc" is a markdown document tab (the frontend's `/doc`): the
+ * same preload, default session and title/theme callbacks as "editor", but it
+ * is NOT a canvas tab: never in the canvas link, the MCP active tab or
+ * `lastEditorWebContentsId`. "workflow" is the same kind of tab for the frontend's
+ * `/workflow` page (stored on disk by workflowStore.ts, like documents).
+ */
+export type TabKind = "editor" | "browser" | "doc" | "workflow" | "trace" | "settings" | "passwords" | "history";
+
+/** The navigation state a browser tab reports back into its TabState. */
+export interface BrowserNavState {
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+}
+
+export type ViewMode = "shown" | "awake" | "hidden";
+
+/** shown: the active tab. awake: a browser tab the agent drives, kept rendering under the active one. */
+export function resolveViewMode(tab: { id: number; kind: TabKind }, activeId: number | null, awakeIds: ReadonlySet<number>): ViewMode {
+  if (tab.id === activeId) return "shown";
+  if (tab.kind === "browser" && awakeIds.has(tab.id)) return "awake";
+  return "hidden";
+}
+
+export interface TabViewHandle {
+  loadURL(url: string): Promise<void>;
+  setBounds(bounds: { x: number; y: number; width: number; height: number }): void;
+  setVisible(visible: boolean): void;
+  /**
+   * Optional richer visibility: "awake" keeps the view rendering while it is covered by the
+   * active tab. Without it TabManager falls back to `setVisible(mode !== "hidden")`.
+   */
+  setViewMode?(mode: ViewMode): void;
+  destroy(): void;
+  sendMenuCommand(commandId: string): void;
+  /** Settings tabs only: tells the open page to switch to a section (no reload). */
+  sendSettingsSection(section: string): void;
+  focus(): void;
+  /** Editor tabs only: runs the canvas flush handshake in the page (`window.penCanvasFlush`), bounded, never rejects. */
+  flushCanvas?(): Promise<void>;
+  /** Editor tabs only — wired by TabManager only for kind "editor". */
+  onDocumentTitleChanged(cb: (title: string) => void): void;
+  /** Editor tabs only — wired by TabManager only for kind "editor". */
+  onThemeChanged(cb: (theme: UITheme) => void): void;
+  /**
+   * The webContents id backing this tab — a different id space from
+   * TabManager's own sequential `id` (TabsSnapshot.activeId etc). Needed by
+   * window.ts to translate "the currently active tab" into the id
+   * mcp/service.ts's tab registry is actually keyed by (see
+   * McpService.registerTab/setActiveTab, both keyed by webContents.id).
+   */
+  getWebContentsId(): number;
+  /**
+   * Optional: sets the view's own background colour — used by window.ts's
+   * `pushState` to keep a *blank* browser tab matching the tab bar's theme
+   * instead of a white void. window.ts's implementation ignores it once a
+   * browser tab has navigated (a page with no background of its own must
+   * keep Chromium's default white under it).
+   */
+  setBackgroundColor?(color: string): void;
+
+  // --- Browser tabs only below. Every real WebContentsView-backed
+  // implementation trivially supports these (they are all thin wrappers
+  // around webContents), so window.ts implements them uniformly for both
+  // kinds — but TabManager only *wires* onNavigationStateChanged, and only
+  // for kind "browser" (see newTab's doc comment). This is also the surface
+  // window.ts adapts into @sideform/browser-agent/controller's Electron-free
+  // BrowserPageHandle for the BrowserController.
+
+  /** Page load started/stopped (webContents did-start-loading / did-stop-loading); wired for both kinds. */
+  onLoadingChanged?(cb: (loading: boolean) => void): void;
+  /** Browser tabs only — wired by TabManager only for kind "browser". */
+  onNavigationStateChanged(cb: (s: BrowserNavState) => void): void;
+  getURL(): string;
+  getTitle(): string;
+  goBack(): void;
+  goForward(): void;
+  reload(): void;
+  canGoBack(): boolean;
+  canGoForward(): boolean;
+  executeJavaScript(code: string): Promise<unknown>;
+  /** Isolated-world variant (see BrowserPageHandle.executeJavaScriptIsolated). */
+  executeJavaScriptIsolated?(code: string): Promise<unknown>;
+  /** Fetch a stylesheet for browse_capture outside the page's CORS (see
+   * BrowserPageHandle.fetchText). Browser tabs only. */
+  /** URL policy for fetchText (see BrowserPageHandle.isFetchAllowed). */
+  isFetchAllowed?(url: string): boolean;
+  fetchText?(url: string, opts: { timeoutMs: number; maxBytes: number; signal?: AbortSignal }): Promise<{ status: number; text: string; contentType?: string }>;
+  /**
+   * True while the tab's webContents is mid-navigation
+   * (`webContents.isLoading()`). Feeds `BrowserController`'s post-click
+   * settle wait (addendum F, "Load, not commit" — see @sideform/browser-agent/controller)
+   * so it waits for the document to actually finish loading rather than
+   * merely for `getURL()` to change at navigation commit.
+   */
+  isLoading(): boolean;
+  /** Main frame only (`webContents.isLoadingMainFrame()`): subframe and ad loads do not count. fillLogin uses it. */
+  isLoadingMainFrame?(): boolean;
+  /**
+   * Resolves once this navigation's DOM is ready (`webContents`'s
+   * `dom-ready` event) — the new document exists and its script/DOM APIs
+   * are usable, well before every subresource (images, ads, trackers) has
+   * finished loading. `BrowserController.open` races this against the full
+   * `loadURL()` promise (which only resolves at `did-finish-load`) so a
+   * heavy commercial page doesn't have to fully settle before the command
+   * returns — see @sideform/browser-agent/controller's doc comment on `open`. Each call
+   * arms a *fresh* one-shot listener for the *next* `dom-ready` event; it is
+   * not a cached "has this page's DOM ever been ready" flag.
+   */
+  onceDomReady(): Promise<void>;
+  /**
+   * Optional: true while this tab's view is actually being drawn
+   * (`View#getVisible()`). Fed to `@sideform/browser-agent/controller`'s `BrowserPageHandle`
+   * so `moveCursor` can skip the cursor overlay step entirely on a hidden
+   * browser tab, where `requestAnimationFrame` never fires and the overlay
+   * animation would only ever settle via its own backstop timer — see
+   * `BrowserPageHandle.isVisible`'s doc comment for the full rationale.
+   */
+  isVisible?(): boolean;
+  /**
+   * Optional: full browser use (design doc `2026-09-23-full-browser-use-design.md`).
+   * Structurally identical to @sideform/browser-agent/controller's `BrowserPageHandle.capture`
+   * — see its doc comment. Present on every tab kind in window.ts's
+   * implementation (capturePage() works regardless of preload), even though
+   * only a browser tab is ever screenshotted through this bridge.
+   */
+  capture?(): Promise<{ imageData: string; width: number; height: number } | null>;
+  /**
+   * Optional: structurally identical to `BrowserPageHandle.sendCdp` — see
+   * its doc comment. Wired only for kind "browser" (window.ts attaches
+   * `webContents.debugger` only there).
+   */
+  sendCdp?(method: string, params?: Record<string, unknown>): Promise<unknown>;
+  /**
+   * Optional: structurally identical to `BrowserPageHandle.drainDialogs` —
+   * see its doc comment.
+   */
+  drainDialogs?(): { type: string; message: string }[];
+  /**
+   * Optional: Wave 3 reliability, item 3. Structurally identical to
+   * `BrowserPageHandle.drainConsoleErrors` — see its doc comment. Wired only
+   * for kind "browser", same gate as `sendCdp`/`drainDialogs`.
+   */
+  drainConsoleErrors?(): string[];
+  /**
+   * Optional: QA diagnostics. Structurally identical to
+   * `BrowserPageHandle.drainFailedRequests`: drains the failed requests
+   * ("<METHOD> <status|errorText> <origin><pathname>") seen since the last
+   * drain. Wired only while the CDP debugger is attached.
+   */
+  drainFailedRequests?(): string[];
+  /** Optional: the request log (see the package type). Wired only while the CDP debugger is attached. */
+  drainRequests?: BrowserPageHandle["drainRequests"];
+  droppedRequests?: BrowserPageHandle["droppedRequests"];
+  /** Forgets the request log (a new agent run starts); desktop-only, not in the package handle. */
+  clearRequestLog?(): void;
+  /** Empties the console-error and failed-request buffers (an agent run starts). */
+  clearDiagnostics?(): void;
+  /**
+   * Browser tools menu: `sendCdp` without the agent-emulation bookkeeping, so a
+   * user's Viewport choice is never mistaken for a fixture's emulation.
+   */
+  sendCdpDirect?(method: string, params?: Record<string, unknown>): Promise<unknown>;
+  /**
+   * Second-pass review finding 1: applies the dialog policy to whatever JS
+   * dialog is *currently open* on this tab, if any — a no-op when nothing is
+   * open. window.ts's `onBrowserCommand` calls this for every browser tab
+   * right before dispatching each new `browser:command`, so a dialog that
+   * opened while no command was in flight (a page's `load`-handler `alert`,
+   * a `setTimeout`-delayed one) gets resolved before the next command's own
+   * `executeJavaScript` call would otherwise hang on it. Wired only for kind
+   * "browser" (window.ts's `openDialog` tracking only exists there).
+   */
+  applyDialogPolicy?(): void;
+  /**
+   * Optional: Wave 1 speed (`2026-09-24-browse-speed-contract.md`).
+   * Structurally identical to `BrowserPageHandle.onNavigationEvent` — see
+   * its doc comment. Wired for both tab kinds in window.ts's implementation
+   * (cheap webContents event wiring, no debugger dependency), even though
+   * only a browser tab is ever driven through `@sideform/browser-agent/controller`.
+   */
+  onNavigationEvent?(cb: () => void): () => void;
+  /**
+   * Optional: Wave 1 speed. Structurally identical to
+   * `BrowserPageHandle.networkStats` — see its doc comment. Wired only for
+   * kind "browser" (window.ts's CDP `Network.enable`/tracking only exists
+   * there, alongside `sendCdp`/`drainDialogs`).
+   */
+  networkStats?(dropAfterMs: number, sinceGeneration?: number): { pending: number; generation: number };
+  /**
+   * Optional: Wave 3 reliability, item 2. Structurally identical to
+   * `BrowserPageHandle.listFrames` — see its doc comment.
+   */
+  listFrames?(): { frameId: number; url: string; name: string }[];
+  /**
+   * Optional: Wave 3 reliability, item 2. Structurally identical to
+   * `BrowserPageHandle.executeJavaScriptInFrame` — see its doc comment.
+   */
+  executeJavaScriptInFrame?(frameId: number, code: string, timeoutMs: number): Promise<unknown>;
+  /** Browser tools menu: the tab has a committed document (CDP page-state commands can be answered). */
+  hasDocument?(): boolean;
+  /** Browser tools menu: whether the CDP debugger is attached RIGHT NOW (evaluated per call; detach can happen later). */
+  hasDebugger?(): boolean;
+  /** Browser tools menu: size of the tab's view, in DIPs. */
+  getViewSize?(): { width: number; height: number };
+  /** Browser tools menu: the page's real navigator.userAgentData.brands, or null. */
+  getUaBrands?(): Promise<{ brand: string; version: string }[] | null>;
+  /** Browser tools menu: Chromium version of this runtime. */
+  getChromeVersion?(): string;
+  /** Browser tools menu: whether the tab's own DevTools window is open. */
+  isDevToolsOpened?(): boolean;
+  /** Browser tools menu: opens a detached DevTools window, or closes it if open. */
+  toggleDevTools?(): void;
+  /** Browser tools menu: page zoom (1 = 100%). */
+  getZoomFactor?(): number;
+  setZoomFactor?(factor: number): void;
+  getZoomLevel?(): number;
+  setZoomLevel?(level: number): void;
+}
+
+/** What TabManager.browserHandle() hands to the browser controller (see window.ts). */
+export type BrowserTabHandle = TabViewHandle;
+
+/** A single open browser tab, as `TabManager`'s owner (window.ts) reports it
+ * to the controller's `tabs()` command. Declared once, in the package. */
+export type { BrowserTabInfo };
+
+/**
+ * Which webContents id `McpService.setActiveTab` should be told about, given
+ * the currently active tab's kind (finding 1). Browser tabs are deliberately
+ * never `registerTab()`'d with the MCP bridge (design doc §1) — so if this
+ * just forwarded the active tab's webContents id unconditionally, activating
+ * a browser tab would point `McpService` at an id it never registered,
+ * `getActiveTab()` would return null, and every un-targeted `tools/call`
+ * would answer "No editor tab is open" even while an editor tab is still
+ * open in another tab strip slot. The fix: report the active webContents id
+ * only while an *editor* tab is active, and keep pointing at whichever
+ * editor tab was last active otherwise — never null it out, which would
+ * regress un-targeted calls made while the user is simply reading a browser
+ * tab.
+ */
+export function resolveMcpActiveTab(
+  activeKind: TabKind | null,
+  activeWebContentsId: number | null,
+  lastEditorTabId: number | null,
+): number | null {
+  if (activeKind === "editor") return activeWebContentsId;
+  return lastEditorTabId;
+}
+
+/**
+ * True exactly when `next` is the push that should move OS/DOM focus into
+ * the tab bar's address input — the moment a browser tab with no URL yet
+ * (a fresh File ▸ New Browser Tab, or switching to one that was already
+ * open and never navigated) becomes the active tab, mirroring what every
+ * real browser does with a blank new tab. The address input already carries
+ * the placeholder "Search or enter address", so focusing it is the entire
+ * cue a user gets that the blank tab wants input at all.
+ *
+ * Pure and only reads `activeId`/`activeKind`/the active tab's `url` off
+ * both snapshots, so window.ts can call it on every `pushState` without
+ * owning the decision itself (see window.ts's `pushState`) — and so it's
+ * unit-testable with plain object fixtures, no Electron involved.
+ *
+ * Deliberately keyed off "the active tab id changed since the previous
+ * push", not just "activeKind is browser and the active tab's url is
+ * empty" — `pushState` also fires on title changes, navigation-state
+ * changes, MCP status changes and window resizes, none of which may steal
+ * focus from whatever the user is doing (typing in the editor, mid-word in
+ * the address bar itself). A repeated push for the *same* active tab —
+ * whatever else about it changed — must never re-focus.
+ */
+export function shouldFocusAddressBar(
+  previous: TabsSnapshot | null,
+  next: TabsSnapshot,
+): boolean {
+  if (next.activeKind !== "browser") return false;
+  if (previous !== null && previous.activeId === next.activeId) return false;
+  const active = next.tabs.find((t) => t.id === next.activeId);
+  return (active?.url ?? "") === "";
+}
+
+export interface TabState {
+  id: number;
+  title: string;
+  kind: TabKind;
+  /** Browser tabs only: the current page URL, for the address bar. */
+  url?: string;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  /** A page load is in progress (tab strip loading fill). Omitted when idle. */
+  loading?: boolean;
+}
+
+export interface TabsSnapshot {
+  tabs: TabState[];
+  activeId: number | null;
+  /** null when there are no tabs at all (never happens in steady state — see newTab's "never leave zero tabs" rule). */
+  activeKind: TabKind | null;
+  activeTheme: UITheme | null;
+  mcpStatus: McpStatus;
+  /**
+   * The webContents id `McpService.setActiveTab` should be told about —
+   * `resolveMcpActiveTab` applied to this manager's own up-to-date state
+   * (see that function's doc comment). Computed here, not in window.ts,
+   * because only TabManager sees a tab's destruction (closeTab calls
+   * `view.destroy()` itself) in time to repoint away from a dying editor
+   * tab before this snapshot goes out — window.ts just forwards the value
+   * (finding 1: `lastEditorWebContentsId` used to live in window.ts as a
+   * `let`, updated only from pushState, so closing the active editor tab
+   * next to a browser tab left it pointing at a webContents id that was
+   * about to be destroyed; `unregisterTab` would then null out
+   * `McpService`'s active tab even though another editor tab was still
+   * open elsewhere in the strip).
+   */
+  mcpActiveWebContentsId: number | null;
+  /**
+   * The browser tabs the agent is driving right now (agent-cursor icon). A tab
+   * is in the set from `setAgentTabWorking(id, true)` until it is cleared or
+   * closed. Several at once when isolated sessions run in parallel.
+   */
+  agentTabIds: number[];
+  /**
+   * True exactly when this specific push should move OS/DOM focus into the
+   * tab bar's address input. Never set by TabManager itself — `getSnapshot()`
+   * leaves it `undefined` — because the decision (`shouldFocusAddressBar`
+   * below) needs the *previous* pushed snapshot, which only window.ts
+   * tracks (see its `pushState`). window.ts fills this field in right
+   * before sending `tabbar:state`, folding the decision into the existing
+   * channel instead of adding a new one.
+   */
+  focusAddressBar?: boolean;
+  /**
+   * Window x (CSS px) where the tab strip starts inside the tab bar: the agent
+   * panel's right edge, 0 without a panel. Like `focusAddressBar`, filled in by
+   * window.ts right before sending `tabbar:state` (the layout owns the number).
+   */
+  tabStripLeft?: number;
+  /** The agent panel is collapsed (sidebar toggle state). Filled in by window.ts. */
+  panelCollapsed?: boolean;
+  /** Shell motion allowed (false: PEN_DESKTOP_NO_ANIMATIONS=1 or OS reduced motion). Filled in by window.ts. */
+  motion?: boolean;
+}
+
+interface TabEntry {
+  id: number;
+  title: string;
+  kind: TabKind;
+  view: TabViewHandle;
+  theme: UITheme | null;
+  /** Doc tabs only: the document id the tab was opened with (`doc:open`). */
+  docId?: string;
+  /** The stored canvas an editor tab was opened with (the live URL's `canvas` param wins once known). */
+  canvasId?: string;
+  /** Workflow tabs only: the workflow id the tab was opened with (`workflow:open`). */
+  workflowId?: string;
+  /** Trace tabs only: the trace id the tab was opened with (`traces:open`). */
+  traceId?: string;
+  url?: string;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  loading?: boolean;
+  /** Isolated browser session this tab belongs to (browser tabs only); undefined = the shared browser. */
+  session?: string;
+}
+
+/**
+ * Owns the ordered list of tabs — editor tabs (the original kind) and
+ * browser tabs (see design doc `2026-09-18-builtin-browser-design.md`). Pure
+ * logic — Electron's WebContentsView is injected via `createView` so this is
+ * unit-testable.
+ */
+export class TabManager {
+  private tabs: TabEntry[] = [];
+  private activeId: number | null = null;
+  private nextId = 1;
+  private mcpStatus: McpStatus = "off";
+  /**
+   * The webContents id of the last *editor* tab that was active — feeds
+   * `mcpActiveWebContentsId` in the snapshot via `resolveMcpActiveTab`.
+   * Updated whenever an editor tab becomes active (`setActive`), and
+   * repointed at another surviving editor tab (or nulled) the moment the
+   * tab it points at is closed (`closeTab`), before that closed tab's view
+   * is ever destroyed — see the doc comment on `TabsSnapshot.mcpActiveWebContentsId`.
+   */
+  private lastEditorWebContentsId: number | null = null;
+  /** Browser tabs the agent is working in (icon targets; see agentActivity.ts). */
+  private readonly agentWorkingTabs = new Set<number>();
+  /** Browser tabs kept rendering in the background (see resolveViewMode). Not tab-bar state. */
+  private readonly agentAwakeTabs = new Set<number>();
+  private lastLayout: { x: number; y: number; width: number; height: number } | null = null;
+  /**
+   * Full browser use (design doc `2026-09-23-full-browser-use-design.md`):
+   * which browser tab (by TabManager's own sequential id, not a webContents
+   * id) the agent is currently driving. `browserHandle()` prefers this tab
+   * while it's still a live browser tab, falling back to the pre-existing
+   * "active if browser, else most-recently-created browser tab" rule
+   * otherwise — this fixes upstream jev-ultrafast #61 ("the agent sticks to
+   * the old tab"): a popup opened from a browser tab (window.ts's
+   * `attachBrowserTabPolicy` callback) sets this to the new tab, so the very
+   * next browser command targets it even if the *active* tab in the strip
+   * hasn't visibly changed yet. `tabs({action:"switch"|"new"})` also set
+   * this. Cleared (not repointed, unlike `lastEditorWebContentsId`) when the
+   * tab it points at closes — there is no equivalent of "another editor tab
+   * is still open" fallback need here, since `browserHandle()`'s own
+   * fallback rule already covers "no explicit agent tab".
+   */
+  private agentBrowserTabId: number | null = null;
+  /**
+   * The same pin per isolated browser session (session id -> TabManager id).
+   * Every browser-tab lookup below takes a `scope`: undefined is the shared
+   * browser, a string is one session. A scope never sees another scope's tabs,
+   * so the shared agent cannot drive a session tab and a session cannot drive
+   * the user's tabs.
+   */
+  private readonly sessionAgentTabIds = new Map<string, number>();
+
+  constructor(
+    private readonly opts: {
+      createView: (kind: TabKind, session?: string) => TabViewHandle;
+      editorUrl: string;
+      onStateChanged: (s: TabsSnapshot) => void;
+    },
+  ) {}
+
+  /**
+   * `opts.activate: false` creates the tab in the background: it is hidden and
+   * never becomes active, the agent's pin is untouched (the canvas link's
+   * background `canvas:open`). Isolated session tabs always open that way.
+   * Exception: with NO active tab (the zero-tab state), a non-session tab
+   * becomes active even when requested in the background, so the window never
+   * holds tabs with none active (keyboard cycling, close and MCP need one).
+   * That tab is shown without taking keyboard focus (`ActivationOptions`).
+   * `opts.focus: false` makes a normally activated tab visible without taking keyboard focus (`doc:open`).
+   */
+  newTab(kind: TabKind = "editor", session?: string, opts: { activate?: boolean; docId?: string; canvasId?: string; workflowId?: string; traceId?: string; section?: string; focus?: boolean } = {}): number {
+    // A trace tab is always opened for one trace (`traces:open`): no id, no tab (and no view is created).
+    if (kind === "trace" && !isValidTraceId(opts.traceId)) throw new Error("trace tab needs a valid trace id");
+    const id = this.nextId++;
+    const view = this.opts.createView(kind, kind === "browser" ? session : undefined);
+    const entry: TabEntry = {
+      id,
+      session: kind === "browser" ? session : undefined,
+      title: kind === "browser" ? "New Tab" : kind === "doc" ? "Document" : kind === "workflow" ? "Workflow" : kind === "trace" ? "Trace" : kind === "settings" ? "Settings" : kind === "passwords" ? "Passwords" : kind === "history" ? "History" : "Untitled",
+      kind,
+      view,
+      theme: null,
+      docId: kind === "doc" ? opts.docId : undefined,
+      canvasId: kind === "editor" ? opts.canvasId : undefined,
+      workflowId: kind === "workflow" ? opts.workflowId : undefined,
+      traceId: kind === "trace" ? opts.traceId : undefined,
+      url: kind === "browser" ? "" : undefined,
+      canGoBack: kind === "browser" ? false : undefined,
+      canGoForward: kind === "browser" ? false : undefined,
+    };
+    view.onLoadingChanged?.((loading) => {
+      if ((entry.loading ?? false) === loading) return;
+      entry.loading = loading || undefined;
+      // did-start-loading fires synchronously inside loadURL below, before the entry is in
+      // `this.tabs`: record it, and let the push that adds the tab carry it.
+      if (this.tabs.includes(entry)) this.emit();
+    });
+    if (kind === "editor" || kind === "doc" || kind === "workflow" || kind === "trace" || kind === "settings") {
+      view.onDocumentTitleChanged((title) => {
+        entry.title = title;
+        this.emit();
+      });
+      view.onThemeChanged((theme) => {
+        if (entry.theme === theme) return;
+        entry.theme = theme;
+        // Deliberately unconditional, not gated on `id === this.activeId` —
+        // an inactive editor tab's theme changing (typically the tab last
+        // pointed to by `lastEditorWebContentsId`, while a browser tab is
+        // active) must still push a fresh snapshot, since
+        // `resolveActiveTheme` above re-derives the reported theme from that
+        // tab's live `entry.theme` on every `getSnapshot()` call.
+        this.emit();
+      });
+      const target =
+        kind === "doc"
+          ? resolveDocTabUrl(this.opts.editorUrl, opts.docId)
+          : kind === "workflow"
+            ? resolveWorkflowTabUrl(this.opts.editorUrl, opts.workflowId)
+            : kind === "trace"
+            ? resolveTraceTabUrl(this.opts.editorUrl, opts.traceId as string)
+            : kind === "settings"
+              ? resolveSettingsTabUrl(this.opts.editorUrl, opts.section)
+              : kind === "editor" && isValidCanvasId(opts.canvasId)
+                ? resolveCanvasTabUrl(this.opts.editorUrl, opts.canvasId)
+                : this.opts.editorUrl;
+      view.loadURL(target).catch((err) => {
+        console.error(`TabManager: ${kind} tab failed to load`, err);
+      });
+    } else if (kind === "passwords" || kind === "history") {
+      // The Passwords and History tabs are LOCAL pages (src/passwords/, src/history/, own preloads): window.ts loads
+      // them when it creates the view. Fixed title; no title/theme callbacks, so they are not editor theme sources.
+    } else if (kind === "browser") {
+      // Browser tabs get their own url/title updates (design doc §1) — no
+      // document-title/theme IPC callbacks, since there is no preload to
+      // send them. A fresh browser tab loads nothing until
+      // BrowserController navigates it (browse_open).
+      view.onNavigationStateChanged((s) => {
+        entry.title = s.title.trim() || "New Tab";
+        entry.url = s.url;
+        entry.canGoBack = s.canGoBack;
+        entry.canGoForward = s.canGoForward;
+        this.emit();
+      });
+    }
+    this.tabs.push(entry);
+    if (this.lastLayout) this.applyLayout(entry);
+    const isSessionTab = kind === "browser" && session !== undefined;
+    const background = isSessionTab || (opts.activate === false && this.activeId !== null);
+    if (background) {
+      // An isolated session's tab (or an explicit background open) opens in the
+      // BACKGROUND: the editor keeps focus and the active tab. The user can click it to watch.
+      this.applyViewMode(entry);
+      this.emit();
+    } else {
+      // A background request that only became active because the window had no
+      // active tab is shown WITHOUT taking keyboard focus: the person is
+      // typing in the agent panel (see decideActivationFocus).
+      this.setActive(id, { focus: opts.focus !== false && decideActivationFocus(opts.activate) });
+    }
+    return id;
+  }
+
+  closeTab(id: number): void {
+    const idx = this.tabs.findIndex((t) => t.id === id);
+    if (idx === -1) return;
+    const [closed] = this.tabs.splice(idx, 1);
+    if (closed.kind === "editor" && this.lastEditorWebContentsId === closed.view.getWebContentsId()) {
+      // The tab lastEditorWebContentsId was pointing at is the one being
+      // destroyed — repoint to another surviving editor tab, or null if
+      // none remain. Must happen before setActive/emit below and before
+      // closed.view.destroy() at the bottom of this method, so the
+      // snapshot (and McpService, via window.ts's pushState) never see a
+      // dead webContents id (finding 1).
+      const other = this.tabs.find((t) => t.kind === "editor");
+      this.lastEditorWebContentsId = other ? other.view.getWebContentsId() : null;
+    }
+    if (this.agentBrowserTabId === id) this.agentBrowserTabId = null;
+    for (const [sid, tid] of this.sessionAgentTabIds) if (tid === id) this.sessionAgentTabIds.delete(sid);
+    this.agentWorkingTabs.delete(id);
+    this.agentAwakeTabs.delete(id);
+    const isSession = (t: TabEntry) => t.kind === "browser" && t.session !== undefined;
+    // "Last tab closed" also covers: only background session tabs remain, which
+    // are never auto-activated. The window then keeps zero active tabs
+    // (the empty state shows next to the agent panel).
+    if (this.tabs.length === 0 || (this.activeId === id && this.tabs.every(isSession))) {
+      this.activeId = null;
+      this.emit();
+    } else if (this.activeId === id) {
+      // Never auto-activate a session tab (they live in the background).
+      const before = this.tabs.slice(0, idx).reverse();
+      const after = this.tabs.slice(idx);
+      const neighbor = before.find((t) => !isSession(t)) ?? after.find((t) => !isSession(t))!;
+      this.setActive(neighbor.id); // setActive emits
+    } else {
+      this.emit();
+    }
+    try {
+      closed.view.destroy();
+    } catch (err) {
+      console.error("TabManager: closed tab view failed to destroy", err);
+    }
+  }
+
+  /**
+   * User-initiated activation (a tab-strip click, or anything else that
+   * means "the person looked at this tab") — as opposed to `setActive`, the
+   * private helper every automatic activation (a fresh tab, closing the
+   * active tab, a popup's own activation) already routes through.
+   *
+   * Review finding 4: activating a *browser* tab this way also makes it the
+   * agent's tab (`agentBrowserTabId`) — the agent follows the user's focus.
+   * Before this, `browserHandle()` kept preferring a stale
+   * `agentBrowserTabId` even after the user had switched the strip to a
+   * different browser tab, so the next browser command would silently act on
+   * the tab the user had left, not the one they were looking at. Deliberately
+   * *not* folded into `setActive` itself: a popup's own automatic activation
+   * (`newTab`'s internal `setActive` call) must not repoint the agent on its
+   * own — see window.ts's popup handler / review finding 7, which decides
+   * that repoint explicitly instead.
+   */
+  activate(id: number, opts: ActivationOptions = {}): void {
+    const tab = this.tabs.find((t) => t.id === id);
+    if (!tab) return;
+    this.setActive(id, opts);
+    // Only the shared browser follows the user's focus; a session's agent tab is
+    // repointed by the session's own commands, never by a click.
+    if (tab.kind === "browser" && tab.session === undefined) this.pinAgentTab(undefined, id);
+  }
+
+  nextTab(): void {
+    this.cycle(1);
+  }
+
+  prevTab(): void {
+    this.cycle(-1);
+  }
+
+  activeHandle(): TabViewHandle | null {
+    return this.tabs.find((t) => t.id === this.activeId)?.view ?? null;
+  }
+
+  /** The browser tab the user is LOOKING at, or null when the active tab is
+   * an editor tab. Not `browserHandle()`: that one prefers the agent's pinned
+   * tab, which can be a hidden tab (a popup from a non-agent tab becomes the
+   * active one without repointing the agent) — the address row's back/
+   * forward/reload/URL entry must drive what the row is showing, never a
+   * hidden page the agent is working in. */
+  activeBrowserHandle(): BrowserTabHandle | null {
+    const active = this.tabs.find((t) => t.id === this.activeId);
+    return active?.kind === "browser" ? active.view : null;
+  }
+
+  /**
+   * The browser tab the BrowserController should drive: the active tab if
+   * it is a browser tab, else the most recently created browser tab, else
+   * null when no browser tab is open (design doc §1/§3 — read-only browser
+   * commands fail cleanly in that last case, and `ensurePage()` creates one).
+   */
+  browserHandle(scope?: string): BrowserTabHandle | null {
+    const id = this.resolveBrowserTabId(scope);
+    return id === null ? null : (this.tabs.find((t) => t.id === id)?.view ?? null);
+  }
+
+  /** Second-pass review finding 2: the TabManager id of whichever browser
+   * tab `browserHandle()` would currently return — window.ts's `ensurePage`
+   * uses this to pin `agentBrowserTabId` even when handing back an
+   * *existing* tab (not just when creating a new one), and the popup
+   * callback uses it to pin the agent's current tab before a non-agent
+   * popup's own `newTab` call would otherwise make itself the active tab.
+   * `browserHandle()` only ever needed the *view*, not the id, until those
+   * two callers needed the id specifically — factored out here rather than
+   * duplicated so the two can never drift from `browserHandle()`'s own
+   * resolution rule. */
+  currentBrowserTabId(scope?: string): number | null {
+    return this.resolveBrowserTabId(scope);
+  }
+
+  /** Brings the browser tab the agent drives (`browserHandle(scope)`'s own rule) to
+   * the front. Show-only: unlike `activate`, no agent pin moves, so revealing a
+   * fallback tab (the pinned one closed) never points the agent at it. Never
+   * creates a tab or a session: false when the scope has no browser tab. */
+  revealAgentBrowserTab(scope?: string): boolean {
+    const id = this.resolveBrowserTabId(scope);
+    if (id === null) return false;
+    this.setActive(id);
+    return true;
+  }
+
+  private inScope(t: TabEntry, scope: string | undefined): boolean {
+    return t.kind === "browser" && t.session === scope;
+  }
+
+  private pinnedAgentTab(scope: string | undefined): number | null {
+    return scope === undefined ? this.agentBrowserTabId : (this.sessionAgentTabIds.get(scope) ?? null);
+  }
+
+  private pinAgentTab(scope: string | undefined, id: number | null): void {
+    if (scope === undefined) this.agentBrowserTabId = id;
+    else if (id === null) this.sessionAgentTabIds.delete(scope);
+    else this.sessionAgentTabIds.set(scope, id);
+  }
+
+  private resolveBrowserTabId(scope?: string): number | null {
+    const pinned = this.pinnedAgentTab(scope);
+    if (pinned !== null) {
+      const agent = this.tabs.find((t) => t.id === pinned && this.inScope(t, scope));
+      if (agent) return agent.id;
+    }
+    const active = this.tabs.find((t) => t.id === this.activeId);
+    if (active && this.inScope(active, scope)) return active.id;
+    for (let i = this.tabs.length - 1; i >= 0; i--) {
+      if (this.inScope(this.tabs[i], scope)) return this.tabs[i].id;
+    }
+    return null;
+  }
+
+  /** Sets which browser tab (by TabManager id) the agent is driving — see
+   * `agentBrowserTabId`'s doc comment. `null` clears it back to the default
+   * fallback rule. Passing an id that isn't a live browser tab is silently
+   * accepted (mirrors `activate`'s own leniency) — `browserHandle()` simply
+   * won't find it and falls through to its existing rule. */
+  setAgentBrowserTabId(id: number | null, scope?: string): void {
+    this.pinAgentTab(scope, id);
+  }
+
+  /** Marks one browser tab as worked on by the agent (or not). Emits only on change. */
+  setAgentTabWorking(id: number, working: boolean): void {
+    if (this.agentWorkingTabs.has(id) === working) return;
+    if (working) this.agentWorkingTabs.add(id);
+    else this.agentWorkingTabs.delete(id);
+    this.emit();
+  }
+
+  /** Keeps a browser tab rendering under the active tab (or lets it hide again). No snapshot: not tab-bar state. */
+  setAgentTabAwake(id: number, awake: boolean): void {
+    if (this.agentAwakeTabs.has(id) === awake) return;
+    if (awake) this.agentAwakeTabs.add(id);
+    else this.agentAwakeTabs.delete(id);
+    const tab = this.tabs.find((t) => t.id === id);
+    if (tab) this.applyViewMode(tab);
+  }
+
+  hasAwakeTab(): boolean {
+    return this.tabs.some((t) => t.kind === "browser" && this.agentAwakeTabs.has(t.id));
+  }
+
+  private applyViewMode(tab: TabEntry): void {
+    const mode = resolveViewMode(tab, this.activeId, this.agentAwakeTabs);
+    // Without setViewMode the view cannot go under the active tab, so an awake tab must stay hidden:
+    // shown would cover the tab the person is looking at.
+    if (tab.view.setViewMode) tab.view.setViewMode(mode);
+    else tab.view.setVisible(mode === "shown");
+  }
+
+  private isLiveBrowserTab(id: number): boolean {
+    return this.tabs.some((t) => t.id === id && t.kind === "browser");
+  }
+
+  /** Full browser use's `tabs` command (@sideform/browser-agent/controller): every
+   * currently open browser tab, in creation order, plus which one is the
+   * agent's *effective* current tab (`browserHandle()`'s own rule, not
+   * necessarily the tab strip's `activeId`) — window.ts maps this straight
+   * into `BrowserTarget.listPages()`. */
+  listBrowserTabs(scope?: string): BrowserTabInfo[] {
+    const current = this.browserHandle(scope);
+    return this.tabs
+      .filter((t) => this.inScope(t, scope))
+      .map((t) => ({
+        tabId: t.id,
+        url: t.url ?? "",
+        title: t.title,
+        current: t.view === current,
+      }));
+  }
+
+  /** Review finding 6: the view for one specific browser tab, by TabManager
+   * id — `null` if that id isn't currently a browser tab. `browserHandle()`
+   * only ever returns *one* tab's handle (the agent's current one); dialog
+   * draining needs every open browser tab's own handle, tagged with its id,
+   * which this (paired with `listBrowserTabs()`) provides. */
+  browserTabHandleById(id: number, scope?: string): BrowserTabHandle | null {
+    const tab = this.tabs.find((t) => t.id === id && this.inScope(t, scope));
+    return tab ? tab.view : null;
+  }
+
+  /** webContents ids of one session's tabs (so teardown can wait for them to be destroyed). */
+  sessionWebContentsIds(session: string): number[] {
+    return this.tabs.filter((t) => t.kind === "browser" && t.session === session).map((t) => t.view.getWebContentsId());
+  }
+
+  /** Closes every tab of one isolated session (session teardown). */
+  closeSessionTabs(session: string): void {
+    for (const t of this.tabs.filter((x) => x.kind === "browser" && x.session === session)) this.closeTab(t.id);
+  }
+
+  /** Editor tabs in strip order, for the canvas link (webContents ids, current titles). */
+  editorTabsInfo(): { tabs: { webContentsId: number; title: string }[]; activeWebContentsId: number | null } {
+    const active = this.tabs.find((t) => t.id === this.activeId);
+    return {
+      tabs: this.tabs.filter((t) => t.kind === "editor").map((t) => ({ webContentsId: t.view.getWebContentsId(), title: t.title })),
+      activeWebContentsId: active?.kind === "editor" ? active.view.getWebContentsId() : null,
+    };
+  }
+
+  /**
+   * The id of the open document tab showing `docId`, or null. The live URL
+   * wins (the person may have navigated inside the tab); the id the tab was
+   * opened with only counts while the view reports no URL yet.
+   */
+  findDocTab(docId: string): number | null {
+    for (const t of this.tabs) {
+      if (t.kind !== "doc") continue;
+      const live = t.view.getURL();
+      if ((live ? docIdOfUrl(live) : t.docId) === docId) return t.id;
+    }
+    return null;
+  }
+
+  /** The id of the open canvas (editor) tab showing `canvasId`, or null. The live URL wins, like `findDocTab`
+   * (the frontend adds `canvas=<id>` to a new canvas tab by `history.replaceState`). */
+  findCanvasTab(canvasId: string): number | null {
+    for (const t of this.tabs) {
+      if (t.kind !== "editor") continue;
+      const live = t.view.getURL();
+      // The live URL wins; without a `canvas` param (a new canvas the frontend has not named yet, or a
+      // navigation that dropped it) fall back to the id the tab was opened with.
+      const liveId = live ? canvasIdOfUrl(live) : null;
+      if ((liveId ?? t.canvasId) === canvasId) return t.id;
+    }
+    return null;
+  }
+
+  /**
+   * The stored file behind a tab, for "Reveal in Finder": a canvas, document, workflow or trace id, resolved with the
+   * same rules as `findCanvasTab` / `findDocTab` / `findTraceTab` (live URL first). Null for an unknown tab,
+   * a kind with no file (browser, settings, passwords, history) and a tab with no id yet (`new=1` doc,
+   * canvas the frontend has not named). The id is not validated here; `revealTargetFor` does that.
+   */
+  fileTargetOf(tabId: number): { kind: "canvas" | "doc" | "workflow" | "trace"; id: string } | null {
+    const t = this.tabs.find((x) => x.id === tabId);
+    if (!t) return null;
+    const live = t.view.getURL();
+    let id: string | null | undefined;
+    if (t.kind === "editor") id = (live ? canvasIdOfUrl(live) : null) ?? t.canvasId;
+    // The doc page's own URL decides (a `new=1` page has no file yet); anything else (the offline fallback page)
+    // falls back to the opened id, since the file is still on disk.
+    else if (t.kind === "doc") id = live && this.isOnDocPage(live) ? docIdOfUrl(live) : t.docId;
+    // Same as docs: on the workflow page its URL decides (no id = the empty state, no file); off it (offline fallback) the opened id.
+    else if (t.kind === "workflow") id = live && this.isOnWorkflowPage(live) ? workflowIdOfUrl(live) : t.workflowId;
+    else if (t.kind === "trace") id = traceIdOfUrl(live) ?? t.traceId;
+    else return null;
+    const valid =
+      t.kind === "trace" ? isValidTraceId(id) : t.kind === "doc" ? isValidDocId(id) : t.kind === "workflow" ? isValidWorkflowId(id) : isValidCanvasId(id);
+    return valid && id ? { kind: t.kind === "editor" ? "canvas" : t.kind, id } : null;
+  }
+
+  private isOnDocPage(url: string): boolean {
+    try {
+      return isDocPageOn(url, new URL(this.opts.editorUrl).origin);
+    } catch {
+      return false;
+    }
+  }
+
+  private isOnWorkflowPage(url: string): boolean {
+    try {
+      return isWorkflowPageOn(url, new URL(this.opts.editorUrl).origin);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Number of canvas (editor) tabs. */
+  canvasTabCount(): number {
+    return this.tabs.filter((t) => t.kind === "editor").length;
+  }
+
+  /** Runs the flush handshake in every canvas tab, in parallel. Never rejects. */
+  async flushCanvasTabs(): Promise<void> {
+    await Promise.allSettled(this.tabs.filter((t) => t.kind === "editor").map((t) => t.view.flushCanvas?.() ?? Promise.resolve()));
+  }
+
+  /** The id of the open workflow tab showing `workflowId` (live URL wins, like `findDocTab`), or null. */
+  findWorkflowTab(workflowId: string): number | null {
+    for (const t of this.tabs) {
+      if (t.kind !== "workflow") continue;
+      const live = t.view.getURL();
+      if ((live ? workflowIdOfUrl(live) : t.workflowId) === workflowId) return t.id;
+    }
+    return null;
+  }
+
+  /** The id of the open Settings tab (a singleton), or null. */
+  findSettingsTab(): number | null {
+    return this.tabs.find((t) => t.kind === "settings")?.id ?? null;
+  }
+
+  /**
+   * Opens the Settings tab, or activates the one that exists (it is a singleton). A valid
+   * `section` is sent to an existing tab over `settings:section` (never a reload, so in-page
+   * state survives); a new tab loads `/settings?section=<id>`. Returns the tab id.
+   */
+  openSettingsTab(section?: string, opts: { focus?: boolean } = {}): number {
+    const existingId = this.findSettingsTab();
+    if (existingId === null) return this.newTab("settings", undefined, { section, focus: opts.focus });
+    if (isValidSettingsSection(section)) this.tabs.find((t) => t.id === existingId)?.view.sendSettingsSection(section);
+    this.activate(existingId, { focus: opts.focus });
+    return existingId;
+  }
+
+  /** The id of the open Passwords tab (a singleton), or null. */
+  findPasswordsTab(): number | null {
+    return this.tabs.find((t) => t.kind === "passwords")?.id ?? null;
+  }
+
+  /** Opens the Passwords tab, or activates the one that exists (it is a singleton). Returns the tab id. */
+  openPasswordsTab(opts: { focus?: boolean } = {}): number {
+    const existingId = this.findPasswordsTab();
+    if (existingId === null) return this.newTab("passwords", undefined, { focus: opts.focus });
+    this.activate(existingId, { focus: opts.focus });
+    return existingId;
+  }
+
+  /** The id of the open History tab (a singleton), or null. */
+  findHistoryTab(): number | null {
+    return this.tabs.find((t) => t.kind === "history")?.id ?? null;
+  }
+
+  /** Opens the History tab, or activates the one that exists (it is a singleton). Returns the tab id. */
+  openHistoryTab(opts: { focus?: boolean } = {}): number {
+    const existingId = this.findHistoryTab();
+    if (existingId === null) return this.newTab("history", undefined, { focus: opts.focus });
+    this.activate(existingId, { focus: opts.focus });
+    return existingId;
+  }
+
+  /** True when the webContents is an editor, doc, trace or Settings tab: a tab that loads a frontend page with the tab preload. Browser, Passwords and History tabs are not. */
+  isPageTab(webContentsId: number): boolean {
+    return this.tabs.some((t) => t.kind !== "browser" && t.kind !== "passwords" && t.kind !== "history" && t.view.getWebContentsId() === webContentsId);
+  }
+
+  /** The id of the open trace tab showing `traceId`, or null. The live URL wins, like `findDocTab`. */
+  findTraceTab(traceId: string): number | null {
+    for (const t of this.tabs) {
+      if (t.kind !== "trace") continue;
+      const live = t.view.getURL();
+      // Fall back to the opened id when the live URL has none (offline fallback page, redirect).
+      if ((traceIdOfUrl(live) ?? t.traceId) === traceId) return t.id;
+    }
+    return null;
+  }
+
+  /** Open trace tabs in strip order; id resolved like `findTraceTab`, tabs without a valid id are skipped. */
+  listTraceTabs(): { traceId: string; title: string; active: boolean }[] {
+    const out: { traceId: string; title: string; active: boolean }[] = [];
+    for (const t of this.tabs) {
+      if (t.kind !== "trace") continue;
+      const traceId = traceIdOfUrl(t.view.getURL()) ?? t.traceId;
+      if (!traceId) continue;
+      out.push({ traceId, title: t.title, active: t.id === this.activeId });
+    }
+    return out;
+  }
+
+  /** True when the webContents is one of this window's trace tabs. */
+  isTraceTab(webContentsId: number): boolean {
+    return this.tabs.some((t) => t.kind === "trace" && t.view.getWebContentsId() === webContentsId);
+  }
+
+  /** True when the webContents is one of this window's workflow tabs. */
+  isWorkflowTab(webContentsId: number): boolean {
+    return this.tabs.some((t) => t.kind === "workflow" && t.view.getWebContentsId() === webContentsId);
+  }
+
+  /** True when the webContents is one of this window's doc (Markdown) tabs. */
+  isDocTab(webContentsId: number): boolean {
+    return this.tabs.some((t) => t.kind === "doc" && t.view.getWebContentsId() === webContentsId);
+  }
+
+  /**
+   * True when the webContents is a doc tab that still shows the doc page (`/doc` on the editor origin), judged on BOTH
+   * the view's URL and `frameUrl` (the sender frame's own document URL), not a page it navigated to.
+   */
+  isDocViewer(webContentsId: number, frameUrl: string | undefined): boolean {
+    let origin: string;
+    try {
+      origin = new URL(this.opts.editorUrl).origin;
+    } catch {
+      return false;
+    }
+    return (
+      isDocPageOn(frameUrl, origin) &&
+      this.tabs.some((t) => t.kind === "doc" && t.view.getWebContentsId() === webContentsId && isDocPageOn(t.view.getURL(), origin))
+    );
+  }
+
+  /**
+   * True when the webContents is a Settings tab that still shows the settings page (`/settings` on the editor origin),
+   * judged on BOTH the view's URL and `frameUrl` (the sender frame's own document URL).
+   */
+  isSettingsViewer(webContentsId: number, frameUrl: string | undefined): boolean {
+    let origin: string;
+    try {
+      origin = new URL(this.opts.editorUrl).origin;
+    } catch {
+      return false;
+    }
+    return (
+      isSettingsPageOn(frameUrl, origin) &&
+      this.tabs.some((t) => t.kind === "settings" && t.view.getWebContentsId() === webContentsId && isSettingsPageOn(t.view.getURL(), origin))
+    );
+  }
+
+  /** True when the webContents is a trace tab that still shows the trace viewer (`/trace/<id>`), not a page it navigated to. */
+  isTraceViewer(webContentsId: number): boolean {
+    return this.tabs.some(
+      (t) => t.kind === "trace" && t.view.getWebContentsId() === webContentsId && traceIdOfUrl(t.view.getURL()) !== null,
+    );
+  }
+
+  /** True when the webContents belongs to the active tab. */
+  isActiveTabWebContents(webContentsId: number): boolean {
+    return this.tabs.some((t) => t.id === this.activeId && t.view.getWebContentsId() === webContentsId);
+  }
+
+  /** The webContents id of a tab, or null. */
+  webContentsIdOf(id: number): number | null {
+    return this.tabs.find((t) => t.id === id)?.view.getWebContentsId() ?? null;
+  }
+
+  /** Activates the editor tab with this webContents id (no-op for anything else). */
+  activateEditorByWebContentsId(webContentsId: number): void {
+    const tab = this.tabs.find((t) => t.kind === "editor" && t.view.getWebContentsId() === webContentsId);
+    if (tab) this.activate(tab.id);
+  }
+
+  isEditorTab(webContentsId: number): boolean {
+    return this.tabs.some((t) => t.kind === "editor" && t.view.getWebContentsId() === webContentsId);
+  }
+
+  /**
+   * Tab strip drag-to-reorder: puts tab `id` right before tab `beforeId` (null = at the end) in the
+   * list order, which is also the order of `getSnapshot().tabs` (background session tabs included).
+   * Anchored on an id, not an index, so a tab opened or closed meanwhile cannot misplace it.
+   * Unknown ids, `beforeId === id`, an unknown `beforeId` and an unchanged position are no-ops
+   * (no state push). Activation, focus, agent pins and the MCP active tab are untouched; Ctrl+Tab
+   * cycles this same list, so it follows.
+   */
+  moveTab(id: number, beforeId: number | null): void {
+    const from = this.tabs.findIndex((t) => t.id === id);
+    if (from === -1 || beforeId === id) return;
+    if (beforeId !== null && !this.tabs.some((t) => t.id === beforeId)) return;
+    const [moved] = this.tabs.splice(from, 1);
+    const to = beforeId === null ? this.tabs.length : this.tabs.findIndex((t) => t.id === beforeId);
+    if (to === from) {
+      this.tabs.splice(from, 0, moved);
+      return;
+    }
+    this.tabs.splice(to, 0, moved);
+    this.emit();
+  }
+
+  getSnapshot(): TabsSnapshot {
+    const active = this.tabs.find((t) => t.id === this.activeId);
+    const activeWebContentsId = active?.view.getWebContentsId() ?? null;
+    return {
+      tabs: this.tabs.map(({ id, title, kind, url, canGoBack, canGoForward, loading }) => ({
+        id,
+        title,
+        kind,
+        url,
+        canGoBack,
+        canGoForward,
+        loading,
+      })),
+      activeId: this.activeId,
+      activeKind: active?.kind ?? null,
+      activeTheme: this.resolveActiveTheme(active),
+      mcpStatus: this.mcpStatus,
+      mcpActiveWebContentsId: resolveMcpActiveTab(active?.kind ?? null, activeWebContentsId, this.lastEditorWebContentsId),
+      agentTabIds: [...this.agentWorkingTabs].filter((id) => this.isLiveBrowserTab(id)),
+    };
+  }
+
+  /**
+   * The theme the tab bar/chrome row should render for the currently active
+   * tab (glass tab bar work, 2026-09-25). An editor tab always reports its
+   * own theme directly. A browser tab has none of its own — falling back to
+   * `null` here used to mean "switching to a browser tab flips the bar to
+   * the system theme", which visibly clashed against a dark-theme editor tab
+   * right next to it. Instead: the theme of the most-recently-*active*
+   * editor tab (`lastEditorWebContentsId`, already tracked for the MCP
+   * routing above and kept live-accurate the same way — see `setActive`/
+   * `closeTab`), falling back to any other editor tab with a known theme,
+   * then finally `null` (window.ts falls back to the system theme from
+   * there). Looking the entry up fresh here (rather than caching a theme
+   * value) means a *theme change* on that editor tab — which can happen
+   * while a browser tab is active, `onThemeChanged` below emits regardless
+   * of which tab is active — is picked up by the very next snapshot.
+   */
+  private resolveActiveTheme(active: TabEntry | undefined): UITheme | null {
+    if (active?.kind === "editor" || active?.kind === "doc" || active?.kind === "workflow" || active?.kind === "trace" || active?.kind === "settings") return active.theme;
+    const lastEditor = this.tabs.find(
+      (t) => t.kind === "editor" && t.view.getWebContentsId() === this.lastEditorWebContentsId,
+    );
+    if (lastEditor?.theme) return lastEditor.theme;
+    const anyEditorWithTheme = this.tabs.find((t) => (t.kind === "editor" || t.kind === "doc" || t.kind === "workflow" || t.kind === "trace" || t.kind === "settings") && t.theme !== null);
+    return anyEditorWithTheme?.theme ?? null;
+  }
+
+  /**
+   * Reports the desktop MCP bridge's publish status (see mcp/service.ts)
+   * into the snapshot the tab bar renders — the tab strip's only diagnostic,
+   * since a packaged app has no terminal. TabManager does not know anything
+   * about MCP itself; window.ts is the one wiring service status changes
+   * here, the same way it wires editor theme/title callbacks above.
+   */
+  setMcpStatus(status: McpStatus): void {
+    if (status === this.mcpStatus) return;
+    this.mcpStatus = status;
+    this.emit();
+  }
+
+  /** `area` is the rect for tab views, computed by layout.ts (which owns all
+   * window geometry: tab bar height, rim inset, agent panel offset). */
+  layout(area: { x: number; y: number; width: number; height: number }): void {
+    this.lastLayout = area;
+    for (const tab of this.tabs) this.applyLayout(tab);
+  }
+
+  /**
+   * Like `layout`, but moves only the ACTIVE and awake tab views. Per-frame use (the panel slide): hidden
+   * tab views need no setBounds until the final full `layout`. `lastLayout` is updated, so a tab
+   * created or activated meanwhile is placed at the latest frame.
+   */
+  layoutActive(area: { x: number; y: number; width: number; height: number }): void {
+    this.lastLayout = area;
+    for (const tab of this.tabs) {
+      if (resolveViewMode(tab, this.activeId, this.agentAwakeTabs) !== "hidden") this.applyLayout(tab);
+    }
+  }
+
+  count(): number {
+    return this.tabs.length;
+  }
+
+  /**
+   * Destroys every tab view without respawning a replacement — unlike
+   * closeTab(). Intended for
+   * window teardown (win.on("closed", ...)).
+   */
+  destroyAll(): void {
+    const closing = this.tabs;
+    this.tabs = [];
+    this.activeId = null;
+    this.agentAwakeTabs.clear();
+    for (const tab of closing) {
+      try {
+        tab.view.destroy();
+      } catch (err) {
+        console.error("TabManager: tab view failed to destroy", err);
+      }
+    }
+  }
+
+  private applyLayout(tab: TabEntry): void {
+    if (!this.lastLayout) return;
+    const { x, y, width, height } = this.lastLayout;
+    tab.view.setBounds({ x, y, width, height });
+  }
+
+  /** Second-pass review finding 3: a user-driven tab cycle (Ctrl+Tab/
+   * Ctrl+Shift+Tab, via `nextTab`/`prevTab`) landing on a browser tab
+   * repoints the agent to it, the same as clicking it in the strip
+   * (`activate` — finding 4 above). Before this, cycling to a browser tab
+   * left `agentBrowserTabId` wherever it was, so the very next browser
+   * command could silently act on a tab the user wasn't even looking at
+   * anymore. Deliberately *not* folded into `setActive` itself, for the
+   * same reason `activate` isn't either — `setActive` also backs every
+   * *automatic* activation (a popup's own `newTab`, `closeTab`'s neighbor
+   * pick), which must never repoint the agent on their own. */
+  private cycle(delta: number): void {
+    if (this.tabs.length === 0 || this.activeId === null) return;
+    const idx = this.tabs.findIndex((t) => t.id === this.activeId);
+    const next = this.tabs[(idx + delta + this.tabs.length) % this.tabs.length];
+    this.setActive(next.id);
+    if (next.kind === "browser" && next.session === undefined) this.pinAgentTab(undefined, next.id);
+  }
+
+  private setActive(id: number, opts: ActivationOptions = {}): void {
+    this.activeId = id;
+    for (const tab of this.tabs) this.applyViewMode(tab);
+    const active = this.tabs.find((t) => t.id === id);
+    if (opts.focus !== false) active?.view.focus();
+    if (active?.kind === "editor") this.lastEditorWebContentsId = active.view.getWebContentsId();
+    this.emit();
+  }
+
+  private emit(): void {
+    this.opts.onStateChanged(this.getSnapshot());
+  }
+}
+
+/** Validates a `tabbar:reorder` payload from the tab bar: `{id: integer, beforeId: integer | null}`. */
+export function parseReorderPayload(raw: unknown): { id: number; beforeId: number | null } | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const { id, beforeId } = raw as Record<string, unknown>;
+  if (typeof id !== "number" || !Number.isInteger(id)) return null;
+  if (beforeId === null) return { id, beforeId: null };
+  if (typeof beforeId !== "number" || !Number.isInteger(beforeId)) return null;
+  return { id, beforeId };
+}

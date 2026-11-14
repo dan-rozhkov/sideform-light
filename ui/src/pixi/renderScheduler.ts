@@ -1,0 +1,227 @@
+/**
+ * Render-on-demand scheduler for the PixiJS application.
+ *
+ * By default Pixi's TickerPlugin renders the full scene every frame, forever,
+ * even when the editor is idle — pure GPU/CPU/battery waste for a design tool
+ * whose canvas is static most of the time.
+ *
+ * This module detaches that unconditional per-frame render and replaces it with
+ * a dirty-flag scheduler:
+ *   - render whenever something invalidates (any visual store change, marquee
+ *     overlay state, font load, canvas/window resize, or an explicit
+ *     `requestCanvasRender()` call),
+ *   - viewport changes render once per dirty ticker frame, without keeping the
+ *     whole scene hot after pan/zoom,
+ *   - other signals keep rendering for a trailing window (covers drop
+ *     animations and debounced re-renders + async rasterization),
+ *   - a low-rate safety render as the backstop for purely-async arrivals
+ *     (embed rasterization, image loads) that touch no store and emit no signal.
+ *
+ * Accepted trade-off: a visual change arriving with NO invalidation signal
+ * renders at the safety cadence (<= SAFETY_INTERVAL_MS later).
+ */
+import type { Application } from "pixi.js";
+import { useSceneStore } from "@/store/sceneStore";
+import { useViewportStore } from "@/store/viewportStore";
+import { useSelectionStore } from "@/store/selectionStore";
+import { useHoverStore } from "@/store/hoverStore";
+import { useDragStore } from "@/store/dragStore";
+import { useVariableStore } from "@/store/variableStore";
+import { useSmartGuideStore } from "@/store/smartGuideStore";
+import { useGuidesStore } from "@/store/guidesStore";
+import { useMeasureStore } from "@/store/measureStore";
+import { useMeasurementsStore } from "@/store/measurementsStore";
+import { useDrawModeStore } from "@/store/drawModeStore";
+import { useConnectorStore } from "@/store/connectorStore";
+import { usePenToolStore } from "@/store/penToolStore";
+import { usePixelGridStore } from "@/store/pixelGridStore";
+import { useStyleStore } from "@/store/styleStore";
+import { useUIThemeStore } from "@/store/uiThemeStore";
+import { useThemeStore } from "@/store/themeStore";
+import { useRenderModeStore } from "@/store/renderModeStore";
+import { useEditorModeStore } from "@/store/editorModeStore";
+import { useDevModeStore } from "@/store/devModeStore";
+import { useAiVectorPreviewStore } from "@/store/aiVectorPreviewStore";
+import { useAiSvgPreviewStore } from "@/store/aiSvgPreviewStore";
+import { useAiPendingScreenStore } from "@/store/aiPendingScreenStore";
+import { useEmbedPickerStore } from "@/store/embedPickerStore";
+import { subscribeOverlayState } from "./pixiOverlayState";
+
+// Keep rendering this long after the last signal. Covers drop animations
+// (~150-300ms), debounced re-renders (120-200ms) plus rasterization latency.
+const TRAIL_MS = 1200;
+// Backstop cadence for async visual arrivals that emit no invalidation signal.
+const SAFETY_INTERVAL_MS = 1000;
+
+let invalidate: (() => void) | null = null;
+
+/**
+ * Request a canvas render from anywhere. Used by code paths that mutate Pixi
+ * containers directly without going through any store (e.g. the auto-layout
+ * drag animator's RAF loops). No-op when no scheduler is installed.
+ */
+export function requestCanvasRender(): void {
+  invalidate?.();
+}
+
+export function setupRenderScheduler(app: Application): () => void {
+  // Detach Pixi's unconditional per-frame render (registered by TickerPlugin as
+  // `ticker.add(app.render, app, UPDATE_PRIORITY.LOW)`).
+  app.ticker.remove(app.render, app);
+
+  // Render at least once immediately so the first paint is not delayed.
+  let lastActivity = performance.now();
+  let lastRender = 0;
+  let dirty = true;
+
+  const markDirty = () => {
+    dirty = true;
+  };
+
+  const markActivity = () => {
+    lastActivity = performance.now();
+    dirty = true;
+  };
+  invalidate = markActivity;
+
+  // Filtered to `selection?.embedId` alone, same rationale (and same
+  // `!== last` pattern) as `selectionOverlay/index.ts`'s own embedPickerStore
+  // subscription: `drawSelection.ts`'s single-embed size-badge skip is the
+  // only thing downstream of this store that needs a repaint, and it reads
+  // only that one field. Left unfiltered, the store's hot writers —
+  // `setHoveredPath` on every hovered element while picking, and
+  // `setDropIndicator` on every `pointermove` of a sortable element drag
+  // (~60/s) — each triggered a full `markActivity` here for no visual
+  // reason at all.
+  let lastEmbedPickerSelectionEmbedId = useEmbedPickerStore.getState().selection?.embedId ?? null;
+  const unsubEmbedPicker = useEmbedPickerStore.subscribe((state) => {
+    const embedId = state.selection?.embedId ?? null;
+    if (embedId === lastEmbedPickerSelectionEmbedId) return;
+    lastEmbedPickerSelectionEmbedId = embedId;
+    markActivity();
+  });
+
+  // Streamed html lives in its own store slot, so `drafts` keeps its identity
+  // on html-only frames: repaint only when a box moved/resized/appeared/gone.
+  const unsubPendingScreens = useAiPendingScreenStore.subscribe((state, prev) => {
+    if (state.drafts === prev.drafts) return;
+    markActivity();
+  });
+
+  const onTick = () => {
+    const now = performance.now();
+    if (
+      dirty ||
+      now - lastActivity <= TRAIL_MS ||
+      now - lastRender >= SAFETY_INTERVAL_MS
+    ) {
+      dirty = false;
+      lastRender = now;
+      app.render();
+    }
+  };
+  app.ticker.add(onTick);
+
+  // One subscription per store whose changes imply a visual change, plus the
+  // marquee overlay state. Every store's `.subscribe(fn)` and
+  // `subscribeOverlayState(fn)` accept a no-arg listener.
+  const unsubs: Array<() => void> = [
+    useSceneStore.subscribe(markActivity),
+    // Pan/zoom updates already arrive once per interaction frame. They need one
+    // repaint, not the generic trailing window used for async visual work.
+    useViewportStore.subscribe(markDirty),
+    useSelectionStore.subscribe(markActivity),
+    useHoverStore.subscribe(markActivity),
+    useDragStore.subscribe(markActivity),
+    useVariableStore.subscribe(markActivity),
+    useSmartGuideStore.subscribe(markActivity),
+    useGuidesStore.subscribe(markActivity),
+    useMeasureStore.subscribe(markActivity),
+    useDrawModeStore.subscribe(markActivity),
+    useConnectorStore.subscribe(markActivity),
+    // Pen tool draft/preview state (cursor tracking, anchor placement) lives
+    // outside sceneStore until the path is committed — without this the pen
+    // preview only repaints on the safety tick (multi-second perceived lag).
+    usePenToolStore.subscribe(markActivity),
+    // Shared fill/effect style edits repaint referencing nodes via pixiSync's
+    // theme-update pass (direct container mutation, no scene write).
+    useStyleStore.subscribe(markActivity),
+    usePixelGridStore.subscribe(markActivity),
+    useUIThemeStore.subscribe(markActivity),
+    useThemeStore.subscribe(markActivity),
+    // Outline-mode toggle: pixiSync does a full container rebuild on this
+    // store's change (see pixiSync.ts), but that rebuild alone writes no
+    // Pixi containers the scheduler already watches at the right time —
+    // without this subscription the repaint would only land on the next
+    // safety tick (up to SAFETY_INTERVAL_MS later), same class of bug as the
+    // pen-tool-lag fix this allowlist exists to prevent.
+    useRenderModeStore.subscribe(markActivity),
+    // Play/Present mode entry/exit and slide navigation directly toggle Pixi
+    // container visibility (PresentController) without writing sceneStore —
+    // without this the repaint would only land on the next safety tick.
+    useEditorModeStore.subscribe(markActivity),
+    // Dev Mode (inspect overlay) toggle/unit-pref changes redraw the inspect
+    // overlay without writing sceneStore — same class of bug as outline mode.
+    useDevModeStore.subscribe(markActivity),
+    // Persistent pinned measurements drive their own overlay (like guides)
+    // without writing sceneStore — same class of bug as outline mode.
+    useMeasurementsStore.subscribe(markActivity),
+    // Streaming AI vector-drawing preview (aiVectorPreviewLayer.ts) mutates
+    // Pixi containers directly from its own store subscription, outside the
+    // cached scene frames — without this the repaint would only land on the
+    // next safety tick, same class of bug as the pen-tool-lag fix above.
+    useAiVectorPreviewStore.subscribe(markActivity),
+    useAiSvgPreviewStore.subscribe(markActivity),
+    // Dashed batch_design placeholder boxes (aiPendingScreenLayer.ts) mutate
+    // Pixi containers directly from their own store subscription, outside
+    // the cached scene frames — without this the repaint would only land on
+    // the next safety tick, same class of bug as the two subscriptions
+    // above.
+    unsubPendingScreens, // geometry-filtered above
+    // Picking an element inside the selected embed hides that embed's Pixi
+    // size badge (drawSelection.ts's `pickedElementOwnsSingleEmbed`) in favor
+    // of EmbedElementHighlight's own box — a Pixi Graphics change that writes
+    // no sceneStore, so without this subscription the repaint would only
+    // land on the next safety tick, same class of bug as the pen-tool-lag
+    // fix above. (The DOM-rendered EmbedSelectionFrame/EmbedElementHighlight
+    // toggle via React's own re-render from the same store, independent of
+    // this scheduler.) Filtered above — see `unsubEmbedPicker`.
+    unsubEmbedPicker,
+    subscribeOverlayState(markActivity),
+  ];
+
+  // Font loads rebuild text/embed containers without writing any store.
+  const hasFonts =
+    typeof document !== "undefined" && "fonts" in document;
+  if (hasFonts) {
+    document.fonts.addEventListener("loadingdone", markActivity);
+  }
+
+  // Resizing the renderer changes the canvas visually but emits no store signal:
+  // (a) window resize, handled by Pixi's ResizePlugin (`resizeTo: container`);
+  // (b) container-only resize (e.g. a sidebar collapsing) with no window event.
+  const hasWindow = typeof window !== "undefined";
+  if (hasWindow) {
+    window.addEventListener("resize", markActivity);
+  }
+  const canvasParent = app.canvas.parentElement;
+  const resizeObserver =
+    canvasParent && typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(markActivity)
+      : null;
+  resizeObserver?.observe(canvasParent!);
+
+  return () => {
+    for (const unsub of unsubs) unsub();
+    if (hasFonts) {
+      document.fonts.removeEventListener("loadingdone", markActivity);
+    }
+    if (hasWindow) {
+      window.removeEventListener("resize", markActivity);
+    }
+    resizeObserver?.disconnect();
+    app.ticker.remove(onTick);
+    invalidate = null;
+    // Do NOT re-add app.render — the app is being destroyed.
+  };
+}

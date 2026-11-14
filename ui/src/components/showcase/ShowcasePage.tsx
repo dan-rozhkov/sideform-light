@@ -1,0 +1,532 @@
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { useSearchParams } from "react-router";
+
+import {
+  LandingClosing,
+  LandingFooter,
+  LandingHero,
+  LandingHeroWindow,
+  LandingNav,
+  LandingSectionHead,
+  LandingStory,
+} from "./ShowcaseLanding";
+import "./showcaseLanding.css";
+
+import { ShowcaseFilterBar } from "@/components/showcase/ShowcaseFilterBar";
+import { Button } from "@/components/ui/button";
+import { track } from "@/lib/analytics";
+import { cn } from "@/lib/utils";
+import { useForcedDarkDocument } from "@/hooks/useForcedDarkDocument";
+import { useHtmlRouteClass } from "@/hooks/useHtmlRouteClass";
+import {
+  fetchShowcase,
+  fetchShowcaseCategories,
+  fetchShowcaseModels,
+  type ShowcaseApp,
+  type ShowcaseCategory,
+  type ShowcaseModel,
+  type ShowcasePlatform,
+  type ShowcaseSort,
+} from "@/lib/showcase";
+import { ShowcaseAppCarousel } from "@/components/showcase/ShowcaseAppCarousel";
+
+type Status = "loading" | "ready" | "error";
+
+// theme-color for the dark-only landing (matches its #020202 page background).
+const LANDING_THEME_COLOR = "#020202";
+
+function parseSort(value: string | null): ShowcaseSort {
+  return value === "latest" ? "latest" : "popular";
+}
+
+// `?category=` (present but empty — e.g. typed by hand, or left behind by a
+// stripped chip) reads back as `""` from URLSearchParams, not `null`. Every
+// consumer of `category` in this file (the request, the empty-state branch,
+// `filtersKey`, the "All" chip's active state) must agree on what "no
+// category" looks like, so normalizing happens once, here, rather than at
+// each call site.
+function parseCategory(value: string | null): string | null {
+  return value ? value : null;
+}
+
+// `?model=` follows the exact same rule as category: absent (or empty) means
+// no filter, and a filter is only ever written to the URL when non-empty.
+function parseModel(value: string | null): string | null {
+  return value ? value : null;
+}
+
+// `?platform=` follows the exact same rule as sort: the default ("mobile")
+// is never written to the URL, so canonical "/" stays the mobile feed with a
+// clean address bar, and any other value (including garbage) reads back as
+// the default.
+function parsePlatform(value: string | null): ShowcasePlatform {
+  return value === "desktop" ? "desktop" : "mobile";
+}
+
+// Desktop screenshots are landscape (~2880x2048) and unreadable at four (or
+// even three) to a row, so the desktop feed drops to a 1/2/3-column grid —
+// one fewer breakpoint than mobile's 1/2/3/4, with no separate `lg` step
+// (2 columns already carries from `sm` through `xl`). See the geometry
+// comment on `SHOWCASE_IMAGE_SIZES` in ShowcaseCard.tsx, which mirrors these
+// exact breakpoints/column counts to keep `sizes` truthful.
+function ShowcaseGrid({
+  children,
+  platform,
+}: {
+  children: ReactNode;
+  platform: ShowcasePlatform;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-1 gap-4 sm:grid-cols-2",
+        platform === "desktop" ? "xl:grid-cols-3" : "lg:grid-cols-3 xl:grid-cols-4",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SkeletonGrid({ platform }: { platform: ShowcasePlatform }) {
+  return (
+    <div aria-hidden="true">
+      <ShowcaseGrid platform={platform}>
+        {Array.from({ length: 4 }, (_, i) => (
+          <div
+            key={i}
+            // Mirrors ShowcaseAppCarousel's own padding per platform, so the
+            // skeleton occupies the same box the real card lands in — desktop
+            // cards pad by a fraction of their width (9% / 24.5%), mobile ones
+            // by the fixed px steps.
+            className={
+              platform === "desktop"
+                ? "animate-pulse rounded-[2rem] bg-surface-base px-[9%] py-[24.5%]"
+                : "animate-pulse rounded-[2rem] bg-surface-base px-12 py-10 sm:px-16 sm:py-12"
+            }
+          >
+            <div
+              style={{ aspectRatio: platform === "desktop" ? "2880 / 2048" : "390 / 844" }}
+            />
+          </div>
+        ))}
+      </ShowcaseGrid>
+    </div>
+  );
+}
+
+export function ShowcasePage() {
+  // `useSearchParams` is the single source of truth for filter state — no
+  // duplicated `useState`. Defaults (`sort=popular`, no category) are never
+  // written to the URL, so the canonical "/" stays clean; the reverse
+  // (`?sort=popular` explicitly in the URL) is treated the same as absent.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sort = parseSort(searchParams.get("sort"));
+  const category = parseCategory(searchParams.get("category"));
+  const platform = parsePlatform(searchParams.get("platform"));
+  const model = parseModel(searchParams.get("model"));
+
+  // Apps, not screens: the feed hands back whole apps (see lib/showcase.ts),
+  // so pages append cleanly and no card is ever rendered half-populated.
+  const [apps, setApps] = useState<ShowcaseApp[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [status, setStatus] = useState<Status>("loading");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [categories, setCategories] = useState<ShowcaseCategory[]>([]);
+  const [models, setModels] = useState<ShowcaseModel[]>([]);
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
+
+  // Monotonic id for the most recent request against the feed — bumped both
+  // when the filters change (a new page-1 fetch, in the effect below) and
+  // before every next-page request. A response is only applied if this ref
+  // still holds the id it was issued under. That's a different question from
+  // "do the filter *values* still match" (the guard this replaced): popular
+  // -> latest -> popular makes the values equal again while page 1 (latest)
+  // and the stale page-2 (the first popular lap) are two different requests
+  // for the same-looking filters — a value comparison can't tell those
+  // apart, which is exactly what let a stale pagination response reappear
+  // and get appended after that sequence.
+  const requestIdRef = useRef(0);
+
+  // Which loaded page the feed is currently on, for `showcase_feed_paginated`.
+  // Reset to 1 alongside the page-1 fetch below (a filter change starts a new
+  // feed, not a continuation of the previous one's page count).
+  const pageRef = useRef(1);
+
+  // `showcase_viewed` must fire exactly once per mount, with the filters
+  // active at that moment — never again as the visitor changes filters
+  // (that's `showcase_filter_applied`'s job, fired from the individual
+  // filter-bar handlers below). The ref guard is what makes this robust to
+  // `sort`/`category`/`platform`/`model` changing before this effect's first
+  // run finishes commit — exhaustive-deps still sees every value it reads.
+  const hasTrackedShowcaseViewRef = useRef(false);
+  useEffect(() => {
+    if (hasTrackedShowcaseViewRef.current) return;
+    hasTrackedShowcaseViewRef.current = true;
+    track("showcase_viewed", {
+      platform,
+      category: category ?? undefined,
+      sort,
+    });
+  }, [platform, category, sort]);
+
+  // Drop back to the skeleton the moment the filters change, not after the
+  // fetch effect below gets around to it — setting state synchronously
+  // inside an effect body is a lint error (cascading renders), so this
+  // follows the same "adjust state during render" pattern ShowcaseAppCarousel
+  // already uses for its screensKey: compare the new key against the last one
+  // rendered, and if it moved, call the setters right here rather than in an
+  // effect. React re-renders immediately before committing, so nothing ever
+  // paints the stale grid under the new filter's tab/chip.
+  const filtersKey = `${sort}|${category ?? ""}|${platform}|${model ?? ""}`;
+  const [loadedFiltersKey, setLoadedFiltersKey] = useState(filtersKey);
+  if (loadedFiltersKey !== filtersKey) {
+    setLoadedFiltersKey(filtersKey);
+    setStatus("loading");
+    setErrorMessage(null);
+  }
+
+  // The chip list itself doesn't depend on which chip is selected, but it
+  // does depend on platform — mobile and desktop apps aren't drawn from the
+  // same theme list, so switching the toggle must re-fetch this, not just
+  // reuse a mount-time snapshot. Guarded by the same `cancelled` closure
+  // pattern as the feed fetch below: each effect instance's own flag is
+  // flipped by its own cleanup, so a response for a platform the visitor has
+  // since switched away from is dropped instead of overwriting the current
+  // chip row. A failure (or an empty database) just means the chip row
+  // doesn't render; the sort control still works on its own.
+  useEffect(() => {
+    let cancelled = false;
+    fetchShowcaseCategories(platform).then((result) => {
+      if (cancelled) return;
+      if (result.ok) {
+        setCategories(result.categories);
+      } else {
+        setCategories([]);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [platform]);
+
+  // Same pattern as the categories effect above, and for the same reason:
+  // the model set differs per platform, so this must re-fetch on platform
+  // change rather than reuse a mount-time snapshot. A failure (or empty
+  // database) just means the model select doesn't render.
+  useEffect(() => {
+    let cancelled = false;
+    fetchShowcaseModels(platform).then((result) => {
+      if (cancelled) return;
+      if (result.ok) {
+        setModels(result.models);
+      } else {
+        setModels([]);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [platform]);
+
+  // Changing sort, category, or platform resets the cursor and refetches
+  // page 1. The filter row itself stays mounted (it's rendered outside this
+  // effect's control below); only the grid drops back to the skeleton.
+  useEffect(() => {
+    let cancelled = false;
+    // Bumping here (not just reading) is what invalidates any next-page
+    // request already in flight for the previous filters — see
+    // `requestIdRef`'s comment above.
+    requestIdRef.current += 1;
+    pageRef.current = 1;
+    fetchShowcase(null, undefined, { sort, category, platform, model }).then((result) => {
+      // `cancelled` (set by this effect's own cleanup, below) already covers
+      // "this exact effect instance was torn down or superseded" — a
+      // filter-value comparison here would be redundant with it, not an
+      // additional safety net, so there's nothing else to check.
+      if (cancelled) return;
+      if (!result.ok) {
+        if (result.notConfigured) {
+          // 503 (storage not configured) reads identically to an empty feed.
+          setApps([]);
+          setNextCursor(null);
+          setStatus("ready");
+        } else {
+          setErrorMessage(result.error);
+          setStatus("error");
+        }
+        return;
+      }
+      setApps(result.data.apps);
+      setNextCursor(result.data.nextCursor);
+      setStatus("ready");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [sort, category, platform, model]);
+
+  const handleLoadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    // Captured *after* incrementing, so this request owns the id it checks
+    // against below. If the filter-change effect bumps the ref again before
+    // this resolves — the user switched tabs while infinite-scroll loading was
+    // flight — the comparison fails and the response is dropped instead of
+    // being appended to a list built under different filters.
+    const requestId = ++requestIdRef.current;
+    const result = await fetchShowcase(nextCursor, undefined, { sort, category, platform, model });
+    if (requestIdRef.current === requestId && result.ok) {
+      setApps((prev) => [...prev, ...result.data.apps]);
+      setNextCursor(result.data.nextCursor);
+      pageRef.current += 1;
+      track("showcase_feed_paginated", {
+        page: pageRef.current,
+        apps_loaded: result.data.apps.length,
+      });
+    }
+    // A failure loading more leaves the current page in place; because the
+    // sentinel remains mounted, scrolling away and back allows a retry. A
+    // stale response (filters changed mid-request) is silently dropped.
+    setLoadingMore(false);
+  }, [category, loadingMore, model, nextCursor, platform, sort]);
+
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    if (
+      !sentinel ||
+      status !== "ready" ||
+      nextCursor == null ||
+      loadingMore ||
+      typeof IntersectionObserver === "undefined"
+    ) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          void handleLoadMore();
+        }
+      },
+      // Start the request before the visitor reaches the final row so the
+      // next page can append without a visible pause at the bottom.
+      { rootMargin: "600px 0px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [handleLoadMore, loadingMore, nextCursor, status]);
+
+  function updateFilters(next: {
+    sort?: ShowcaseSort;
+    category?: string | null;
+    platform?: ShowcasePlatform;
+    model?: string | null;
+  }) {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (next.sort !== undefined) {
+          if (next.sort === "popular") {
+            params.delete("sort");
+          } else {
+            params.set("sort", next.sort);
+          }
+        }
+        if (next.category !== undefined) {
+          if (next.category === null) {
+            params.delete("category");
+          } else {
+            params.set("category", next.category);
+          }
+        }
+        if (next.platform !== undefined) {
+          if (next.platform === "mobile") {
+            params.delete("platform");
+          } else {
+            params.set("platform", next.platform);
+          }
+        }
+        if (next.model !== undefined) {
+          if (next.model === null) {
+            params.delete("model");
+          } else {
+            params.set("model", next.model);
+          }
+        }
+        return params;
+      },
+      { replace: true },
+    );
+  }
+
+  // Mobile and desktop apps aren't drawn from the same theme list (see the
+  // categories effect above), so a category selected under one platform is
+  // almost certainly meaningless — or simply absent — under the other. Left
+  // in place, it would carry over as a `?category=` the new platform's chip
+  // row doesn't recognize, landing on the "every chip inactive" empty state
+  // instead of the full new-platform feed the visitor actually asked for by
+  // flipping the toggle. Clearing it is the one-line fix: `updateFilters`
+  // already treats `category: null` and a real `platform` change as a single
+  // atomic URL update (and a single `filtersKey` change), so this can't land
+  // as two renders/fetches where the second briefly shows a stale category.
+  function handlePlatformChange(newPlatform: ShowcasePlatform) {
+    updateFilters({ platform: newPlatform, category: null, model: null });
+  }
+
+  const isEmpty = status === "ready" && apps.length === 0;
+
+  // index.css locks html/body/#root to height:100% + overflow:hidden so the
+  // editor at "/app" owns a fixed viewport. That lock is what turned iOS
+  // Safari's collapsing address bar into a grey band here: `height:100%`
+  // resolves against the small viewport, so the strips behind the
+  // expanding/collapsing chrome fell outside the box and painted with the
+  // body background. The fix is real document scroll, not a scroller nested
+  // inside a fixed-height box — only document scroll lets Safari collapse its
+  // chrome and content pass under it. `route-showcase` (toggled below) turns
+  // off the lock while this page is mounted, without touching it for "/app".
+  //
+  // The landing is dark-only. `.dark` on the page root below styles the page;
+  // the hook also darkens <html> so portaled popups match. The stored editor
+  // theme is never written.
+  useHtmlRouteClass("route-showcase");
+  useForcedDarkDocument();
+  useLayoutEffect(() => {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    const previousThemeColor = meta?.getAttribute("content") ?? null;
+    meta?.setAttribute("content", LANDING_THEME_COLOR);
+    return () => {
+      if (previousThemeColor !== null) {
+        meta?.setAttribute("content", previousThemeColor);
+      }
+    };
+  }, []);
+
+  return (
+    <div className="sideform-landing sf-landing dark">
+      <LandingNav />
+      <main>
+        <LandingHero />
+        <LandingHeroWindow />
+        {/* Opaque sections scroll over the sticky hero, as in the template. */}
+        <div className="sf-over">
+          <LandingStory />
+          <section id="gallery" aria-labelledby="gallery-title" className="sf-section">
+            <div className="sf-container sf-stack">
+              <LandingSectionHead
+                id="gallery-title"
+                title="Designed by the agent"
+                text="Each app below started as a one-line theme. Sideform Agent designed the screens on its own. Open any app in the editor and keep going."
+              />
+              <div className="sf-gallery">
+                <div className="sf-subrow">
+                  <h3 className="sf-card-title">Browse apps</h3>
+                  <div className="sf-filters">
+                    <ShowcaseFilterBar
+                      sort={sort}
+                      category={category}
+                      categories={categories}
+                      platform={platform}
+                      model={model}
+                      models={models}
+                      onSortChange={(newSort) => {
+                        track("showcase_filter_applied", { filter: "sort", value: newSort });
+                        updateFilters({ sort: newSort });
+                      }}
+                      onCategoryChange={(newCategory) => {
+                        track("showcase_filter_applied", {
+                          filter: "category",
+                          value: newCategory ?? "all",
+                        });
+                        updateFilters({ category: newCategory });
+                      }}
+                      onPlatformChange={(newPlatform) => {
+                        track("showcase_filter_applied", { filter: "platform", value: newPlatform });
+                        handlePlatformChange(newPlatform);
+                      }}
+                      onModelChange={(newModel) => {
+                        track("showcase_filter_applied", { filter: "model", value: newModel ?? "all" });
+                        updateFilters({ model: newModel });
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {status === "loading" && <SkeletonGrid platform={platform} />}
+
+                {status === "error" && (
+                  <div className="sf-gallery-note">
+                    <p>Couldn't load the showcase.</p>
+                    <p className="sf-gallery-note-detail">{errorMessage}</p>
+                  </div>
+                )}
+
+                {isEmpty && category != null && (
+                  <div className="sf-gallery-note">
+                    <p>No apps in this category yet.</p>
+                    <p className="sf-gallery-note-detail">
+                      Check back soon or browse every app the agent has designed.
+                    </p>
+                    <Button
+                      variant="outline"
+                      className="mt-4"
+                      onClick={() => updateFilters({ category: null })}
+                    >
+                      Show all
+                    </Button>
+                  </div>
+                )}
+
+                {isEmpty && category == null && (
+                  <div className="sf-gallery-note">
+                    <p>Nothing generated yet.</p>
+                    <p className="sf-gallery-note-detail">
+                      Check back soon. New apps appear here as the agent designs them.
+                    </p>
+                  </div>
+                )}
+
+                {status === "ready" && apps.length > 0 && (
+                  <>
+                    <ShowcaseGrid platform={platform}>
+                      {apps.map((app, index) => (
+                        <ShowcaseAppCarousel
+                          key={app.runId}
+                          app={app}
+                          isFirstInGrid={index === 0}
+                          feedPosition={index}
+                          activePlatform={platform}
+                          activeCategory={category ?? undefined}
+                        />
+                      ))}
+                    </ShowcaseGrid>
+
+                    {nextCursor != null && (
+                      <div
+                        ref={loadMoreSentinelRef}
+                        data-testid="showcase-load-more-sentinel"
+                        aria-hidden="true"
+                        className="h-px"
+                      />
+                    )}
+                    {loadingMore && <p className="sr-only" role="status">Loading more…</p>}
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
+          <LandingClosing />
+        </div>
+      </main>
+      <LandingFooter />
+    </div>
+  );
+}

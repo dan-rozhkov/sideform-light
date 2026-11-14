@@ -1,0 +1,129 @@
+import type { ToolHandler } from "../toolRegistry";
+
+// Kept byte-identical to the backend's GUIDELINES map
+// (pen-editor-backend/src/ai/tools.ts) — the backend is the source of truth.
+// src/lib/__tests__/toolContract.test.ts enforces this against the sibling
+// checkout when it exists. Update the backend first, then copy verbatim here.
+export const guidelines: Record<string, string> = {
+  "design-system":
+    "For NEW screens or pages, build each screen as one `embed` (prototype skill). The rules below apply when editing existing native frames.\n\n" +
+    "## Sizing & Auto-Layout Rules\n" +
+    "When creating frames with layout (vertical/horizontal), set width and height explicitly: " +
+    "the default is a fixed pixel size, which breaks auto-layout.\n" +
+    "- Use `width: \"fill_container\"` for children that should stretch to parent width.\n" +
+    "- Use `height: \"fill_container\"` for children that should stretch to parent height.\n" +
+    "- Use `width: \"fit_content\"` or `height: \"fit_content\"` for content-sized elements.\n" +
+    "- Use `height: \"fit_content(900)\"` for screens/sections that need a minimum height but grow with content.\n" +
+    "- Only use fixed pixel values for elements with a known exact size (icons, avatars, fixed sidebars).\n" +
+    "- Screen root frames: `width: 1440, height: \"fit_content(900)\"`.\n" +
+    "- Content areas inside screens: `width: \"fill_container\", height: \"fit_content\"` or `height: \"fill_container\"`.\n" +
+    "- Wrapper/container frames: ALWAYS set `height: \"fit_content\"` — they should grow with content.\n" +
+    "- Card grids / tag lists: set `wrap: true` on the frame plus a fixed/fill `width` and `height: \"fit_content\"` so rows wrap and the frame hugs the total row height. Use `rowGap`/`columnGap` for independent row/column spacing (each falls back to `gap`).\n" +
+    "- Use `minWidth`/`maxWidth`/`minHeight`/`maxHeight` on a child to clamp its resolved size (e.g. a `fill_container` card capped at `maxWidth: 320` so it doesn't stretch too wide in a wide row).\n\n" +
+    "### Examples\n" +
+    "WRONG: `I(screen, {type: \"frame\", layout: \"vertical\", gap: 16})` — no width/height, will use fixed defaults!\n" +
+    "RIGHT: `I(screen, {type: \"frame\", layout: \"vertical\", gap: 16, width: \"fill_container\", height: \"fit_content\"})`\n\n" +
+    "## Layout Patterns\n" +
+    "- Sidebar + Content: sidebar with fixed width (240-280px), main with `width: \"fill_container\"`.\n" +
+    "- Card grids: horizontal frame with `gap: 16-24`, cards with `width: \"fill_container\"`.\n" +
+    "- Form fields: vertical frame with `gap: 16`, inputs with `width: \"fill_container\"`.\n\n" +
+    "## Design Tokens\n" +
+    "- Reference colors, fonts and radii through `$--variable` tokens so a theme change propagates, using only names that `get_variables` actually returns.\n" +
+    "- If the document has no suitable tokens yet, create them with `set_variables` (e.g. background/foreground/primary/border colors, heading/body fonts, a radius scale) before referencing them.\n\n" +
+    "## Spacing Reference\n" +
+    "- Screen sections gap: 24-32. Card grid gap: 16-24. Form fields gap: 16.\n" +
+    "- Inside cards padding: 24. Page content padding: 32. Button padding: [10, 16].\n" +
+    "- Maintain consistent spacing — pick from the established scale, don't use arbitrary values.",
+  code:
+    "When generating code from designs, use semantic HTML elements. " +
+    "Map frame layouts to CSS flexbox. Map auto-layout direction to flex-direction. " +
+    "Use CSS custom properties for theme variables. Export assets as needed.",
+  table:
+    "Build tables using nested frames with auto-layout. " +
+    "Use a vertical frame for rows and horizontal frames for cells. " +
+    "Keep the header row visually distinct. " +
+    "Apply consistent padding and borders across cells.",
+  tailwind:
+    "Map design tokens to Tailwind utility classes. " +
+    "Use flex/grid for frame layouts. Apply gap-* for spacing. " +
+    "Use p-* for padding, rounded-* for corner radius. " +
+    "Map fill colors to bg-* and text colors to text-*.",
+  "landing-page":
+    "Structure landing pages with a hero section, features grid, testimonials, and CTA. " +
+    "Use large typography for headings (48-72px). " +
+    "Maintain visual hierarchy with consistent spacing (64-128px between sections). " +
+    "Include responsive breakpoints for mobile and desktop.",
+};
+
+export const getGuidelines: ToolHandler = async (args) => {
+  const topic = args.topic as string | undefined;
+  if (!topic || !guidelines[topic]) {
+    return JSON.stringify({
+      error: `Invalid topic. Available topics: ${Object.keys(guidelines).join(", ")}`,
+    });
+  }
+  return JSON.stringify({ topic, guidelines: guidelines[topic] });
+};
+
+export const getStyleGuideTags: ToolHandler = async () => {
+  return JSON.stringify({
+    tags: {
+      style: ["minimal", "bold", "elegant", "playful", "corporate", "modern", "retro", "brutalist"],
+      color: ["monochrome", "vibrant", "pastel", "dark", "light", "warm", "cool", "earth-tones"],
+      industry: ["saas", "ecommerce", "finance", "healthcare", "education", "creative", "technology"],
+      platform: ["mobile", "website", "webapp", "dashboard"],
+      layout: ["grid", "asymmetric", "centered", "full-width", "card-based", "sidebar"],
+    },
+  });
+};
+
+// Local fallback for the desktop bridge, when get_style_guide runs in the page
+// instead of on the server. The backend (pen-editor-backend/src/ai/tools.ts,
+// getStyleGuideImpl) is the source of truth and composes a real tag-keyed guide
+// from per-axis tables; that machinery is deliberately NOT duplicated here —
+// two copies of ~200 lines of lookup tables would drift, and unlike
+// get_guidelines there is no byte-identity test holding them together.
+//
+// What this copy must not do is hand back the values it used to: Inter as both
+// the heading and the body face, and #8B5CF6 as `secondary` — the "AI purple"
+// that every design skill in the backend bans by name. A tool that exists to
+// supply inspiration was supplying the generic-AI default instead. So the
+// fallback stays a neutral, unopinionated skeleton and says so in `note`,
+// rather than pretending to be taste.
+export const getStyleGuide: ToolHandler = async (args) => {
+  const tags = (Array.isArray(args.tags) ? args.tags : []) as string[];
+  const name = args.name as string | undefined;
+  return JSON.stringify({
+    name: name ?? "Generated Style Guide",
+    basedOn: tags,
+    note:
+      "Local fallback: a neutral skeleton, not a design direction, and not keyed to your tags — " +
+      "the server-side guide is. Pick the typeface, palette and shape for this design yourself; " +
+      "shipping these values unchanged is the tell of a generic AI output.",
+    typography: {
+      // A display voice against a reading face, rather than one generic sans
+      // doing both jobs.
+      headingFont: "Space Grotesk",
+      bodyFont: "Inter",
+      sizes: { h1: 48, h2: 36, h3: 24, h4: 18, body: 16, small: 14, caption: 12 },
+      weights: { heading: "700", body: "400", emphasis: "600" },
+    },
+    colors: {
+      // Neutral ramp only — no brand hue is invented here, because inventing
+      // one is exactly the decision this fallback has no basis to make.
+      primary: "#18181B",
+      secondary: "#52525B",
+      accent: "#0E7490",
+      background: "#FFFFFF",
+      surface: "#FAFAFA",
+      text: "#18181B",
+      textMuted: "#71717A",
+      border: "#E4E4E7",
+      success: "#22C55E",
+      error: "#EF4444",
+      warning: "#F59E0B",
+    },
+    spacing: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48, section: 64 },
+    borderRadius: { sm: 4, md: 8, lg: 12, xl: 16, full: 9999 },
+  });
+};

@@ -1,0 +1,26 @@
+import { Checkbox as CheckboxPrimitive } from "@base-ui/react/checkbox";
+
+import { cn } from "@/lib/utils";
+import { CheckIcon } from "@/components/icons";
+
+function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
+  return (
+    <CheckboxPrimitive.Root
+      data-slot="checkbox"
+      className={cn(
+        "bg-secondary/50 dark:bg-secondary/30 data-checked:bg-secondary data-checked:text-foreground dark:data-checked:bg-secondary/40 focus-visible:ring-ring aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 flex size-4 items-center justify-center rounded-[5px] transition-shadow group-has-disabled/field:opacity-50 focus-visible:ring-[2px] aria-invalid:ring-[2px] peer relative shrink-0 outline-none after:absolute after:-inset-x-3 after:-inset-y-2 disabled:cursor-not-allowed disabled:opacity-50",
+        className
+      )}
+      {...props}
+    >
+      <CheckboxPrimitive.Indicator
+        data-slot="checkbox-indicator"
+        className="[&>svg]:size-2.5 grid place-content-center text-current transition-none"
+      >
+        <CheckIcon />
+      </CheckboxPrimitive.Indicator>
+    </CheckboxPrimitive.Root>
+  );
+}
+
+export { Checkbox };

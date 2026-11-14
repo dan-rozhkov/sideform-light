@@ -1,0 +1,139 @@
+import { describe, it, expect } from "vitest";
+import {
+  UNSERIALIZED_TOOL_NAMES,
+  isSerializedTool,
+  runToolCall,
+} from "@/lib/toolCallQueue";
+import { toolHandlers } from "@/lib/toolRegistry";
+import { WEBMCP_TOOL_SPECS } from "@/lib/webmcp/schemas";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("isSerializedTool", () => {
+  // The default direction is the safety property: wrongly serializing a read
+  // costs latency, wrongly parallelizing a write loses work.
+  it("serializes any tool not explicitly listed as read-only", () => {
+    expect(isSerializedTool("batch_design")).toBe(true);
+    expect(isSerializedTool("set_variables")).toBe(true);
+    expect(isSerializedTool("a_tool_added_next_week")).toBe(true);
+  });
+
+  it("does not serialize the panel-local doc_* tools", () => {
+    for (const n of ["doc_list", "doc_create", "doc_read", "doc_edit", "doc_open", "workflow_list", "workflow_create", "workflow_read", "workflow_edit", "workflow_open", "trace_list", "trace_read", "trace_open", "trace_frame"]) expect(isSerializedTool(n), n).toBe(false);
+  });
+
+  it("does not serialize open_canvas_tab (it touches no scene; a cold tab load is slow)", () => {
+    expect(isSerializedTool("open_canvas_tab")).toBe(false);
+  });
+
+  it("does not serialize the listed read-only tools", () => {
+    for (const name of UNSERIALIZED_TOOL_NAMES) {
+      expect(isSerializedTool(name), name).toBe(false);
+    }
+  });
+
+  it("names only tools that actually exist", () => {
+    for (const name of UNSERIALIZED_TOOL_NAMES) {
+      expect(Object.prototype.hasOwnProperty.call(toolHandlers, name), name).toBe(true);
+    }
+  });
+
+  // Two independent judgements about the same tools; a disagreement means one
+  // of them is wrong about whether the tool writes to the scene.
+  it("agrees with the WebMCP specs about which tools mutate", () => {
+    for (const spec of WEBMCP_TOOL_SPECS) {
+      expect(isSerializedTool(spec.name), spec.name).toBe(spec.mutating);
+    }
+  });
+});
+
+describe("runToolCall", () => {
+  it("runs a read-only call immediately, without waiting for the queue", async () => {
+    const blocker = deferred<string>();
+    const mutating = runToolCall("batch_design", () => blocker.promise);
+
+    await expect(runToolCall("batch_get", async () => "read")).resolves.toBe("read");
+
+    blocker.resolve("write");
+    await mutating;
+  });
+
+  it("holds a mutating call until the one before it settles", async () => {
+    const first = deferred<string>();
+    const order: string[] = [];
+
+    const a = runToolCall("batch_design", async () => {
+      const value = await first.promise;
+      order.push("first");
+      return value;
+    });
+    const b = runToolCall("set_variables", async () => {
+      order.push("second");
+      return "b";
+    });
+
+    // Nothing may have run second while the first is still in flight.
+    await Promise.resolve();
+    expect(order).toEqual([]);
+
+    first.resolve("a");
+    await Promise.all([a, b]);
+    expect(order).toEqual(["first", "second"]);
+  });
+
+  // A rejected call used to leave the chain rejected, so every later call
+  // inherited the failure.
+  it("keeps the queue usable after a call rejects", async () => {
+    const failing = runToolCall("batch_design", async () => {
+      throw new Error("boom");
+    });
+    await expect(failing).rejects.toThrow("boom");
+
+    await expect(runToolCall("batch_design", async () => "after")).resolves.toBe("after");
+  });
+
+  it("propagates the task's own result and error to its caller", async () => {
+    await expect(runToolCall("set_variables", async () => ({ ok: 1 }))).resolves.toEqual({ ok: 1 });
+    await expect(
+      runToolCall("set_variables", async () => {
+        throw new Error("specific");
+      })
+    ).rejects.toThrow("specific");
+  });
+});
+
+// The repo tools are pure backend reads that hold a connection for up to 25s.
+// Serializing them would stall chat, both MCP bridges and WebMCP for that
+// whole window — the same coupling `get_screenshot` forced this list to exist
+// for.
+describe("repo-reading tools are not serialized", () => {
+  it.each(["read_design_repo", "read_repo_files"])("%s skips the queue", (name) => {
+    expect(UNSERIALIZED_TOOL_NAMES).toContain(name);
+    expect(isSerializedTool(name)).toBe(false);
+  });
+});
+
+// The browse_* tools never touch the scene graph, so none of them belong
+// behind the scene-mutation queue. browse_open/browse_act/browse_find_images
+// are thin forwarders onto the desktop shell's browser bridge; `browse_open`
+// in particular can hold the desktop shell's 20s command timeout on a slow
+// page — queuing it like a mutating call would stall unrelated
+// scene-mutating traffic for that whole window (and, in reverse, a browse
+// call queued behind a long batch_design could eat into its own 30s
+// client-side tool timeout). browse_task holds its connection longer still —
+// a whole snapshot/step/perform loop bounded by a 90s deadline — so
+// serializing it would be the worst case of that same stall.
+describe("browse_* tools are not serialized", () => {
+  it.each(["browse_open", "browse_act", "browse_find_images", "browse_read", "browse_task", "browse_agent", "browse_fill_login", "qa_verdict", "qa_assert"])("%s skips the queue", (name) => {
+    expect(UNSERIALIZED_TOOL_NAMES).toContain(name);
+    expect(isSerializedTool(name)).toBe(false);
+  });
+});

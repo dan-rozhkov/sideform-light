@@ -1,0 +1,63 @@
+/* Shared theme tokens of the local pages (tabbar.html, empty.html). Each token
+   is defined ONCE with light-dark(light, dark): `color-scheme` picks the side —
+   both by default (follows the OS), pinned by the editor theme that the pages
+   put in `data-theme` (tabManager.ts's resolveActiveTheme). */
+:root {
+  color-scheme: light dark;
+  /* Island surface = the frontend's --color-surface-panel (index.css). */
+  --island-bg: light-dark(#ffffff, #2a2a2a);
+  --control-hover-bg: light-dark(#e5e5e5, #383838);
+  --border: light-dark(#e0e0e0, #404040);
+  --text: light-dark(#666666, #888888);
+  --text-active: light-dark(rgba(0, 0, 0, 0.87), rgba(255, 255, 255, 0.87));
+  /* Glass + islands (tabbar.css): tabs sit
+     directly on the window glass, so no bar fill — only a subtle dark/light
+     wash for the active and hovered tab. Hover is slightly lighter than active. */
+  --glass-tab-active: light-dark(rgba(0, 0, 0, 0.07), rgba(255, 255, 255, 0.1));
+  --glass-tab-hover: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.06));
+  --glass-text: light-dark(rgba(0, 0, 0, 0.62), rgba(255, 255, 255, 0.62));
+  /* Icon colors: the --text-active / --glass-text pair for glyphs. Light: what the frontend's
+     icon rule (index.css, [data-pen-icon]) makes of those two text colors: --text-active becomes
+     the menu icon gray (--menu-muted-foreground; pinned by pen-editor's desktopTokensContract),
+     --glass-text the same gray at alpha 0.8 (the frontend lifts 0.62 to 0.71; 0.8 keeps idle icons
+     at about 3:1 on the darker glass), so icons stop reading as heavy ink and active/hover/pressed
+     still darken. Dark: the same two values as before. */
+  --icon: light-dark(oklch(0.52 0 0), rgba(255, 255, 255, 0.87));
+  --icon-subtle: light-dark(oklch(0.52 0 0 / 0.8), rgba(255, 255, 255, 0.62));
+  /* Ghost icon button of the frontend (IconButton): hover fill = its --secondary (light) and
+     --color-surface-hover (dark). */
+  --btn-hover: light-dark(oklch(0.97 0 0), #4a4a4a);
+  /* Control radius scale (~0.32 x height), same names and values as the frontend's rounded-control*. */
+  --radius-control-xs: 6px; /* 20px tall */
+  --radius-control-sm: 8px; /* 24px */
+  --radius-control: 9px; /* 28px */
+  --radius-control-lg: 10px; /* 32px */
+  --radius-control-xl: 12px; /* 36-40px */
+  /* Focus ring of the frontend Button: 2px solid --ring, which is the accent colour in both themes. */
+  --focus-ring: #0d99ff;
+  /* Outline of an unchecked checkbox (the Recent list's custom checkbox). */
+  --control-border-strong: light-dark(oklch(0 0 0 / 0.25), oklch(1 0 0 / 0.3));
+  /* Page-loading fill inside the tab pill, over the pill's own background. */
+  --tab-progress: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.1));
+  /* Brand pair is theme-independent; only the idle (background-tab) pair differs. */
+  --agent-cursor: #0d99ff;
+  --agent-cursor-rim: #ffffff;
+  --agent-cursor-idle: light-dark(#c4c4c4, #5e5e5e);
+  --agent-cursor-idle-rim: light-dark(#ffffff, #2a2a2a);
+  /* Popup (menu-surface) look shared with the frontend; used by the omnibox card. */
+  --menu: light-dark(oklch(0.992 0 0), oklch(0.235 0 0));
+  --menu-border: light-dark(oklch(0 0 0 / 0.08), oklch(1 0 0 / 0.1));
+  --menu-highlight: light-dark(oklch(0.955 0 0), oklch(1 0 0 / 0.08));
+  --menu-muted-foreground: light-dark(oklch(0.52 0 0), oklch(0.7 0 0));
+  --menu-separator: light-dark(oklch(0 0 0 / 0.07), oklch(1 0 0 / 0.08));
+  /* Desktop-only: stronger hover for controls sitting on a highlighted row. */
+  --menu-highlight-strong: light-dark(oklch(0.92 0 0), oklch(1 0 0 / 0.14));
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}

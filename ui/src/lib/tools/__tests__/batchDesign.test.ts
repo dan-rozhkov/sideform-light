@@ -1,0 +1,1827 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import { batchDesign } from "@/lib/tools/batchDesign";
+import { useSceneStore, createSnapshot } from "@/store/sceneStore";
+import { useHistoryStore } from "@/store/historyStore";
+import { resetStores, seedScene, seedVariables } from "@/test/fixtures";
+import { useMeasurementsStore } from "@/store/measurementsStore";
+import type { Effect, FlatFrameNode, FlatSceneNode, Paint, ShadowEffect, TextNode, ConnectorNode } from "@/types/scene";
+
+function sceneState() {
+  return useSceneStore.getState();
+}
+
+/** Runs a single-node `I(...)` op and returns its parsed result plus the
+ * created node's effects stack — the shape shared by the effects tests below. */
+async function createNodeAndGetEffects(operations: string) {
+  const result = JSON.parse(await batchDesign({ operations }));
+  const node = sceneState().nodesById[result.createdNodes[0].id];
+  return { result, effects: node.effects as Effect[] };
+}
+
+/** Runs an `I(...)` op and returns its parsed result plus the created node's
+ * fills stack — the shape shared by several fills tests below. */
+async function insertAndGetFills(operations: string) {
+  const result = JSON.parse(await batchDesign({ operations }));
+  const fills = sceneState().nodesById[result.createdNodes[0].id].fills as Paint[];
+  return { result, fills };
+}
+
+/** Runs an op against the fixture's `rect1` and returns its parsed result
+ * plus the node and its fills stack — several legacy-fill-migration tests
+ * below all read `rect1` back the same way after their own op. */
+async function runOnRect1(operations: string) {
+  const result = JSON.parse(await batchDesign({ operations }));
+  const node = sceneState().nodesById["rect1"] as Record<string, unknown>;
+  return { result, node, fills: node.fills as Paint[] };
+}
+
+/** Fire-and-forget op, for setup steps whose own result isn't asserted on. */
+async function applyOp(operations: string): Promise<void> {
+  await batchDesign({ operations });
+}
+
+// Gives frame1 an auto-layout, the shared precondition for the two R()
+// layout-inheritance tests below (replacing with a non-frame type / with a
+// frame that has its own new children).
+function seedFrame1Layout(): void {
+  useSceneStore.setState((s) => ({
+    nodesById: {
+      ...s.nodesById,
+      frame1: {
+        ...s.nodesById["frame1"],
+        layout: { autoLayout: true, flexDirection: "column", gap: 8 },
+      },
+    },
+  }));
+}
+
+// The plain frame replacement several R()-side-effect tests below run —
+// only the pre-existing state (connectors/measurements) differs between them.
+async function replaceFrame1WithNewFrame() {
+  return JSON.parse(
+    await batchDesign({
+      operations: 'R(frame1, {type: "frame", name: "New", width: 100, height: 100})',
+    })
+  );
+}
+
+// Inserts a text node with a markdown link and returns its id — the shared
+// precondition for the "clear/remove an existing link" tests below.
+async function insertLinkedTextGetId(): Promise<string> {
+  await batchDesign({
+    operations: 'label=I(document, {type: "text", name: "CTA", content: "[Go](https://example.com)"})',
+  });
+  return sceneState().rootIds[sceneState().rootIds.length - 1];
+}
+
+describe("batch_design", () => {
+  beforeEach(() => {
+    resetStores();
+    seedScene();
+  });
+
+  describe("insert (I)", () => {
+    it("creates a root frame with layout shorthand mapped to layout props", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'card=I(document, {type: "frame", name: "Card", width: 200, height: 120, layout: "vertical", gap: 8, padding: 16, fill: "#ffffff"})',
+        })
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.operationsExecuted).toBe(1);
+      expect(result.createdNodes).toHaveLength(1);
+
+      const created = result.createdNodes[0];
+      expect(created.type).toBe("frame");
+      expect(created.name).toBe("Card");
+
+      const { nodesById, rootIds, parentById } = sceneState();
+      expect(rootIds).toContain(created.id);
+      expect(parentById[created.id]).toBeNull();
+
+      const frame = nodesById[created.id] as FlatFrameNode;
+      expect(frame.width).toBe(200);
+      expect(frame.height).toBe(120);
+      expect(frame.layout).toMatchObject({
+        autoLayout: true,
+        flexDirection: "column",
+        gap: 8,
+        paddingTop: 16,
+        paddingRight: 16,
+        paddingBottom: 16,
+        paddingLeft: 16,
+      });
+    });
+
+    it("creates a masked group (masker shape + masked sibling)", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'g=I(document, {type: "frame", name: "Masked", width: 100, height: 100, children: [{type: "ellipse", name: "MaskShape", width: 100, height: 100, isMask: true}, {type: "rectangle", name: "Content", width: 100, height: 100, fill: "#ff00ff"}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+
+      const groupId = result.createdNodes[0].id;
+      const { nodesById, childrenById } = sceneState();
+      const childIds = childrenById[groupId];
+      expect(childIds).toHaveLength(2);
+      expect(nodesById[childIds[0]].isMask).toBe(true);
+      expect(nodesById[childIds[1]].isMask).toBeFalsy();
+    });
+
+    it("maps the MCP type 'rectangle' to internal 'rect'", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "R", width: 10, height: 10})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const id = result.createdNodes[0].id;
+      expect(sceneState().nodesById[id].type).toBe("rect");
+    });
+
+    it("creates nested children inline and wires up the tree", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'f=I(document, {type: "frame", name: "Parent", width: 300, height: 200, children: [{type: "rectangle", name: "ChildA", width: 50, height: 50}, {type: "text", name: "ChildB", content: "Hi"}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+
+      const parentId = result.createdNodes[0].id;
+      const { nodesById, childrenById, parentById } = sceneState();
+      const childIds = childrenById[parentId];
+      expect(childIds).toHaveLength(2);
+      expect(nodesById[childIds[0]].type).toBe("rect");
+      expect(nodesById[childIds[1]].type).toBe("text");
+      expect((nodesById[childIds[1]] as TextNode).text).toBe("Hi");
+      expect(parentById[childIds[0]]).toBe(parentId);
+      expect(parentById[childIds[1]]).toBe(parentId);
+    });
+
+    it("inserts into an existing frame referenced by raw id", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'I(frame1, {type: "ellipse", name: "Dot", width: 20, height: 20})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const id = result.createdNodes[0].id;
+      const { childrenById, parentById } = sceneState();
+      expect(childrenById["frame1"]).toContain(id);
+      expect(parentById[id]).toBe("frame1");
+    });
+
+    it("uses a binding from a previous operation as parent", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: [
+            'wrap=I(document, {type: "frame", name: "Wrap", width: 100, height: 100})',
+            'I(wrap, {type: "rectangle", name: "Inner", width: 10, height: 10})',
+          ].join("\n"),
+        })
+      );
+      expect(result.success).toBe(true);
+      expect(result.operationsExecuted).toBe(2);
+
+      const wrapId = result.createdNodes[0].id;
+      const innerId = result.createdNodes[1].id;
+      expect(sceneState().parentById[innerId]).toBe(wrapId);
+    });
+
+    it("resolves $variable fill references to value + binding", async () => {
+      seedVariables();
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "Var", width: 10, height: 10, fill: "$--primary"})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id] as Record<
+        string,
+        unknown
+      >;
+      expect(node.fill).toBe("#3366ff");
+      expect(node.fillBinding).toEqual({ variableId: "var-primary" });
+    });
+
+    it('parses sizing strings like "fill_container"', async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'f=I(frame1, {type: "frame", name: "Fill", width: "fill_container", height: "fit_content"})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id];
+      expect(node.sizing).toEqual({
+        widthMode: "fill_container",
+        heightMode: "fit_content",
+      });
+    });
+
+    it("parses htmlContent whose HTML attributes reuse the string's own quote style unescaped", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'e=I(document, {type: "embed", name: "Home", width: 390, height: 844, ' +
+            'htmlContent: "<div class="card"><p style="color:red">Hi "quoted" text</p></div>"})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id] as Record<
+        string,
+        unknown
+      >;
+      expect(node.htmlContent).toBe(
+        '<div class="card"><p style="color:red">Hi "quoted" text</p></div>'
+      );
+    });
+
+    it("parses a name field with an unescaped quote followed by more HTML with quotes", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'e=I(document, {type: "embed", name: "Card "Pro"", width: 100, height: 100, ' +
+            'htmlContent: "<div class="wrap">ok</div>"})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id] as Record<
+        string,
+        unknown
+      >;
+      expect(node.name).toBe('Card "Pro"');
+      expect(node.htmlContent).toBe('<div class="wrap">ok</div>');
+    });
+  });
+
+  describe("shape params: star/arc/arrowheads", () => {
+    it("creates a regular polygon and auto-generates points from sides alone", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'p=I(document, {type: "polygon", name: "Hex", width: 100, height: 100, sides: 6})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id] as Record<string, unknown>;
+      expect(node.sides).toBe(6);
+      expect(Array.isArray(node.points)).toBe(true);
+      expect((node.points as number[]).length).toBe(12);
+    });
+
+    it("creates a star and auto-generates 2x vertices from sides + innerRadiusRatio", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'p=I(document, {type: "polygon", name: "Star", width: 100, height: 100, sides: 5, innerRadiusRatio: 0.5})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id] as Record<string, unknown>;
+      expect(node.innerRadiusRatio).toBe(0.5);
+      expect((node.points as number[]).length).toBe(20);
+    });
+
+    it("regenerates star points on update when innerRadiusRatio changes but points isn't passed", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: [
+            'p=I(document, {type: "polygon", name: "Star", width: 100, height: 100, sides: 5})',
+            'U(p, {innerRadiusRatio: 0.4})',
+          ].join("\n"),
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id] as Record<string, unknown>;
+      expect(node.innerRadiusRatio).toBe(0.4);
+      expect((node.points as number[]).length).toBe(20);
+    });
+
+    it("respects an explicit points array over auto-generation", async () => {
+      const explicitPoints = [1, 2, 3, 4, 5, 6];
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'p=I(document, {type: "polygon", name: "Custom", width: 100, height: 100, sides: 5, innerRadiusRatio: 0.5, points: [1,2,3,4,5,6]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id] as Record<string, unknown>;
+      expect(node.points).toEqual(explicitPoints);
+    });
+
+    it("creates an ellipse with arc/donut params", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'e=I(document, {type: "ellipse", name: "Donut", width: 80, height: 80, startAngle: 10, sweepAngle: 270, innerRadiusRatio: 0.4})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id] as Record<string, unknown>;
+      expect(node.startAngle).toBe(10);
+      expect(node.sweepAngle).toBe(270);
+      expect(node.innerRadiusRatio).toBe(0.4);
+    });
+
+    it("creates a line with start/end arrowhead caps", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'l=I(document, {type: "line", name: "Arrow", width: 100, height: 0, points: [0,0,100,0], startCap: "circle", endCap: "triangle"})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id] as Record<string, unknown>;
+      expect(node.startCap).toBe("circle");
+      expect(node.endCap).toBe("triangle");
+    });
+
+    it("updates a line's caps in place", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: [
+            'l=I(document, {type: "line", name: "Arrow", width: 100, height: 0, points: [0,0,100,0]})',
+            'U(l, {startCap: "bar", endCap: "arrow"})',
+          ].join("\n"),
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id] as Record<string, unknown>;
+      expect(node.startCap).toBe("bar");
+      expect(node.endCap).toBe("arrow");
+    });
+  });
+
+  describe("effects (shadow/blur stack)", () => {
+    it("creates a node with an inner shadow effect", async () => {
+      const { result, effects } = await createNodeAndGetEffects(
+        'r=I(document, {type: "rectangle", name: "Inset", width: 10, height: 10, effects: [{type: "shadow", shadowType: "inner", color: "#00000080", offset: {x: 2, y: 2}, blur: 4, spread: 0}]})',
+      );
+      expect(result.success).toBe(true);
+      expect(effects).toHaveLength(1);
+      expect(effects[0]).toMatchObject({
+        type: "shadow",
+        shadowType: "inner",
+        color: "#00000080",
+        offset: { x: 2, y: 2 },
+        blur: 4,
+      });
+    });
+
+    it("U() with effects replaces the stack, supporting both drop and inner shadow together", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: [
+            'r=I(document, {type: "rectangle", name: "Combo", width: 10, height: 10})',
+            'U(r, {effects: [{type: "shadow", shadowType: "outer", color: "#00000040", offset: {x: 0, y: 4}, blur: 8, spread: 0}, {type: "shadow", shadowType: "inner", color: "#00000080", offset: {x: 0, y: 2}, blur: 4, spread: 0}]})',
+          ].join("\n"),
+        })
+      );
+      expect(result.success).toBe(true);
+      const effects = sceneState().nodesById[result.createdNodes[0].id].effects as ShadowEffect[];
+      expect(effects).toHaveLength(2);
+      expect(effects[0].shadowType).toBe("outer");
+      expect(effects[1].shadowType).toBe("inner");
+    });
+
+    // Pin: `effects` passes through the nodeMapper's default case verbatim,
+    // so a noise effect round-trips with no special-casing required.
+    it("creates a node with a noise effect", async () => {
+      const { result, effects } = await createNodeAndGetEffects(
+        'r=I(document, {type: "rectangle", name: "Grain", width: 10, height: 10, effects: [{type: "noise", noiseType: "duo", color: "#00000080", secondaryColor: "#ffffffff", noiseSize: 2, noiseSizeY: 3, density: 0.3}]})',
+      );
+      expect(result.success).toBe(true);
+      expect(effects).toHaveLength(1);
+      expect(effects[0]).toMatchObject({
+        type: "noise",
+        noiseType: "duo",
+        color: "#00000080",
+        secondaryColor: "#ffffffff",
+        noiseSize: 2,
+        noiseSizeY: 3,
+        density: 0.3,
+      });
+    });
+  });
+
+  describe("fills (paint stack)", () => {
+    it("creates a node with a multi-paint fills stack and generates ids", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "Layered", width: 10, height: 10, fills: [{type: "solid", color: "#ff0000"}, {type: "solid", color: "#00ff00", opacity: 0.5}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id];
+      const fills = node.fills as Paint[];
+      expect(fills).toHaveLength(2);
+      expect(fills[0]).toMatchObject({ type: "solid", color: "#ff0000" });
+      expect(fills[1]).toMatchObject({ type: "solid", color: "#00ff00", opacity: 0.5 });
+      // ids are generated, present and unique
+      expect(typeof fills[0].id).toBe("string");
+      expect(fills[0].id).not.toBe(fills[1].id);
+      // legacy single-fill field is not set when fills is the source of truth
+      expect(node.fill).toBeUndefined();
+    });
+
+    it("normalizes a flat image paint and a nested image paint", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "Img", width: 10, height: 10, fills: [{type: "image", url: "https://x/a.png", mode: "fit"}, {type: "image", image: {url: "https://x/b.png", mode: "stretch"}}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const fills = sceneState().nodesById[result.createdNodes[0].id].fills as Paint[];
+      expect(fills[0]).toMatchObject({
+        type: "image",
+        image: { url: "https://x/a.png", mode: "fit" },
+      });
+      expect(fills[1]).toMatchObject({
+        type: "image",
+        image: { url: "https://x/b.png", mode: "stretch" },
+      });
+    });
+
+    it("normalizes a flat pattern paint and a nested pattern paint", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "Pat", width: 10, height: 10, fills: [{type: "pattern", url: "https://x/tile.png", scale: 0.5, spacingX: 4, rowOffset: 0.5}, {type: "pattern", pattern: {url: "https://x/tile2.png", offsetX: 2, offsetY: 3}, opacity: 0.5, blendMode: "multiply"}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const fills = sceneState().nodesById[result.createdNodes[0].id].fills as Paint[];
+      expect(fills[0]).toMatchObject({
+        type: "pattern",
+        pattern: { url: "https://x/tile.png", scale: 0.5, spacingX: 4, rowOffset: 0.5 },
+      });
+      expect(fills[1]).toMatchObject({
+        type: "pattern",
+        pattern: { url: "https://x/tile2.png", offsetX: 2, offsetY: 3 },
+        opacity: 0.5,
+        blendMode: "multiply",
+      });
+    });
+
+    it("normalizes a flat video paint with playback flags and crop", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "Vid", width: 10, height: 10, fills: [{type: "video", src: "https://x/clip.mp4", mode: "fit", autoplay: false, loop: false, muted: false, crop: {x: 0.1, y: 0.2, width: 0.5, height: 0.6}}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const fills = sceneState().nodesById[result.createdNodes[0].id].fills as Paint[];
+      expect(fills[0]).toMatchObject({
+        type: "video",
+        video: {
+          src: "https://x/clip.mp4",
+          mode: "fit",
+          playback: { autoplay: false, loop: false, muted: false },
+          crop: { x: 0.1, y: 0.2, width: 0.5, height: 0.6 },
+        },
+      });
+    });
+
+    it("normalizes a nested video paint and defaults playback to autoplay+loop+muted", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "Vid2", width: 10, height: 10, fills: [{type: "video", video: {src: "https://x/clip2.webm", mode: "stretch"}}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const fills = sceneState().nodesById[result.createdNodes[0].id].fills as Paint[];
+      expect(fills[0]).toMatchObject({
+        type: "video",
+        video: {
+          src: "https://x/clip2.webm",
+          mode: "stretch",
+          playback: { autoplay: true, loop: true, muted: true },
+        },
+      });
+    });
+
+    it("drops a video paint on a text node (video only supported on rect/ellipse/frame)", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            't=I(document, {type: "text", content: "hi", fills: [{type: "video", src: "https://x/clip.mp4", mode: "fill"}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id];
+      // No video paint survives on a text node.
+      const fills = (node.fills ?? []) as Paint[];
+      expect(fills.some((p) => p.type === "video")).toBe(false);
+    });
+
+    it("drops a pattern paint without a tile url, keeping the rest of the stack", async () => {
+      const { result, fills } = await insertAndGetFills(
+        'r=I(document, {type: "rectangle", name: "BadPat", width: 10, height: 10, fills: [{type: "solid", color: "#112233"}, {type: "pattern", scale: 2}]})',
+      );
+      expect(result.success).toBe(true);
+      expect(fills).toHaveLength(1);
+      expect(fills[0]).toMatchObject({ type: "solid", color: "#112233" });
+    });
+
+    it("drops a pattern paint on a node type that can't render sprite fills, with an issue message", async () => {
+      const { result, fills } = await insertAndGetFills(
+        'p=I(document, {type: "path", name: "PatPath", geometry: "M0,0 L10,0 L10,10 Z", width: 10, height: 10, fills: [{type: "solid", color: "#112233"}, {type: "pattern", url: "https://x/tile.png"}]})',
+      );
+      expect(result.success).toBe(true);
+      expect(fills).toHaveLength(1);
+      expect(fills[0]).toMatchObject({ type: "solid", color: "#112233" });
+      expect(result.issues).toBeDefined();
+      expect(result.issues.some((i: string) => i.includes("Pattern fill") && i.includes("path"))).toBe(
+        true,
+      );
+    });
+
+    it("honors the type discriminator: an image-typed paint with a `pattern` object stays an image paint", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "Mixed", width: 10, height: 10, fills: [{type: "image", url: "https://x/a.png", mode: "fit", pattern: {url: "https://x/tile.png"}}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const fills = sceneState().nodesById[result.createdNodes[0].id].fills as Paint[];
+      expect(fills).toHaveLength(1);
+      expect(fills[0]).toMatchObject({
+        type: "image",
+        image: { url: "https://x/a.png", mode: "fit" },
+      });
+    });
+
+    it("normalizes a flat gradient paint into the nested form", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "Grad", width: 10, height: 10, fills: [{type: "gradient", gradient: {type: "linear", stops: [{color: "#000000", position: 0}, {color: "#ffffff", position: 1}], startX: 0, startY: 0, endX: 1, endY: 1}}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const fills = sceneState().nodesById[result.createdNodes[0].id].fills as Paint[];
+      expect(fills[0].type).toBe("gradient");
+      expect(fills[0]).toMatchObject({
+        gradient: { type: "linear", startX: 0, endX: 1 },
+      });
+    });
+
+    it("resolves $variable references inside solid fills to value + binding", async () => {
+      seedVariables();
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "Var", width: 10, height: 10, fills: [{type: "solid", color: "$--primary"}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const fills = sceneState().nodesById[result.createdNodes[0].id].fills as Paint[];
+      expect(fills[0]).toMatchObject({
+        type: "solid",
+        color: "#3366ff",
+        colorBinding: { variableId: "var-primary" },
+      });
+    });
+
+    it("U() with fills replaces the stack and clears legacy fill props", async () => {
+      // rect1 starts with legacy fill #ff0000
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'U(rect1, {fills: [{type: "solid", color: "#0000ff"}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById["rect1"] as Record<string, unknown>;
+      const fills = node.fills as Paint[];
+      expect(fills).toHaveLength(1);
+      expect(fills[0]).toMatchObject({ type: "solid", color: "#0000ff" });
+      // legacy fields cleared
+      expect(node.fill).toBeUndefined();
+      expect(node.fillBinding).toBeUndefined();
+      expect(node.gradientFill).toBeUndefined();
+      expect(node.imageFill).toBeUndefined();
+    });
+
+    it("G() pushes an image paint on top of an existing fills stack", async () => {
+      await batchDesign({
+        operations:
+          'U(rect1, {fills: [{type: "solid", color: "#0000ff"}]})',
+      });
+      const result = JSON.parse(
+        await batchDesign({ operations: 'G(rect1, "ai", "a cat")' })
+      );
+      expect(result.success).toBe(true);
+      const fills = sceneState().nodesById["rect1"].fills as Paint[];
+      expect(fills).toHaveLength(2);
+      expect(fills[0]).toMatchObject({ type: "solid", color: "#0000ff" });
+      expect(fills[1].type).toBe("image");
+    });
+
+    it("G() replaces the topmost image paint instead of stacking duplicates", async () => {
+      await batchDesign({
+        operations:
+          'U(rect1, {fills: [{type: "solid", color: "#0000ff"}, {type: "image", url: "https://x/old.png", mode: "fill"}]})',
+      });
+      const result = JSON.parse(
+        await batchDesign({ operations: 'G(rect1, "ai", "a dog")' })
+      );
+      expect(result.success).toBe(true);
+      const fills = sceneState().nodesById["rect1"].fills as Paint[];
+      expect(fills).toHaveLength(2);
+      expect(fills[1].type).toBe("image");
+      expect((fills[1] as { image: { url: string } }).image.url).not.toBe(
+        "https://x/old.png"
+      );
+    });
+
+    it("G() migrates a legacy node to a fills stack, keeping its fill as the bottom layer", async () => {
+      // rect1 starts with legacy fill #ff0000 and no fills stack
+      const { result, node, fills } = await runOnRect1('G(rect1, "ai", "a bird")');
+      expect(result.success).toBe(true);
+      expect(fills).toHaveLength(2);
+      expect(fills[0]).toMatchObject({ type: "solid", color: "#ff0000" });
+      expect(fills[1].type).toBe("image");
+      // legacy single-fill fields are cleared once fills is the source of truth
+      expect(node.fill).toBeUndefined();
+      expect(node.imageFill).toBeUndefined();
+    });
+
+    it("U() with legacy fill on a fills node updates the topmost solid paint", async () => {
+      await applyOp(
+        'U(rect1, {fills: [{type: "solid", color: "#0000ff"}, {type: "image", url: "https://x/a.png", mode: "fill"}]})',
+      );
+      const { result, node, fills } = await runOnRect1('U(rect1, {fill: "#00ff00"})');
+      expect(result.success).toBe(true);
+      expect(fills).toHaveLength(2);
+      expect(fills[0]).toMatchObject({ type: "solid", color: "#00ff00" });
+      expect(fills[1].type).toBe("image");
+      // legacy field is not written — the stack stays the source of truth
+      expect(node.fill).toBeUndefined();
+    });
+
+    it("U() with legacy fill adds a solid paint on top when the stack has none", async () => {
+      await applyOp('U(rect1, {fills: [{type: "image", url: "https://x/a.png", mode: "fill"}]})');
+      const { result, node, fills } = await runOnRect1('U(rect1, {fill: "#00ff00"})');
+      expect(result.success).toBe(true);
+      expect(fills).toHaveLength(2);
+      expect(fills[0].type).toBe("image");
+      expect(fills[1]).toMatchObject({ type: "solid", color: "#00ff00" });
+      expect(node.fill).toBeUndefined();
+    });
+
+    it("U() with legacy imageFill on a fills node updates the topmost image paint", async () => {
+      await batchDesign({
+        operations:
+          'U(rect1, {fills: [{type: "solid", color: "#0000ff"}, {type: "image", url: "https://x/old.png", mode: "fill"}]})',
+      });
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'U(rect1, {imageFill: {url: "https://x/new.png", mode: "fit"}})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById["rect1"] as Record<string, unknown>;
+      const fills = node.fills as Paint[];
+      expect(fills).toHaveLength(2);
+      expect(fills[1]).toMatchObject({
+        type: "image",
+        image: { url: "https://x/new.png", mode: "fit" },
+      });
+      expect(node.imageFill).toBeUndefined();
+    });
+
+    it("U() with a $variable fill on a fills node binds the topmost solid paint", async () => {
+      seedVariables();
+      await batchDesign({
+        operations: 'U(rect1, {fills: [{type: "solid", color: "#0000ff"}]})',
+      });
+      const result = JSON.parse(
+        await batchDesign({ operations: 'U(rect1, {fill: "$--primary"})' })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById["rect1"] as Record<string, unknown>;
+      const fills = node.fills as Paint[];
+      expect(fills[0]).toMatchObject({
+        type: "solid",
+        color: "#3366ff",
+        colorBinding: { variableId: "var-primary" },
+      });
+      expect(node.fillBinding).toBeUndefined();
+    });
+  });
+
+  describe("strokes (paint stack)", () => {
+    it("creates a node with a gradient stroke, clearing legacy stroke fields", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "GradientBorder", width: 100, height: 40, strokes: [{type: "gradient", gradient: {type: "linear", stops: [{color: "#7c3aed", position: 0}, {color: "#06b6d4", position: 1}], startX: 0, startY: 0, endX: 1, endY: 0}}], strokeThickness: 2, strokeAlign: "inside"})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById[result.createdNodes[0].id];
+      const strokes = node.strokes as Paint[];
+      expect(strokes).toHaveLength(1);
+      expect(strokes[0]).toMatchObject({ type: "gradient" });
+      expect(typeof strokes[0].id).toBe("string");
+      // Geometry stays on the node regardless of the paint model.
+      expect(node.strokeWidth).toBe(2);
+      expect(node.strokeAlign).toBe("inside");
+      // legacy single-stroke fields are cleared when strokes is the source of truth
+      expect(node.stroke).toBeUndefined();
+    });
+
+    it("creates a node with a multi-paint stroke stack (solid + gradient)", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "Layered", width: 10, height: 10, strokes: [{type: "solid", color: "#000000"}, {type: "solid", color: "#ffff00", opacity: 0.6}], strokeThickness: 4})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const strokes = sceneState().nodesById[result.createdNodes[0].id].strokes as Paint[];
+      expect(strokes).toHaveLength(2);
+      expect(strokes[0]).toMatchObject({ type: "solid", color: "#000000" });
+      expect(strokes[1]).toMatchObject({ type: "solid", color: "#ffff00", opacity: 0.6 });
+      expect(strokes[0].id).not.toBe(strokes[1].id);
+    });
+
+    it("drops an image stroke paint (only solid/gradient are supported on a stroke)", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'r=I(document, {type: "rectangle", name: "Bad", width: 10, height: 10, strokes: [{type: "solid", color: "#ff0000"}, {type: "image", url: "https://x/a.png", mode: "fill"}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const strokes = sceneState().nodesById[result.createdNodes[0].id].strokes as Paint[];
+      expect(strokes).toHaveLength(1);
+      expect(strokes[0]).toMatchObject({ type: "solid", color: "#ff0000" });
+    });
+
+    it("U() replaces the stroke stack and clears the legacy stroke field", async () => {
+      await batchDesign({ operations: 'U(rect1, {stroke: "#ff0000", strokeThickness: 2})' });
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'U(rect1, {strokes: [{type: "gradient", gradient: {type: "radial", stops: [{color: "#fff", position: 0}, {color: "#000", position: 1}], startX: 0.5, startY: 0.5, endX: 0.5, endY: 0.5, endRadius: 0.5}}]})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById["rect1"] as Record<string, unknown>;
+      const strokes = node.strokes as Paint[];
+      expect(strokes[0]).toMatchObject({ type: "gradient" });
+      expect(node.stroke).toBeUndefined();
+    });
+  });
+
+  describe("update (U)", () => {
+    it("updates properties of an existing node", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: 'U(rect2, {fill: "#0000ff", name: "Renamed", x: 50})',
+        })
+      );
+      expect(result.success).toBe(true);
+
+      const node = sceneState().nodesById["rect2"];
+      expect(node.fill).toBe("#0000ff");
+      expect(node.name).toBe("Renamed");
+      expect(node.x).toBe(50);
+      // Untouched properties survive
+      expect(node.width).toBe(200);
+    });
+
+    it("sets isMask on an existing node (layer mask flag)", async () => {
+      const result = JSON.parse(
+        await batchDesign({ operations: "U(rect2, {isMask: true})" })
+      );
+      expect(result.success).toBe(true);
+      expect(sceneState().nodesById["rect2"].isMask).toBe(true);
+    });
+
+    it("unsets isMask on an existing node", async () => {
+      await batchDesign({ operations: "U(rect2, {isMask: true})" });
+      const result = JSON.parse(
+        await batchDesign({ operations: "U(rect2, {isMask: false})" })
+      );
+      expect(result.success).toBe(true);
+      expect(sceneState().nodesById["rect2"].isMask).toBe(false);
+    });
+
+    it("merges layout updates into the existing layout object", async () => {
+      const result = JSON.parse(
+        await batchDesign({ operations: "U(frame1, {gap: 24})" })
+      );
+      expect(result.success).toBe(true);
+      const frame = sceneState().nodesById["frame1"] as FlatFrameNode;
+      expect(frame.layout?.gap).toBe(24);
+      // Pre-existing padding from the fixture is preserved
+      expect(frame.layout?.paddingTop).toBe(16);
+    });
+
+    it("sets wrap and per-axis gaps on an existing frame", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: "U(frame1, {wrap: true, rowGap: 12, columnGap: 4})",
+        })
+      );
+      expect(result.success).toBe(true);
+      const frame = sceneState().nodesById["frame1"] as FlatFrameNode;
+      expect(frame.layout?.flexWrap).toBe(true);
+      expect(frame.layout?.rowGap).toBe(12);
+      expect(frame.layout?.columnGap).toBe(4);
+      // Pre-existing padding from the fixture is preserved
+      expect(frame.layout?.paddingTop).toBe(16);
+    });
+
+    it("accepts a negative gap (overlap) on an existing frame", async () => {
+      const result = JSON.parse(
+        await batchDesign({ operations: "U(frame1, {gap: -12})" })
+      );
+      expect(result.success).toBe(true);
+      const frame = sceneState().nodesById["frame1"] as FlatFrameNode;
+      expect(frame.layout?.gap).toBe(-12);
+    });
+
+    it("sets min/max width/height sizing constraints on an existing node", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            "U(rect2, {minWidth: 50, maxWidth: 400, minHeight: 20, maxHeight: 300})",
+        })
+      );
+      expect(result.success).toBe(true);
+      const node = sceneState().nodesById["rect2"] as FlatSceneNode;
+      expect(node.sizing).toMatchObject({
+        minWidth: 50,
+        maxWidth: 400,
+        minHeight: 20,
+        maxHeight: 300,
+      });
+    });
+
+    it("re-measures text dimensions when updating a text node", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: 'U(text1, {content: "Hello world, longer"})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const text = sceneState().nodesById["text1"] as TextNode;
+      expect(text.text).toBe("Hello world, longer");
+      // Stubbed measurement: 8px per character
+      expect(text.width).toBe("Hello world, longer".length * 8);
+    });
+
+    it("maps a cornerRadius array to per-corner radii and clears the unified value", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: "U(rect1, {cornerRadius: [12, 8, 4, 0]})",
+        })
+      );
+      expect(result.success).toBe(true);
+      const rect = sceneState().nodesById["rect1"] as FlatSceneNode & {
+        cornerRadius?: number;
+        cornerRadiusPerCorner?: {
+          topLeft?: number;
+          topRight?: number;
+          bottomRight?: number;
+          bottomLeft?: number;
+        };
+      };
+      expect(rect.cornerRadiusPerCorner).toEqual({
+        topLeft: 12,
+        topRight: 8,
+        bottomRight: 4,
+        bottomLeft: 0,
+      });
+      // The fixture's unified cornerRadius (4) is cleared.
+      expect(rect.cornerRadius).toBeUndefined();
+    });
+
+    it("expands CSS-shorthand cornerRadius arrays (2 values)", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: "U(rect1, {cornerRadius: [10, 20]})",
+        })
+      );
+      expect(result.success).toBe(true);
+      const rect = sceneState().nodesById["rect1"] as FlatSceneNode & {
+        cornerRadiusPerCorner?: Record<string, number>;
+      };
+      expect(rect.cornerRadiusPerCorner).toEqual({
+        topLeft: 10,
+        topRight: 20,
+        bottomRight: 10,
+        bottomLeft: 20,
+      });
+    });
+
+    it("accepts a cornerRadiusPerCorner object and clears the unified radius", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            "U(rect1, {cornerRadiusPerCorner: {topLeft: 6, bottomRight: 6}})",
+        })
+      );
+      expect(result.success).toBe(true);
+      const rect = sceneState().nodesById["rect1"] as FlatSceneNode & {
+        cornerRadius?: number;
+        cornerRadiusPerCorner?: Record<string, number | undefined>;
+      };
+      expect(rect.cornerRadiusPerCorner).toEqual({
+        topLeft: 6,
+        topRight: undefined,
+        bottomRight: 6,
+        bottomLeft: undefined,
+      });
+      expect(rect.cornerRadius).toBeUndefined();
+    });
+
+    it("keeps a numeric cornerRadius unified and clears any per-corner radii", async () => {
+      // First set per-corner, then overwrite with a unified number.
+      await batchDesign({
+        operations: "U(rect1, {cornerRadius: [1, 2, 3, 4]})",
+      });
+      const result = JSON.parse(
+        await batchDesign({ operations: "U(rect1, {cornerRadius: 9})" })
+      );
+      expect(result.success).toBe(true);
+      const rect = sceneState().nodesById["rect1"] as FlatSceneNode & {
+        cornerRadius?: number;
+        cornerRadiusPerCorner?: unknown;
+      };
+      expect(rect.cornerRadius).toBe(9);
+      expect(rect.cornerRadiusPerCorner).toBeUndefined();
+    });
+
+    it("maps cornerSmoothing as a 0-1 fraction, clamped to range", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: "U(rect1, {cornerSmoothing: 0.6})",
+        })
+      );
+      expect(result.success).toBe(true);
+      const rect = sceneState().nodesById["rect1"] as FlatSceneNode & {
+        cornerSmoothing?: number;
+      };
+      expect(rect.cornerSmoothing).toBe(0.6);
+
+      const overRange = JSON.parse(
+        await batchDesign({
+          operations: "U(rect1, {cornerSmoothing: 5})",
+        })
+      );
+      expect(overRange.success).toBe(true);
+      expect((sceneState().nodesById["rect1"] as FlatSceneNode & { cornerSmoothing?: number }).cornerSmoothing).toBe(1);
+    });
+
+    it("sets constraints on a node", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'U(rect1, {constraints: {horizontal: "stretch", vertical: "center"}})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const rect = sceneState().nodesById["rect1"] as FlatSceneNode & {
+        constraints?: { horizontal: string; vertical: string };
+      };
+      expect(rect.constraints).toEqual({ horizontal: "stretch", vertical: "center" });
+    });
+
+    it("normalizes Figma-ish constraint aliases and falls back to 'min' for unknown modes", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'U(rect1, {constraints: {horizontal: "left-right", vertical: "bogus"}})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const rect = sceneState().nodesById["rect1"] as FlatSceneNode & {
+        constraints?: { horizontal: string; vertical: string };
+      };
+      expect(rect.constraints).toEqual({ horizontal: "stretch", vertical: "min" });
+    });
+
+    it("accepts constraints on insert", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'child=I(frame1, {type: "rect", width: 40, height: 40, constraints: {horizontal: "scale", vertical: "max"}})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const id = result.createdNodes[0].id;
+      const inserted = sceneState().nodesById[id] as FlatSceneNode & {
+        constraints?: unknown;
+      };
+      expect(inserted.constraints).toEqual({ horizontal: "scale", vertical: "max" });
+    });
+  });
+
+  describe("delete (D) and move (M)", () => {
+    it("deletes a frame together with all descendants", async () => {
+      const result = JSON.parse(
+        await batchDesign({ operations: "D(frame1)" })
+      );
+      expect(result.success).toBe(true);
+
+      const { nodesById, rootIds, parentById, childrenById } = sceneState();
+      expect(nodesById["frame1"]).toBeUndefined();
+      expect(nodesById["rect1"]).toBeUndefined();
+      expect(nodesById["text1"]).toBeUndefined();
+      expect(rootIds).toEqual(["rect2"]);
+      expect(parentById["rect1"]).toBeUndefined();
+      expect(childrenById["frame1"]).toBeUndefined();
+    });
+
+    it("D() drops a pinned measurement anchored to the deleted node", async () => {
+      useMeasurementsStore.getState().addMeasurement("rect1", "rect2");
+      expect(useMeasurementsStore.getState().measurements).toHaveLength(1);
+
+      const result = JSON.parse(await batchDesign({ operations: "D(rect1)" }));
+      expect(result.success).toBe(true);
+      expect(useMeasurementsStore.getState().measurements).toHaveLength(0);
+    });
+
+    it("moves a root node into a frame at a given index", async () => {
+      const result = JSON.parse(
+        await batchDesign({ operations: "M(rect2, frame1, 0)" })
+      );
+      expect(result.success).toBe(true);
+
+      const { rootIds, parentById, childrenById } = sceneState();
+      expect(rootIds).toEqual(["frame1"]);
+      expect(parentById["rect2"]).toBe("frame1");
+      expect(childrenById["frame1"]).toEqual(["rect2", "rect1", "text1"]);
+    });
+  });
+
+  describe("copy (C)", () => {
+    it("clones a subtree with new ids and positions it relative to the source", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'copy=C(frame1, document, {name: "Screen Copy", positionDirection: "right", positionPadding: 50})',
+        })
+      );
+      expect(result.success).toBe(true);
+
+      const cloneId = result.createdNodes[0].id;
+      expect(cloneId).not.toBe("frame1");
+
+      const { nodesById, childrenById, rootIds } = sceneState();
+      const clone = nodesById[cloneId];
+      expect(clone.name).toBe("Screen Copy");
+      // right of frame1: x = 100 + 400 + 50
+      expect(clone.x).toBe(550);
+      expect(clone.y).toBe(100);
+      expect(rootIds).toContain(cloneId);
+      // children cloned with fresh ids
+      expect(childrenById[cloneId]).toHaveLength(2);
+      expect(childrenById[cloneId]).not.toContain("rect1");
+      // original untouched
+      expect(childrenById["frame1"]).toEqual(["rect1", "text1"]);
+    });
+  });
+
+  describe("binding resolution", () => {
+    it("resolves a binding later in the script even when nodeData carries a stray `id` field", async () => {
+      // Models sometimes echo an `id`-like field in the nodeData JSON (e.g.
+      // mirroring the binding name) alongside the DSL's own `binding=I(...)`
+      // syntax. The engine must ignore that field and still assign a real
+      // generated id to the created node, so a later reference to the
+      // binding resolves instead of throwing "Unresolved binding".
+      const result = JSON.parse(
+        await batchDesign({
+          operations: [
+            'scrollArea=I(document, {type: "frame", name: "Scroll Area", id: "scrollArea", width: 100, height: 100})',
+            'U(scrollArea, {name: "Renamed Scroll Area"})',
+          ].join("\n"),
+        })
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(result.success).toBe(true);
+      expect(result.operationsExecuted).toBe(2);
+
+      const created = result.createdNodes[0];
+      expect(created.id).toBeTruthy();
+      expect(created.id).not.toBe("scrollArea");
+
+      const { nodesById } = sceneState();
+      expect(nodesById[created.id]?.name).toBe("Renamed Scroll Area");
+      // The stray `id` value must never leak in as the real node id.
+      expect(nodesById["scrollArea"]).toBeUndefined();
+    });
+  });
+
+  describe("error handling", () => {
+    it("returns an error for empty operations and leaves the store untouched", async () => {
+      const before = sceneState();
+      const result = JSON.parse(await batchDesign({ operations: "" }));
+      expect(result.error).toBe("No operations provided");
+      expect(sceneState().nodesById).toBe(before.nodesById);
+    });
+
+    it("returns a parse error for invalid syntax without mutating the store", async () => {
+      const before = sceneState();
+      const result = JSON.parse(
+        await batchDesign({ operations: "X(document)" })
+      );
+      expect(result.error).toMatch(/^Parse error:/);
+      expect(sceneState().nodesById).toBe(before.nodesById);
+      expect(sceneState().rootIds).toBe(before.rootIds);
+    });
+
+    it("rolls back the whole batch when a later operation fails", async () => {
+      const before = sceneState();
+      const result = JSON.parse(
+        await batchDesign({
+          operations: [
+            'I(document, {type: "frame", name: "WillNotPersist", width: 10, height: 10})',
+            'U(nonexistent_node, {fill: "#000000"})',
+          ].join("\n"),
+        })
+      );
+      expect(result.error).toMatch(/^Execution error:/);
+      expect(result.completedOperations).toHaveLength(1);
+      expect(result.totalOperations).toBe(2);
+
+      // Store identical: the partially-executed insert did not leak
+      expect(sceneState().nodesById).toBe(before.nodesById);
+      expect(sceneState().rootIds).toBe(before.rootIds);
+      expect(Object.keys(sceneState().nodesById)).toHaveLength(4);
+    });
+
+    it("rejects deleting a nonexistent node", async () => {
+      const result = JSON.parse(await batchDesign({ operations: "D(nope)" }));
+      expect(result.error).toMatch(/Unresolved binding|Node not found/);
+    });
+
+  });
+
+  describe("truncation (> MAX_OPERATIONS)", () => {
+    function insertOp(i: number) {
+      return `b${i}=I(document, {type: "rectangle", name: "N${i}", width: 1, height: 1})`;
+    }
+
+    it("executes only the first 25 of a 30-operation script and reports resumption info", async () => {
+      const ops = Array.from({ length: 30 }, (_, i) => insertOp(i));
+      const result = JSON.parse(
+        await batchDesign({ operations: ops.join("\n") })
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.truncated).toBe(true);
+      expect(result.operationsSubmitted).toBe(30);
+      expect(result.operationsExecuted).toBe(25);
+
+      const { nodesById } = sceneState();
+      const names = Object.values(nodesById).map((n) => n.name);
+      for (let i = 0; i < 25; i++) {
+        expect(names).toContain(`N${i}`);
+      }
+      for (let i = 25; i < 30; i++) {
+        expect(names).not.toContain(`N${i}`);
+      }
+    });
+
+    it("returns remainingOperations verbatim for the unexecuted tail", async () => {
+      const ops = Array.from({ length: 30 }, (_, i) => insertOp(i));
+      const result = JSON.parse(
+        await batchDesign({ operations: ops.join("\n") })
+      );
+
+      expect(result.remainingOperations).toHaveLength(5);
+      expect(result.remainingOperations[0]).toBe(insertOp(25));
+      expect(result.remainingOperations[4]).toBe(insertOp(29));
+    });
+
+    it("returns bindings for created nodes, excluding document, resolving to real ids in the store", async () => {
+      const ops = Array.from({ length: 30 }, (_, i) => insertOp(i));
+      const result = JSON.parse(
+        await batchDesign({ operations: ops.join("\n") })
+      );
+
+      expect(result.bindings.document).toBeUndefined();
+      // 25 executed operations each bind b0..b24
+      for (let i = 0; i < 25; i++) {
+        const id = result.bindings[`b${i}`];
+        expect(id).toBeTruthy();
+        expect(sceneState().nodesById[id]).toBeDefined();
+        expect(sceneState().nodesById[id].name).toBe(`N${i}`);
+      }
+      expect(result.bindings.b25).toBeUndefined();
+    });
+
+    it("does not add truncated fields when exactly at the limit (25 operations)", async () => {
+      const ops = Array.from({ length: 25 }, (_, i) => insertOp(i));
+      const result = JSON.parse(
+        await batchDesign({ operations: ops.join("\n") })
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.operationsExecuted).toBe(25);
+      expect(result.truncated).toBeUndefined();
+      expect(result.operationsSubmitted).toBeUndefined();
+      expect(result.bindings).toBeUndefined();
+      expect(result.remainingOperations).toBeUndefined();
+      expect(result.note).toBeUndefined();
+    });
+
+    it("truncates at the boundary of 26 operations (25 executed, 1 remaining)", async () => {
+      const ops = Array.from({ length: 26 }, (_, i) => insertOp(i));
+      const result = JSON.parse(
+        await batchDesign({ operations: ops.join("\n") })
+      );
+
+      expect(result.truncated).toBe(true);
+      expect(result.operationsExecuted).toBe(25);
+      expect(result.operationsSubmitted).toBe(26);
+      expect(result.remainingOperations).toHaveLength(1);
+      expect(result.remainingOperations[0]).toBe(insertOp(25));
+      expect(result.remainingOperationsTruncated).toBeUndefined();
+      // Full (unbudget-truncated) list: note must not claim the list is incomplete.
+      expect(result.note).not.toMatch(/NOT the full remainder/i);
+      expect(result.note).not.toMatch(/cut short/i);
+    });
+
+    it("caps remainingOperations by character budget and flags remainingOperationsTruncated", async () => {
+      // 25 cheap ops to execute, followed by many large unexecuted ops whose
+      // combined raw text exceeds the 8000-char budget.
+      const executedOps = Array.from({ length: 25 }, (_, i) => insertOp(i));
+      const bigHtml = "x".repeat(2000);
+      const largeOps = Array.from(
+        { length: 10 },
+        (_, i) =>
+          `I(document, {type: "embed", name: "Big${i}", width: 1, height: 1, htmlContent: "${bigHtml}"})`
+      );
+      const ops = [...executedOps, ...largeOps];
+      const result = JSON.parse(
+        await batchDesign({ operations: ops.join("\n") })
+      );
+
+      expect(result.truncated).toBe(true);
+      expect(result.operationsSubmitted).toBe(35);
+      expect(result.operationsExecuted).toBe(25);
+      expect(result.remainingOperationsTruncated).toBe(true);
+      expect(result.remainingOperations.length).toBeGreaterThan(0);
+      expect(result.remainingOperations.length).toBeLessThan(10);
+
+      const totalLen = result.remainingOperations.reduce(
+        (sum: number, s: string) => sum + s.length,
+        0
+      );
+      expect(totalLen).toBeLessThanOrEqual(8000);
+
+      // The note must not claim the (budget-truncated) list is complete —
+      // it must say how many are listed out of how many remain, and that
+      // the rest must come from the model's own script.
+      expect(result.note).toMatch(/NOT the full remainder/i);
+      expect(result.note).toContain(String(result.remainingOperations.length));
+      expect(result.note).toContain("10");
+    });
+
+    it("always includes at least one operation in remainingOperations, even if it alone exceeds the budget", async () => {
+      const executedOps = Array.from({ length: 25 }, (_, i) => insertOp(i));
+      // The first unexecuted operation alone exceeds the 8000-char budget,
+      // followed by a second unexecuted op — the degenerate case where a
+      // naive cutoff computation (budget exceeded on item 0) would yield an
+      // empty remainingOperations list instead of including that one item.
+      const hugeHtml = "x".repeat(9000);
+      const hugeOp = `I(document, {type: "embed", name: "Huge", width: 1, height: 1, htmlContent: "${hugeHtml}"})`;
+      const ops = [...executedOps, hugeOp, insertOp(26)];
+      const result = JSON.parse(
+        await batchDesign({ operations: ops.join("\n") })
+      );
+
+      expect(result.truncated).toBe(true);
+      expect(result.remainingOperationsTruncated).toBe(true);
+      expect(result.remainingOperations).toHaveLength(1);
+      expect(result.remainingOperations[0]).toContain("Huge");
+      expect(result.note).toMatch(/NOT the full remainder/i);
+    });
+
+    it("flags truncated:true on the error response when the executed slice fails mid-way", async () => {
+      const before = sceneState();
+      const executedOps = Array.from({ length: 24 }, (_, i) => insertOp(i));
+      // 25th executed op fails (bad reference), forcing the catch branch
+      // while the batch as a whole is truncated (30 submitted > 25 cap).
+      const failingOp = "U(nonexistent_node, {fill: \"#000000\"})";
+      const tailOps = Array.from({ length: 5 }, (_, i) => insertOp(25 + i));
+      const ops = [...executedOps, failingOp, ...tailOps];
+      const result = JSON.parse(
+        await batchDesign({ operations: ops.join("\n") })
+      );
+
+      expect(result.error).toMatch(/^Execution error:/);
+      expect(result.truncated).toBe(true);
+      expect(result.operationsSubmitted).toBe(30);
+      expect(result.completedOperations).toHaveLength(24);
+
+      // Store untouched: not even the partially-executed insert leaked.
+      expect(sceneState().nodesById).toBe(before.nodesById);
+      expect(sceneState().rootIds).toBe(before.rootIds);
+      for (let i = 0; i < 24; i++) {
+        expect(
+          Object.values(sceneState().nodesById).some((n) => n.name === `N${i}`)
+        ).toBe(false);
+      }
+    });
+  });
+
+  describe("history", () => {
+    it("records a single undo entry for a successful batch", async () => {
+      expect(useHistoryStore.getState().past).toHaveLength(0);
+      await batchDesign({
+        operations: [
+          'I(document, {type: "rectangle", name: "A", width: 1, height: 1})',
+          'I(document, {type: "rectangle", name: "B", width: 1, height: 1})',
+        ].join("\n"),
+      });
+      const { past } = useHistoryStore.getState();
+      expect(past).toHaveLength(1);
+      // The snapshot captures the pre-batch scene
+      expect(past[0].rootIds).toEqual(["frame1", "rect2"]);
+    });
+
+    it("does not record history for a failed batch", async () => {
+      await batchDesign({ operations: "D(nonexistent)" });
+      expect(useHistoryStore.getState().past).toHaveLength(0);
+    });
+
+    it("undo after a plain insert into an existing parent restores the exact original child order (second review finding 3)", async () => {
+      // frame1 already has children (rect1, text1) from seedScene — inserting
+      // into it pushes onto childrenById.frame1's array IN PLACE
+      // (executeOperation's I() does `.push()`). If the pre-batch snapshot
+      // saved to history shared that same array (a shallow `{ ...childrenById
+      // }`, as `buildHistorySnapshot` and this fallback ctx-build both do),
+      // the push would retroactively mutate the "original" snapshot too, and
+      // undo would restore a childrenById that already includes the inserted
+      // node — the bug `cloneChildrenById` exists to prevent.
+      const originalChildrenById = JSON.parse(JSON.stringify(sceneState().childrenById));
+
+      const result = JSON.parse(
+        await batchDesign({
+          operations: 'I("frame1", {type: "rect", name: "Inserted", width: 5, height: 5})',
+        }),
+      );
+      expect(result.success).toBe(true);
+      // Sanity: the insert actually changed frame1's children.
+      expect(sceneState().childrenById["frame1"]).not.toEqual(originalChildrenById["frame1"]);
+
+      const snapshot = createSnapshot(useSceneStore.getState());
+      const prev = useHistoryStore.getState().undo(snapshot);
+      expect(prev).not.toBeNull();
+      useSceneStore.getState().restoreSnapshot(prev!);
+
+      expect(sceneState().childrenById).toEqual(originalChildrenById);
+    });
+  });
+
+  // S3: AI delete/replace must not leave connectors dangling into removed nodes.
+  describe("connector cleanup (S3)", () => {
+    function addConnector(id: string, startNodeId: string, endNodeId: string) {
+      useSceneStore.setState((s) => ({
+        nodesById: {
+          ...s.nodesById,
+          [id]: {
+            id,
+            type: "connector",
+            name: "Connector",
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+            startConnection: { nodeId: startNodeId, anchor: "right" },
+            endConnection: { nodeId: endNodeId, anchor: "left" },
+            points: [0, 0, 0, 0],
+          } as unknown as FlatSceneNode,
+        },
+        parentById: { ...s.parentById, [id]: null },
+        rootIds: [...s.rootIds, id],
+        _cachedTree: null,
+      }));
+    }
+
+    it("D() removes connectors anchored to a deleted node", async () => {
+      addConnector("conn1", "rect1", "rect2");
+
+      const result = JSON.parse(await batchDesign({ operations: "D(rect1)" }));
+
+      expect(result.success).toBe(true);
+      expect(sceneState().nodesById["conn1"]).toBeUndefined();
+      expect(sceneState().rootIds).not.toContain("conn1");
+    });
+
+    it("R() inherits layout/sizing from the replaced node when nodeData omits them", async () => {
+      useSceneStore.setState((s) => ({
+        nodesById: {
+          ...s.nodesById,
+          frame1: {
+            ...s.nodesById["frame1"],
+            layout: { autoLayout: true, flexDirection: "column", gap: 8 },
+            sizing: { widthMode: "fill_container", heightMode: "fit_content" },
+          },
+        },
+      }));
+
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'R(frame1, {type: "frame", name: "New", children: [' +
+            '{type: "rect", name: "Item", width: "fill_container", height: 40}' +
+            "]})",
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const newId = result.createdNodes[0].id;
+      const node = sceneState().nodesById[newId] as unknown as FlatFrameNode;
+      expect(node.layout).toEqual({ autoLayout: true, flexDirection: "column", gap: 8 });
+      expect(node.sizing).toEqual({ widthMode: "fill_container", heightMode: "fit_content" });
+    });
+
+    it("R() does not inherit layout when replacing a frame with a non-frame type", async () => {
+      seedFrame1Layout();
+
+      const result = JSON.parse(
+        await batchDesign({
+          operations: 'R(frame1, {type: "rect", name: "Item", width: 10, height: 10})',
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const newId = result.createdNodes[0].id;
+      const node = sceneState().nodesById[newId] as unknown as Record<
+        string,
+        unknown
+      >;
+      expect(node.layout).toBeUndefined();
+    });
+
+    it("R() does not apply the replaced node's inherited layout to its own new children", async () => {
+      seedFrame1Layout();
+
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'R(frame1, {type: "frame", name: "New", children: [' +
+            '{type: "rect", name: "Item", width: 10, height: 10}' +
+            "]})",
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const newId = result.createdNodes[0].id;
+      const childId = sceneState().childrenById[newId][0];
+      const child = sceneState().nodesById[childId] as unknown as Record<
+        string,
+        unknown
+      >;
+      expect(child.layout).toBeUndefined();
+    });
+
+    it("R() drops connectors anchored to a removed descendant of the replaced node", async () => {
+      // conn1 anchors to rect1, a child of frame1; replacing frame1 removes rect1.
+      addConnector("conn1", "rect1", "rect2");
+
+      const result = await replaceFrame1WithNewFrame();
+
+      expect(result.success).toBe(true);
+      expect(sceneState().nodesById["conn1"]).toBeUndefined();
+    });
+
+    it("R() re-points connectors anchored to the replaced node itself", async () => {
+      addConnector("conn1", "rect2", "frame1");
+
+      const result = await replaceFrame1WithNewFrame();
+
+      expect(result.success).toBe(true);
+      const newId = result.createdNodes[0].id;
+      const conn = sceneState().nodesById["conn1"] as ConnectorNode | undefined;
+      expect(conn).toBeDefined();
+      expect(conn?.endConnection.nodeId).toBe(newId);
+    });
+
+    it("R() drops a pinned measurement anchored to the replaced node itself", async () => {
+      useMeasurementsStore.getState().addMeasurement("frame1", "rect2");
+      expect(useMeasurementsStore.getState().measurements).toHaveLength(1);
+
+      const result = await replaceFrame1WithNewFrame();
+
+      expect(result.success).toBe(true);
+      expect(useMeasurementsStore.getState().measurements).toHaveLength(0);
+    });
+
+    it("R() drops a pinned measurement anchored to a removed descendant of the replaced node", async () => {
+      // rect1 is a child of frame1; replacing frame1 removes rect1.
+      useMeasurementsStore.getState().addMeasurement("rect1", "rect2");
+      expect(useMeasurementsStore.getState().measurements).toHaveLength(1);
+
+      const result = await replaceFrame1WithNewFrame();
+
+      expect(result.success).toBe(true);
+      expect(useMeasurementsStore.getState().measurements).toHaveLength(0);
+    });
+
+    it("a failed batch does not remove pinned measurements (rolled back with the rest)", async () => {
+      useMeasurementsStore.getState().addMeasurement("rect1", "rect2");
+
+      const result = JSON.parse(
+        await batchDesign({
+          operations: [
+            "D(rect1)",
+            'U(nonexistent_node, {fill: "#000000"})',
+          ].join("\n"),
+        })
+      );
+
+      expect(result.error).toMatch(/^Execution error:/);
+      expect(useMeasurementsStore.getState().measurements).toHaveLength(1);
+    });
+  });
+
+  describe("text lists (paragraphs)", () => {
+    it("I() creates a text node with a bulleted list via a paragraphs array", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'label=I(document, {type: "text", name: "List", text: "Milk\\nEggs\\nBread", paragraphs: [{listType: "bullet"}, {listType: "bullet"}, {listType: "bullet"}]})',
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const created = sceneState().nodesById[result.createdNodes[0].id] as TextNode;
+      expect(created.paragraphs).toEqual([
+        { listType: "bullet" },
+        { listType: "bullet" },
+        { listType: "bullet" },
+      ]);
+      // Auto-size (syncTextDimensions) should widen the node past the bare
+      // text width to make room for the bullet markers + hanging indent.
+      expect(created.width).toBeGreaterThan(0);
+    });
+
+    it("U() re-tags an existing text node's paragraphs (e.g. AI adds a numbered list)", async () => {
+      const textResult = JSON.parse(
+        await batchDesign({
+          operations: 'label=I(document, {type: "text", name: "Steps", text: "Mix\\nBake"})',
+        })
+      );
+      const id = textResult.createdNodes[0].id;
+
+      const result = JSON.parse(
+        await batchDesign({
+          operations: `U("${id}", {paragraphs: [{listType: "number"}, {listType: "number"}]})`,
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const updated = sceneState().nodesById[id] as TextNode;
+      expect(updated.paragraphs).toEqual([{ listType: "number" }, { listType: "number" }]);
+    });
+
+    it("U() re-deriving paragraphs when {text} alone changes the line count keeps the array index-aligned", async () => {
+      const textResult = JSON.parse(
+        await batchDesign({
+          operations:
+            'label=I(document, {type: "text", name: "List", text: "Milk\\nEggs", paragraphs: [{listType: "bullet"}, {listType: "bullet"}]})',
+        })
+      );
+      const id = textResult.createdNodes[0].id;
+
+      // AI sends only {text} (no paragraphs) after merging two lines into one —
+      // without re-deriving, the old 2-entry array would desync from the new
+      // 1-line text.
+      const result = JSON.parse(
+        await batchDesign({
+          operations: `U("${id}", {text: "MilkEggs"})`,
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const updated = sceneState().nodesById[id] as TextNode;
+      expect(updated.text).toBe("MilkEggs");
+      expect(updated.paragraphs).toEqual([{ listType: "bullet" }]);
+    });
+
+    it("U() re-deriving paragraphs when {text} alone adds lines pads with plain defaults", async () => {
+      const textResult = JSON.parse(
+        await batchDesign({
+          operations: 'label=I(document, {type: "text", name: "List", text: "Milk", paragraphs: [{listType: "bullet"}]})',
+        })
+      );
+      const id = textResult.createdNodes[0].id;
+
+      const result = JSON.parse(
+        await batchDesign({
+          operations: `U("${id}", {text: "Milk\\nEggs\\nBread"})`,
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const updated = sceneState().nodesById[id] as TextNode;
+      expect(updated.paragraphs).toEqual([{ listType: "bullet" }, {}, {}]);
+    });
+
+    it("R() re-aligns a stale paragraphs array supplied alongside new multi-line text", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'R(text1, {type: "text", name: "List", text: "Milk\\nEggs\\nBread", paragraphs: [{listType: "bullet"}]})',
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const newId = result.createdNodes[0].id;
+      const created = sceneState().nodesById[newId] as TextNode;
+      expect(created.paragraphs).toEqual([{ listType: "bullet" }, {}, {}]);
+    });
+  });
+
+  describe("text links (markdown)", () => {
+    it("I() with content: markdown link creates a text node with plain text and a link attribute", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'label=I(document, {type: "text", name: "CTA", content: "[Sign up now](https://example.com/signup)"})',
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const created = sceneState().nodesById[result.createdNodes[0].id] as TextNode;
+      expect(created.text).toBe("Sign up now");
+      expect(created.link).toEqual({ url: "https://example.com/signup" });
+    });
+
+    it("I() with a titled markdown link stores the title too", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'label=I(document, {type: "text", name: "CTA", content: "[Docs](https://example.com/docs \\"Read the docs\\")"})',
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const created = sceneState().nodesById[result.createdNodes[0].id] as TextNode;
+      expect(created.text).toBe("Docs");
+      expect(created.link).toEqual({ url: "https://example.com/docs", title: "Read the docs" });
+    });
+
+    it("I() with plain content (no markdown link) leaves link unset", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: 'label=I(document, {type: "text", name: "Plain", content: "Just text"})',
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const created = sceneState().nodesById[result.createdNodes[0].id] as TextNode;
+      expect(created.text).toBe("Just text");
+      expect(created.link).toBeUndefined();
+    });
+
+    it("U() with a markdown-link text also sets the link attribute on an existing node", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: 'U(text1, {text: "[Learn more](https://example.com/learn)"})',
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const updated = sceneState().nodesById["text1"] as TextNode;
+      expect(updated.text).toBe("Learn more");
+      expect(updated.link).toEqual({ url: "https://example.com/learn" });
+    });
+
+    it("U() can clear an existing link directly via {link: null}", async () => {
+      const id = await insertLinkedTextGetId();
+      expect((sceneState().nodesById[id] as TextNode).link).toBeDefined();
+
+      const result = JSON.parse(
+        await batchDesign({
+          operations: `U("${id}", {link: null})`,
+        })
+      );
+
+      expect(result.success).toBe(true);
+      expect((sceneState().nodesById[id] as TextNode).link).toBeFalsy();
+    });
+
+    it("U() removes an existing link by re-setting content to plain text", async () => {
+      const id = await insertLinkedTextGetId();
+      expect((sceneState().nodesById[id] as TextNode).link).toBeDefined();
+
+      const result = JSON.parse(
+        await batchDesign({
+          operations: `U("${id}", {content: "Go"})`,
+        })
+      );
+
+      expect(result.success).toBe(true);
+      const updated = sceneState().nodesById[id] as TextNode;
+      expect(updated.text).toBe("Go");
+      expect(updated.link).toBeFalsy();
+    });
+  });
+
+  describe("parser tolerance", () => {
+    it("ignores a trailing </operations> wrapper line", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'embed=I(document, {type: "frame", name: "Slide", width: 100, height: 100})\n</operations>',
+        })
+      );
+      expect(result.success).toBe(true);
+      expect(result.operationsExecuted).toBe(1);
+    });
+
+    it("ignores a leading <operations> wrapper line", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            '<operations>\nembed=I(document, {type: "frame", name: "Slide", width: 100, height: 100})',
+        })
+      );
+      expect(result.success).toBe(true);
+      expect(result.operationsExecuted).toBe(1);
+    });
+
+    it("strips Markdown code fences around the script", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            '```\nembed=I(document, {type: "frame", name: "Slide", width: 100, height: 100})\n```',
+        })
+      );
+      expect(result.success).toBe(true);
+      expect(result.operationsExecuted).toBe(1);
+    });
+
+    it("errors with 'No operations' when the payload is only fences/tags", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations: "<operations>\n```\n```\n</operations>",
+        })
+      );
+      expect(result.success).toBeUndefined();
+      expect(result.error).toMatch(/No operations/);
+    });
+
+    it("still errors on a genuinely malformed operation", async () => {
+      const result = JSON.parse(
+        await batchDesign({ operations: "X(foo)" })
+      );
+      expect(result.success).toBeUndefined();
+      expect(result.error).toMatch(/Invalid operation syntax/);
+    });
+
+    it("does NOT strip a </operations> substring inside a string value", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'I(document, {type: "text", text: "see </operations> below"})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const created = sceneState().nodesById[result.createdNodes[0].id] as TextNode;
+      expect(created.text).toBe("see </operations> below");
+    });
+
+    it("preserves interior full-line noise inside a multi-line string value", async () => {
+      const result = JSON.parse(
+        await batchDesign({
+          operations:
+            'I(document, {type: "text", name: "Snippet", text: "line one\\n<script>\\n```\\nline four"})',
+        })
+      );
+      expect(result.success).toBe(true);
+      const created = sceneState().nodesById[result.createdNodes[0].id] as TextNode;
+      expect(created.text).toBe("line one\n<script>\n```\nline four");
+      expect(created.text).toContain("<script>");
+      expect(created.text).toContain("```");
+    });
+  });
+});

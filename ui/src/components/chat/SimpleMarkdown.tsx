@@ -1,0 +1,325 @@
+import { useMemo } from "react";
+import { openChatArtifact } from "@/lib/chatArtifacts";
+import { classifyHref } from "@/lib/docs/docLinks";
+import {
+  activateCanvasTabLink,
+  focusNodeLink,
+  handleLinkClick,
+  openDocLink,
+  openTraceLink,
+} from "@/lib/docs/docLinkActions";
+import { whenDesktopDocsReady } from "@/lib/docs/desktopDocMirror";
+
+interface SimpleMarkdownProps {
+  content: string;
+}
+
+interface Block {
+  type: "code" | "lines";
+  lang?: string;
+  text: string;
+}
+
+function parseBlocks(src: string): Block[] {
+  const blocks: Block[] = [];
+  const lines = src.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const fence = lines[i].match(/^```(\w*)$/);
+    if (fence) {
+      const lang = fence[1] || undefined;
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith("```")) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) i++; // skip closing ```
+      blocks.push({ type: "code", lang, text: codeLines.join("\n") });
+    } else {
+      const textLines: string[] = [];
+      while (i < lines.length && !lines[i].match(/^```/)) {
+        textLines.push(lines[i]);
+        i++;
+      }
+      blocks.push({ type: "lines", text: textLines.join("\n") });
+    }
+  }
+  return blocks;
+}
+
+const LINK_CLASS = "text-accent-primary underline underline-offset-2 cursor-pointer";
+const SAFE_EXTERNAL = /^(?:https?:|mailto:)/i;
+
+/** What a click on an internal link in a chat message opens. Never throws (handleLinkClick guards it). */
+function openChatLink(href: string, label: string): void {
+  handleLinkClick(href, {
+    // The desktop mirror fills the docs store asynchronously; wait for it so a real document is not reported missing.
+    openDoc: (id) =>
+      void whenDesktopDocsReady().then(() =>
+        openDocLink(id, (docId) => openChatArtifact({ kind: "doc", id: docId, title: label })),
+      ),
+    focusNode: focusNodeLink,
+    activateCanvasTab: activateCanvasTabLink,
+    openTrace: openTraceLink,
+    openExternal: (url) => void window.open(url, "_blank", "noopener,noreferrer"),
+  });
+}
+
+function renderLink(label: string, href: string, raw: string, key: number): React.ReactNode {
+  const target = classifyHref(href);
+  if (target.kind === "external") {
+    // Only web and mail links are clickable; javascript:, data: and the like stay inert text.
+    if (!SAFE_EXTERNAL.test(href.trim())) return raw;
+    return (
+      <a key={key} href={href.trim()} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
+        {renderInline(label)}
+      </a>
+    );
+  }
+  return (
+    <a
+      key={key}
+      href={href.trim()}
+      className="internal-link"
+      data-link-kind={target.kind}
+      onClick={(e) => {
+        e.preventDefault();
+        openChatLink(href, label);
+      }}
+      onAuxClick={(e) => e.preventDefault()}
+    >
+      {renderInline(label)}
+    </a>
+  );
+}
+
+function renderInline(text: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  const regex = /(\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)|\*\*(.+?)\*\*|`([^`]+)`)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    if (match[2] !== undefined) {
+      parts.push(renderLink(match[2], match[3], match[0], key++));
+    } else if (match[4]) {
+      parts.push(
+        <strong key={key++} className="font-semibold">
+          {renderInline(match[4])}
+        </strong>
+      );
+    } else if (match[5]) {
+      parts.push(
+        <code
+          key={key++}
+          className="px-1 py-0.5 rounded bg-secondary text-[0.85em] font-mono"
+        >
+          {match[5]}
+        </code>
+      );
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts;
+}
+
+function isTableSeparatorLine(line: string): boolean {
+  return /^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$/.test(line);
+}
+
+function isTableRowLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length > 0 && trimmed.startsWith("|") && trimmed.endsWith("|");
+}
+
+function parseTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function renderLines(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const lines = text.split("\n");
+  let i = 0;
+  let key = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)/);
+    const hrMatch = line.match(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/);
+    const ulMatch = line.match(/^[-*]\s+(.+)/);
+    const olMatch = line.match(/^\d+\.\s+(.+)/);
+    const isTableStart =
+      isTableRowLine(line) &&
+      i + 1 < lines.length &&
+      isTableSeparatorLine(lines[i + 1]);
+
+    if (headingMatch) {
+      const level = Math.min(headingMatch[1].length, 6);
+      const textContent = headingMatch[2];
+      const classesByLevel: Record<number, string> = {
+        1: "m-0 mt-1.5 mb-1 text-[18px] leading-tight font-semibold",
+        2: "m-0 mt-1.5 mb-1 text-[16px] leading-tight font-semibold",
+        3: "m-0 mt-1 mb-0.5 text-[14px] leading-snug font-semibold",
+        4: "m-0 mt-1 mb-0.5 text-[13px] leading-snug font-semibold",
+        5: "m-0 mt-1 mb-0.5 text-[12px] leading-snug font-semibold uppercase tracking-wide text-text-secondary",
+        6: "m-0 mt-1 mb-0.5 text-[12px] leading-snug font-semibold uppercase tracking-wide text-text-secondary",
+      };
+      const headingClass = classesByLevel[level] ?? classesByLevel[4];
+      if (level === 1) {
+        nodes.push(<h1 key={key++} className={headingClass}>{renderInline(textContent)}</h1>);
+      } else if (level === 2) {
+        nodes.push(<h2 key={key++} className={headingClass}>{renderInline(textContent)}</h2>);
+      } else if (level === 3) {
+        nodes.push(<h3 key={key++} className={headingClass}>{renderInline(textContent)}</h3>);
+      } else if (level === 4) {
+        nodes.push(<h4 key={key++} className={headingClass}>{renderInline(textContent)}</h4>);
+      } else if (level === 5) {
+        nodes.push(<h5 key={key++} className={headingClass}>{renderInline(textContent)}</h5>);
+      } else {
+        nodes.push(<h6 key={key++} className={headingClass}>{renderInline(textContent)}</h6>);
+      }
+      i++;
+    } else if (hrMatch) {
+      nodes.push(
+        <hr
+          key={key++}
+          className="my-2 border-0 border-t border-border-default/80"
+        />
+      );
+      i++;
+    } else if (isTableStart) {
+      const header = parseTableRow(line);
+      i += 2; // skip header + separator
+      const rows: string[][] = [];
+
+      while (i < lines.length && isTableRowLine(lines[i])) {
+        rows.push(parseTableRow(lines[i]));
+        i++;
+      }
+
+      nodes.push(
+        <div key={key++} className="overflow-x-auto">
+          <table className="w-full border-collapse leading-snug">
+            <thead>
+              <tr className="border-b border-border-default">
+                {header.map((cell, j) => (
+                  <th
+                    key={j}
+                    className="px-1.5 py-1 text-left align-top font-semibold"
+                  >
+                    {renderInline(cell)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr
+                  key={rowIndex}
+                  className="border-b border-border-default last:border-b-0"
+                >
+                  {row.map((cell, j) => (
+                    <td key={j} className="px-1.5 py-1 align-top">
+                      {renderInline(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    } else if (ulMatch) {
+      const items: string[] = [];
+      while (i < lines.length && lines[i].match(/^[-*]\s+/)) {
+        items.push(lines[i].replace(/^[-*]\s+/, ""));
+        i++;
+      }
+      nodes.push(
+        <ul key={key++} className="m-0 list-disc pl-4 space-y-0.5">
+          {items.map((item, j) => (
+            <li key={j}>{renderInline(item)}</li>
+          ))}
+        </ul>
+      );
+    } else if (olMatch) {
+      const items: string[] = [];
+      while (i < lines.length && lines[i].match(/^\d+\.\s+/)) {
+        items.push(lines[i].replace(/^\d+\.\s+/, ""));
+        i++;
+      }
+      nodes.push(
+        <ol key={key++} className="m-0 list-decimal pl-4 space-y-0.5">
+          {items.map((item, j) => (
+            <li key={j}>{renderInline(item)}</li>
+          ))}
+        </ol>
+      );
+    } else if (line.trim() === "") {
+      // Model output routinely ends with (and contains runs of) blank lines.
+      // One <br> per blank line turned a trailing "\n\n" into a visible hole
+      // between the message and the next tool chip, so a run collapses to a
+      // single separator and is dropped entirely at the block's start or end.
+      // The separator is a short spacer rather than a <br>, which would insert
+      // a whole empty line (~21px at this line-height) between paragraphs.
+      while (i < lines.length && lines[i].trim() === "") i++;
+      if (nodes.length > 0 && i < lines.length) {
+        nodes.push(<div key={key++} aria-hidden className="h-1.5" />);
+      }
+    } else {
+      nodes.push(
+        <p key={key++} className="m-0">
+          {renderInline(line)}
+        </p>
+      );
+      i++;
+    }
+  }
+  return nodes;
+}
+
+export function SimpleMarkdown({ content }: SimpleMarkdownProps) {
+  const rendered = useMemo(() => {
+    const blocks = parseBlocks(content);
+    return blocks.map((block, i) => {
+      if (block.type === "code") {
+        return (
+          <pre
+            key={i}
+            className="m-0 rounded bg-secondary p-2 overflow-x-auto text-xs font-mono"
+          >
+            <code>{block.text}</code>
+          </pre>
+        );
+      }
+      // A blank-only text block (e.g. the newlines after a closing fence)
+      // would otherwise render an empty div and still take a space-y gap.
+      if (block.text.trim() === "") return null;
+      return <div key={i}>{renderLines(block.text)}</div>;
+    });
+  }, [content]);
+
+  // `break-words` (overflow-wrap, inherited by every child): reasoning text and
+  // tool chatter routinely contain long unbroken tokens — inline JSON, ids,
+  // urls — which otherwise overflow the narrow chat column and give the panel a
+  // horizontal scrollbar. Fenced code keeps its own `overflow-x-auto` instead,
+  // since breaking code mid-token would make it unreadable.
+  return (
+    <div className="space-y-1.5 text-[13px] leading-relaxed break-words">
+      {rendered}
+    </div>
+  );
+}

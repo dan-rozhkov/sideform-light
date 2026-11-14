@@ -1,0 +1,375 @@
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import type { TraceListResult } from "../main/traceStore";
+
+type UITheme = "light" | "dark";
+
+let lastTheme: UITheme | undefined;
+
+function publishTheme(): void {
+  const theme: UITheme = document.documentElement?.classList.contains("dark") ? "dark" : "light";
+  if (theme === lastTheme) return;
+  lastTheme = theme;
+  ipcRenderer.send("editor:theme", theme);
+}
+
+// Desktop MCP bridge (see ../main/mcp/) — the page side already shipped and
+// is live in production as ../../../pen-editor/src/lib/desktopMcpBridge.ts,
+// which calls window.penDesktop.registerMcpBridge({protocol, tools, onCall})
+// and expects the return value to be a callable teardown function. `onCall`
+// there never rejects (a handler failure resolves to a JSON `{"error"}`
+// string), but this bridge tolerates a throwing/rejecting `onCall` anyway
+// and reports it as a tool_error reply rather than dropping the call.
+interface McpRegisterPayload {
+  protocol: number;
+  tools: string[];
+}
+
+interface McpCallPayload {
+  callId: string;
+  tool: string;
+  args: Record<string, unknown>;
+}
+
+interface McpResultPayload {
+  callId: string;
+  type: "tool_result" | "tool_error";
+  result?: string;
+  error?: string;
+}
+
+interface McpBridgeHandler {
+  protocol: number;
+  tools: string[];
+  onCall(name: string, args: Record<string, unknown>): Promise<string>;
+}
+
+// Tracks the teardown of whatever registerMcpBridge() call is currently
+// live, at module scope (not per-call) — the API boundary's own guard
+// against a double registration (finding 6), so it holds no matter what the
+// caller does. The page's own module-scoped `teardown` guard in
+// desktopMcpBridge.ts already prevents a *well-behaved* caller from calling
+// this twice, but the preload is the API boundary and must not depend on
+// its caller: React StrictMode double-invoking an effect in dev, or HMR,
+// can still land two calls here. Without this, both listeners would fire
+// per `mcp:call` (a `batch_design` mutating the document twice) and two
+// `mcp:result`s would go out for one `callId` (main resolves the first,
+// silently drops the second) — and tearing down only one of them would drop
+// main's registration for the whole tab (a bare `mcp:register` null) while
+// the other listener is still live, breaking every later call with the
+// "older build" upgrade error.
+let activeTeardown: (() => void) | null = null;
+
+function registerMcpBridge(handler: McpBridgeHandler): () => void {
+  // Auto-teardown any still-live prior registration before installing the
+  // new one, so at most one "mcp:call" listener and one active
+  // "mcp:register" are ever in effect regardless of how many times this is
+  // called.
+  activeTeardown?.();
+
+  const registerPayload: McpRegisterPayload = { protocol: handler.protocol, tools: handler.tools };
+  ipcRenderer.send("mcp:register", registerPayload);
+
+  const listener = (_e: IpcRendererEvent, msg: McpCallPayload) => {
+    void handler
+      .onCall(msg.tool, msg.args)
+      .then((result) => {
+        const reply: McpResultPayload = { callId: msg.callId, type: "tool_result", result };
+        ipcRenderer.send("mcp:result", reply);
+      })
+      .catch((err: unknown) => {
+        const reply: McpResultPayload = {
+          callId: msg.callId,
+          type: "tool_error",
+          error: err instanceof Error ? err.message : String(err),
+        };
+        ipcRenderer.send("mcp:result", reply);
+      });
+  };
+  ipcRenderer.on("mcp:call", listener);
+
+  let torndown = false;
+  const teardown = () => {
+    if (torndown) return;
+    torndown = true;
+    ipcRenderer.removeListener("mcp:call", listener);
+    // A `null` register payload tells main this tab is no longer bridging —
+    // main's registry is keyed by webContents.id and drops/rejects any
+    // in-flight calls for it (see mcp/service.ts). Reuses mcp:register
+    // rather than adding a fourth channel.
+    ipcRenderer.send("mcp:register", null);
+    if (activeTeardown === teardown) activeTeardown = null;
+  };
+  activeTeardown = teardown;
+  return teardown;
+}
+
+// Built-in browser bridge (design doc `2026-09-18-builtin-browser-design.md`
+// §5) — each call is a plain request/response over "browser:command". No
+// validation here: main (src/main/window.ts's "browser:command" handler,
+// BrowserController) is the trust boundary and validates everything, since
+// these arguments ultimately come from an LLM tool call.
+// `session` undefined = the shared browser (payload identical to what it always
+// was); a string = one isolated session (docs/superpowers/specs/
+// 2026-10-17-isolated-parallel-browse-design.md). Main validates the id.
+// `isolated(undefined)` must NOT fall back to the shared browser: the scope is a
+// wrapper, so a missing/invalid id still travels as `session` and main rejects it.
+// `{ chat }` keeps the shared browser but gives that chat its own desktop-app
+// binding; `forChat(undefined)` still sends `chat` and main rejects it.
+const makeBrowser = (scope?: { session: unknown } | { chat: unknown }) => {
+  const call = (payload: { command: string; args?: unknown }): Promise<unknown> =>
+    ipcRenderer.invoke("browser:command", scope === undefined ? payload : { ...payload, ...scope });
+  return {
+    open: (args: { url: string }): Promise<unknown> =>
+      call({ command: "open", args }),
+    act: (args: Record<string, unknown>): Promise<unknown> =>
+      call({ command: "act", args }),
+    findImages: (args: Record<string, unknown>): Promise<unknown> =>
+      call({ command: "findImages", args }),
+    // jev-loop design doc `2026-09-18-browse-task-jev-loop-design.md` §1 —
+    // same "no validation here, main is the trust boundary" shape as the
+    // three commands above; snapshot/perform stay loop internals reached only
+    // through this preload, never offered to the model as their own penTools.
+    snapshot: (): Promise<unknown> => call({ command: "snapshot" }),
+    perform: (args: Record<string, unknown>): Promise<unknown> =>
+      call({ command: "perform", args }),
+    // QA assertions (browser-agent docs/specs/2026-10-18-qa-diagnostics-design.md
+    // section 2): { checks, snapshotId? }. Read-only; same "no validation
+    // here, main is the trust boundary" shape.
+    assert: (args: Record<string, unknown>): Promise<unknown> =>
+      call({ command: "assert", args }),
+    // jev-loop design doc "Addendum 2, 2026-09-19" §2 — a readable digest of
+    // the current page. Same "no validation here" shape as every other
+    // command; main is the trust boundary.
+    read: (args?: Record<string, unknown>): Promise<unknown> =>
+      call({ command: "read", args }),
+    // Full browser use (design doc `2026-09-23-full-browser-use-design.md`) —
+    // same "no validation here, main is the trust boundary" shape as every
+    // command above.
+    screenshot: (args?: Record<string, unknown>): Promise<unknown> =>
+      call({ command: "screenshot", args }),
+    tabs: (args: Record<string, unknown>): Promise<unknown> =>
+      call({ command: "tabs", args }),
+    // browse_capture (pen-editor-backend docs/specs/2026-10-15-browse-capture-design.md):
+    // the page as self-contained HTML for a canvas embed. Same "no validation
+    // here" shape as every command above.
+    capture: (args?: Record<string, unknown>): Promise<unknown> =>
+      call({ command: "capture", args }),
+    // PageFixture. `opts` (an AbortSignal) cannot cross IPC and is dropped;
+    // main gates the fixture and passes allowNetworkMocks: true (desktop
+    // allows mocks, scoped to browser tabs through CDP Fetch).
+    applyFixture: (fixture: unknown, _opts?: unknown): Promise<unknown> =>
+      call({ command: "applyFixture", args: { fixture } }),
+    releaseFixture: (token?: string): Promise<unknown> =>
+      call({ command: "releaseFixture", args: { token } }),
+    // Ends the emulation the agent's `viewport` action set (the run end). No args.
+    clearActEmulation: (): Promise<unknown> => call({ command: "clearActEmulation" }),
+    // Saved logins (docs/superpowers/specs/2026-10-16-browser-saved-logins-design.md):
+    // main types the stored login into the current tab's sign-in form. Only
+    // { label?, submit? } leaves this preload; the result never holds a secret.
+    // Only these two keys are forwarded; main validates their types.
+    fillLogin: (args?: { label?: unknown; submit?: unknown }): Promise<unknown> =>
+      call({
+        command: "fillLogin",
+        args: { label: args?.label, submit: args?.submit },
+      }),
+    // Checkpoint journal. startJournal resolves to the owner token (string);
+    // the checkpoint holds secrets (cookies/storage), so it goes back to this
+    // editor tab only.
+    startJournal: (opts?: { origins?: string[] }): Promise<unknown> =>
+      call({ command: "startJournal", args: opts }),
+    stopJournal: (token?: string): Promise<unknown> =>
+      call({ command: "stopJournal", args: { token } }),
+    captureCheckpoint: (token?: string): Promise<unknown> =>
+      call({ command: "captureCheckpoint", args: { token } }),
+    // Read-only: the tab network request log since the last call ({ requests, dropped? }).
+    requests: (): Promise<unknown> => call({ command: "requests", args: {} }),
+    // Launches an external Electron app (an .app path) and drives it with the commands
+    // above until `releaseApp`. Same `open` command as a URL open, with `app` instead of `url`.
+    launchApp: (args: { app: string }): Promise<unknown> =>
+      call({ command: "open", args: { app: args.app } }),
+    // Quits the external desktop app this chat launched with `open({ app })` (no-op without one).
+    releaseApp: (): Promise<unknown> => call({ command: "releaseApp" }),
+    // macOS computer use: a running app can be controlled without a restart. Main sets the argument only when the
+    // helper binary exists (computerUseAvailable); a sandboxed preload cannot import the constant, so it is a literal.
+    nativeApps: process.argv.includes("--sideform-native-apps=1"),
+  };
+};
+
+const browser = {
+  ...makeBrowser(),
+  // A private browser: own cookies, tabs, fixture, journal. Same methods as
+  // `browser`; every call carries the session id. Created lazily by its first
+  // page command in main. Close it with `closeSession` (idempotent).
+  isolated: (sessionId: string) => makeBrowser({ session: sessionId }),
+  // The shared browser, with one desktop-app binding per chat.
+  forChat: (chatId: string) => makeBrowser({ chat: chatId }),
+  closeSession: (sessionId: string): Promise<unknown> =>
+    ipcRenderer.invoke("browser:command", { command: "closeSession", session: sessionId }),
+};
+
+// Canvas link (docs/canvas-link.md): this tab as a canvas the agent panel may drive.
+const canvasHost = {
+  register(): void {
+    ipcRenderer.send("canvas:register");
+  },
+  /** Tell main this page's canvas link is gone without a navigation (it then sends `tab-gone`). */
+  unregister(): void {
+    ipcRenderer.send("canvas:unregister");
+  },
+  post(env: unknown): void {
+    ipcRenderer.send("canvas:to-panel", env);
+  },
+  onMessage(cb: (env: unknown) => void): () => void {
+    const listener = (_e: IpcRendererEvent, env: unknown) => cb(env);
+    ipcRenderer.on("canvas:from-panel", listener);
+    return () => ipcRenderer.removeListener("canvas:from-panel", listener);
+  },
+};
+
+// Browse-run traces: editor tabs store the trace of a run they drove; trace tabs read it. Main checks the sender.
+// `open` (below) only on the doc page: a `/trace/<id>` link clicked in a document opens that trace tab.
+const traceStorage = {
+  save: (payload: { manifest: unknown; assets: { path: string; dataUrl: string }[] }): Promise<{ id: string } | { error: string }> =>
+    ipcRenderer.invoke("traces:save", payload),
+  read: (id: string): Promise<{ trace: unknown } | { error: string }> => ipcRenderer.invoke("traces:read", id),
+  list: (): Promise<TraceListResult> => ipcRenderer.invoke("traces:list"),
+};
+const traces = {
+  ...traceStorage,
+  open: (traceId: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("traces:open", traceId),
+};
+
+// Documents (markdown tabs at `/doc`): disk mirror on every tab; `open` (below) only on the trace viewer page. Main checks the sender.
+const docStorage = {
+  list: (): Promise<{ docs: unknown[]; deleted?: { id: string; rev: number }[] } | { error: string }> => ipcRenderer.invoke("docs:list"),
+  save: (doc: unknown): Promise<{ ok: true; rev: number; stale?: true } | { error: string }> => ipcRenderer.invoke("docs:save", doc),
+  remove: (id: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke("docs:delete", id),
+  // Saves the doc page as a PDF (native save dialog). Main answers only the top frame of a doc tab on the doc page.
+  exportPdf: (fileName: string): Promise<{ ok: true; path: string } | { canceled: true } | { error: string }> =>
+    ipcRenderer.invoke("docs:export-pdf", fileName),
+};
+const docs = {
+  ...docStorage,
+  open: (docId: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("doc:open", docId),
+};
+
+// Canvas storage (src/main/canvasStore.ts): every tab preload carries it, main answers only editor (canvas) tabs and the
+// agent panel (`{ error }` for the rest). `read` gives `{ canvas: null }` for a missing or incomplete canvas.
+const canvases = {
+  list: (): Promise<{ canvases: unknown[] } | { error: string }> => ipcRenderer.invoke("canvases:list"),
+  read: (id: string): Promise<{ canvas: unknown | null } | { error: string }> => ipcRenderer.invoke("canvases:read", id),
+  save: (canvas: unknown): Promise<{ ok: true; rev: number; stale?: true } | { error: string }> => ipcRenderer.invoke("canvases:save", canvas),
+  remove: (id: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke("canvases:delete", id),
+};
+
+// Workflows (the frontend's `/workflow` page): disk mirror. Main answers only this window's workflow tabs and the agent panel.
+const workflows = {
+  list: (): Promise<{ workflows: unknown[]; deleted?: { id: string; rev: number }[] } | { error: string }> => ipcRenderer.invoke("workflows:list"),
+  save: (workflow: unknown): Promise<{ ok: true; rev: number; stale?: true } | { error: string }> => ipcRenderer.invoke("workflows:save", workflow),
+  remove: (id: string): Promise<{ ok: true } | { error: string }> => ipcRenderer.invoke("workflows:delete", id),
+};
+
+// Saved logins for the doc tabs' `@` mention picker. No password ever comes back: `list` gives id, origin, username,
+// label and icon?, `add` answers with the entry id only. Always present on the tab preload (like `docs.list`): main is
+// the trust boundary. It answers only the top frame of a doc tab still on the doc page (`{ ok: false, error: "Not allowed." }`
+// for the rest), and `add` stores only after a native confirmation the user accepts.
+const logins = {
+  list: (): Promise<unknown> => ipcRenderer.invoke("logins:list"),
+  add: (payload: { site: string; username: string; password: string; label?: string }): Promise<unknown> =>
+    ipcRenderer.invoke("logins:add", payload),
+};
+
+// Built-in browser switches for the Settings page. Always present (main is the trust boundary): main answers only the
+// top frame of a Settings tab on the settings page, everything else gets `{ error: "Not allowed." }`.
+const browserSettings = {
+  get: (): Promise<unknown> => ipcRenderer.invoke("browser-settings:get"),
+  set: (patch: { adBlock?: boolean; mcpBrowser?: boolean; askAppAccess?: boolean }): Promise<unknown> => ipcRenderer.invoke("browser-settings:set", patch),
+};
+
+// App icon picker for Settings > Appearance. Always present (main is the trust boundary): same sender rule as browserSettings.
+const appIcon = {
+  get: (): Promise<unknown> => ipcRenderer.invoke("app-icon:get"),
+  set: (id: string): Promise<unknown> => ipcRenderer.invoke("app-icon:set", id),
+};
+
+// Desktop sign-in (src/main/desktopAuth.ts): `signIn` asks main to open the system browser;
+// the token comes back as `auth:token` once the user finishes there. Main checks the sender.
+let listeners = 0;
+const auth = {
+  signIn(): void {
+    ipcRenderer.send("auth:sign-in");
+  },
+  onToken(cb: (payload: { token: string; verifier: string }) => void): () => void {
+    const listener = (_e: IpcRendererEvent, payload: { token: string; verifier: string }) => cb(payload);
+    ipcRenderer.on("auth:token", listener);
+    // Tells main this view can take a token (a held one is delivered now). Re-sent per subscriber;
+    // main keeps a set, so the unsubscribe of the LAST one is what matters.
+    listeners++;
+    ipcRenderer.send("auth:listen");
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      ipcRenderer.removeListener("auth:token", listener);
+      if (--listeners === 0) ipcRenderer.send("auth:unlisten");
+    };
+  },
+};
+
+const api = {
+  setDocumentTitle(title: string | null): void {
+    ipcRenderer.send("editor:document-title", title);
+  },
+  onMenuCommand(cb: (commandId: string) => void): () => void {
+    const listener = (_e: IpcRendererEvent, commandId: string) => cb(commandId);
+    ipcRenderer.on("menu:command", listener);
+    return () => ipcRenderer.removeListener("menu:command", listener);
+  },
+  registerMcpBridge,
+  browser,
+  agentLayout: true as const,
+  canvasHost,
+  traces: typeof location !== "undefined" && location.pathname.replace(/\/+$/, "").split("/").pop() === "doc" ? traces : traceStorage,
+  auth,
+  logins,
+  browserSettings,
+  appIcon,
+  // Opens (or activates) the Settings tab; `section` is validated in main.
+  settings: {
+    open: (section?: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("settings:open", section),
+    // Main asks the open Settings page to switch section without reloading it.
+    onSection(cb: (section: string) => void): () => void {
+      const listener = (_e: IpcRendererEvent, section: unknown) => {
+        if (typeof section === "string") cb(section);
+      };
+      ipcRenderer.on("settings:section", listener);
+      return () => ipcRenderer.removeListener("settings:section", listener);
+    },
+  },
+  // Only the trace viewer page may open documents (main refuses other senders), so other tabs do not advertise `open`.
+  docs: typeof location !== "undefined" && location.pathname.includes("/trace/") ? docs : docStorage,
+  canvases,
+  workflows,
+};
+
+contextBridge.exposeInMainWorld("penDesktop", api);
+
+function startThemeObserver(): void {
+  const root = document.documentElement;
+  if (!root) return;
+  publishTheme();
+  new MutationObserver(publishTheme).observe(root, {
+    attributes: true,
+    attributeFilter: ["class"],
+  });
+}
+
+// The editor applies its UI theme by toggling `.dark` on <html>. Observing it
+// here keeps the desktop chrome in sync without coupling the web app to
+// Electron-specific APIs. Preloads may run before <html> exists, so defer the
+// observer while exposing the public bridge immediately.
+if (document.documentElement) {
+  startThemeObserver();
+} else {
+  window.addEventListener("DOMContentLoaded", startThemeObserver, { once: true });
+}

@@ -1,0 +1,256 @@
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  waitFor,
+  act,
+  within,
+} from "@testing-library/react";
+
+
+import { ChatPanelContent } from "../ChatPanel";
+import { useChatStore } from "@/store/chatStore";
+
+// A held-open SSE stream we can push deltas into on demand, so we can interleave
+// streaming across two sessions exactly the way the user does by hand.
+function makeStream() {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+  });
+  const send = (chunk: Record<string, unknown>) =>
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+  const done = () => {
+    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+    controller.close();
+  };
+  const response = new Response(stream, {
+    status: 200,
+    headers: {
+      "content-type": "text/event-stream",
+      "x-vercel-ai-ui-message-stream": "v1",
+    },
+  });
+  return { response, send, done };
+}
+
+afterEach(() => cleanup());
+
+describe("ChatPanel streaming across two sessions", () => {
+  let streams: ReturnType<typeof makeStream>[];
+
+  beforeEach(() => {
+    streams = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/chat")) {
+        const s = makeStream();
+        streams.push(s);
+        return s.response;
+      }
+      return new Response("{}", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    useChatStore.setState({
+      isExpanded: false,
+      parallelCount: 1,
+      chats: [
+        {
+          id: "tab-1",
+          title: "Chat 1",
+          model: "deepseek/deepseek-v4.1-flash",
+          parallelCount: 1,
+          titleIsAuto: true,
+          unread: false,
+          needsAnswer: false,
+          isBusy: false,
+          updatedAt: 0,
+        },
+        {
+          id: "tab-2",
+          title: "Chat 2",
+          model: "deepseek/deepseek-v4.1-flash",
+          parallelCount: 1,
+          titleIsAuto: true,
+          unread: false,
+          needsAnswer: false,
+          isBusy: false,
+          updatedAt: 0,
+        },
+      ],
+      activeChatId: "tab-1",
+      abortControllers: {},
+      launchQueue: {},
+      sessionActions: {},
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function streamText(s: ReturnType<typeof makeStream>, id: string, text: string) {
+    s.send({ type: "start" });
+    s.send({ type: "start-step" });
+    s.send({ type: "text-start", id });
+    s.send({ type: "text-delta", id, delta: text });
+  }
+
+  async function submitIn(testId: string, text: string) {
+    const container = screen.getByTestId(testId);
+    const textarea = within(container).getByPlaceholderText(
+      "Ask Sideform Agent…",
+    ) as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: text } });
+    });
+    await act(async () => {
+      fireEvent.click(within(container).getByLabelText("Send"));
+    });
+  }
+
+  it("keeps each session's stream in its own tab when switching mid-stream", async () => {
+    render(<ChatPanelContent />);
+
+    // Tab 1: send and begin streaming "AAA" (left open).
+    await submitIn("chat-session-tab-1", "first message");
+    await waitFor(() => expect(streams.length).toBe(1));
+    await act(async () => {
+      streamText(streams[0], "t1", "AAA-from-chat-1");
+    });
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("chat-session-tab-1")).queryByText(
+          /AAA-from-chat-1/,
+        ),
+      ).toBeTruthy(),
+    );
+
+    // Switch to tab 2, send and stream "BBB".
+    act(() => {
+      useChatStore.getState().openChat("tab-2");
+    });
+    await submitIn("chat-session-tab-2", "second message");
+    await waitFor(() => expect(streams.length).toBe(2));
+    await act(async () => {
+      streamText(streams[1], "t2", "BBB-from-chat-2");
+    });
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("chat-session-tab-2")).queryByText(
+          /BBB-from-chat-2/,
+        ),
+      ).toBeTruthy(),
+    );
+
+    const tab1 = screen.getByTestId("chat-session-tab-1");
+    const tab2 = screen.getByTestId("chat-session-tab-2");
+
+    // Background sessions keep streaming but do not maintain a hidden,
+    // expensive message DOM.
+    expect(within(tab1).queryByText(/AAA-from-chat-1/)).toBeNull();
+    expect(within(tab2).queryByText(/BBB-from-chat-2/)).toBeTruthy();
+    expect(within(tab2).queryByText(/AAA-from-chat-1/)).toBeNull();
+
+    // Switching back renders the response accumulated by the mounted hook.
+    act(() => {
+      useChatStore.getState().openChat("tab-1");
+    });
+    expect(within(tab1).queryByText(/AAA-from-chat-1/)).toBeTruthy();
+    expect(within(tab1).queryByText(/BBB-from-chat-2/)).toBeNull();
+    expect(within(tab2).queryByText(/BBB-from-chat-2/)).toBeNull();
+  });
+
+  it("keeps tab-1's stream when a NEW tab is created mid-stream", async () => {
+    // Start with a single chat — the new chat is created while tab-1 streams.
+    useChatStore.setState({
+      chats: [
+        {
+          id: "tab-1",
+          title: "Chat 1",
+          model: "deepseek/deepseek-v4.1-flash",
+          parallelCount: 1,
+          titleIsAuto: true,
+          unread: false,
+          needsAnswer: false,
+          isBusy: false,
+          updatedAt: 0,
+        },
+      ],
+      activeChatId: "tab-1",
+    });
+
+    render(<ChatPanelContent />);
+
+    // Tab 1: send and stream "AAA" (left open — still streaming).
+    await submitIn("chat-session-tab-1", "first message");
+    await waitFor(() => expect(streams.length).toBe(1));
+    await act(async () => {
+      streamText(streams[0], "t1", "AAA-from-chat-1");
+    });
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("chat-session-tab-1")).queryByText(/AAA-from-chat-1/),
+      ).toBeTruthy(),
+    );
+
+    // Create a new tab WHILE tab-1 is mid-stream (the "+" button / parallel).
+    let newTabId = "";
+    act(() => {
+      newTabId = useChatStore.getState().createChat();
+    });
+
+    await submitIn(`chat-session-${newTabId}`, "second message");
+    await waitFor(() => expect(streams.length).toBe(2));
+    await act(async () => {
+      streamText(streams[1], "t2", "BBB-from-chat-2");
+    });
+    // Wait for the delta to actually render, the same way the sibling test
+    // above does. `useDesignChat` sets `experimental_throttle: 50`, and since
+    // @ai-sdk/react 3.0.283 that throttle is authoritative: `useChat`'s
+    // `useSyncExternalStore` snapshot used to read `chat.messages` live, so an
+    // unthrottled re-render (the status subscription) published streamed text
+    // ahead of the throttle. It now returns a ref advanced only inside the
+    // throttled messages callback, so rendered text lags the stream by up to
+    // the throttle window and a single `act()` no longer flushes it.
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId(`chat-session-${newTabId}`)).queryByText(
+          /BBB-from-chat-2/,
+        ),
+      ).toBeTruthy(),
+    );
+
+    // Finish tab-1's stream after the new tab streamed.
+    await act(async () => {
+      streams[0].send({ type: "text-end", id: "t1" });
+      streams[0].send({ type: "finish-step" });
+      streams[0].send({ type: "finish" });
+      streams[0].done();
+    });
+
+    // Switch back to tab-1: it must still show its OWN content, not chat-2's.
+    act(() => {
+      useChatStore.getState().openChat("tab-1");
+    });
+
+    const tab1 = screen.getByTestId("chat-session-tab-1");
+    const tab2 = screen.getByTestId(`chat-session-${newTabId}`);
+
+    expect(within(tab1).queryByText(/AAA-from-chat-1/)).toBeTruthy();
+    expect(within(tab1).queryByText(/BBB-from-chat-2/)).toBeNull();
+    expect(within(tab2).queryByText(/BBB-from-chat-2/)).toBeNull();
+
+    act(() => {
+      useChatStore.getState().openChat(newTabId);
+    });
+    expect(within(tab2).queryByText(/BBB-from-chat-2/)).toBeTruthy();
+    expect(within(tab2).queryByText(/AAA-from-chat-1/)).toBeNull();
+  });
+});

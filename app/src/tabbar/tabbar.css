@@ -1,0 +1,218 @@
+/* The tab bar view is transparent: tabs sit directly on the window glass (macOS vibrancy;
+   a solid neutral window colour elsewhere, window.ts). No rim, no hairlines, no opaque fills. */
+body {
+  margin: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  color: var(--glass-text);
+  font: 12px -apple-system, BlinkMacSystemFont, sans-serif;
+  user-select: none;
+  overflow: hidden;
+}
+
+/* --- tab strip (row 1, always visible) --- */
+.tab-row {
+  height: var(--tab-row-height, 38px);
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px var(--island-gap, 8px) 5px max(var(--controls-end), var(--tab-strip-left, 0px));
+  overflow: hidden;
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+/* Tab strip start: right of the sidebar toggle and of the agent panel (--tab-strip-left, set by
+   renderer.ts from tabbar:state and, during the panel slide, tabbar:strip-left every frame). The row stays a window drag region, so the part
+   above the panel is an empty draggable title area. */
+:root { --toggle-left: 8px; --controls-end: calc(var(--toggle-left) + 28px + 6px); }
+:root[data-macos] { --toggle-left: 80px; } /* right after the traffic lights */
+/* The tab strip: rounded 28px tabs, 2px apart, vertically centred in the 38px row. The row's own left
+   padding (above) pushes them clear of the traffic lights and the sidebar toggle. */
+#tabs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; flex: 1; }
+:is(.tab, .tab-ghost) {
+  position: relative;
+  isolation: isolate;
+  display: flex; align-items: center; gap: 6px;
+  box-sizing: border-box;
+  --close-size: 20px; --close-inset: 4px; --tab-pad-end: 8px;
+  height: 28px; padding: 0 var(--tab-pad-end) 0 6px; max-width: 200px; min-width: 60px;
+  border-radius: 8px; color: var(--glass-text);
+  cursor: default; white-space: nowrap;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+:is(.tab, .tab-ghost) .title { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+/* The agent's cursor arrow, shown before the title of the browser tab it is
+   driving. Static on purpose — motion in the tab strip would pull the eye. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+.agent-cursor {
+  flex: 0 0 auto; width: 14px; height: 14px;
+  filter: drop-shadow(0 0.5px 1px rgba(0, 0, 0, 0.4));
+}
+.agent-cursor .rim { fill: var(--agent-cursor-rim); stroke: var(--agent-cursor-rim); }
+.agent-cursor .body { fill: var(--agent-cursor); stroke: var(--agent-cursor); }
+/* Greyed out when the agent's tab is in the background; softer shadow so it
+   recedes instead of looking like a stuck blue badge. */
+:is(.tab, .tab-ghost):not(.active) .agent-cursor {
+  filter: drop-shadow(0 0.5px 0.5px rgba(0, 0, 0, 0.15));
+}
+:is(.tab, .tab-ghost):not(.active) .agent-cursor .rim { fill: var(--agent-cursor-idle-rim); stroke: var(--agent-cursor-idle-rim); }
+:is(.tab, .tab-ghost):not(.active) .agent-cursor .body { fill: var(--agent-cursor-idle); stroke: var(--agent-cursor-idle); }
+.tab:not(.active):hover { background: var(--glass-tab-hover); color: var(--text-active); }
+:is(.tab, .tab-ghost).active { background: var(--glass-tab-active); color: var(--text-active); }
+/* Page-loading fill: a translucent bar that IS the tab background, under the content (z-index -1
+   inside the tab's own stacking context). renderer.ts animates its width with element.animate. */
+.tab-progress {
+  position: absolute; z-index: -1; left: 0; top: 0; bottom: 0;
+  width: 0; opacity: 0; border-radius: 8px;
+  background: var(--tab-progress); pointer-events: none;
+}
+.tab-progress.static { width: 100%; opacity: 1; } /* reduced motion: no creep, just "loading" */
+/* Drag to reorder (renderer.ts): the dragged tab rides above its siblings; the siblings shift with
+   inline transforms. Both keep the strip a window no-drag zone. */
+.tab.dragging { z-index: 2; will-change: transform; }
+.tab.dragging:not(.active) { background: var(--glass-tab-hover); color: var(--text-active); }
+#tabs.reordering .tab { will-change: transform; }
+.tab-ghost { pointer-events: none; overflow: hidden; }
+.tab.entering { overflow: hidden; }
+/* The close "x" takes no room in the row: it sits over the end of the title, which fades out
+   under it, so a tab's title uses the full width until the button shows. */
+:is(.tab, .tab-ghost) .close {
+  position: absolute; right: var(--close-inset); top: calc(50% - var(--close-size) / 2);
+  width: var(--close-size); height: var(--close-size);
+  border: 0; background: none; color: var(--icon-subtle);
+  cursor: pointer; padding: 0; border-radius: 4px; visibility: hidden;
+}
+.tab:hover .close, :is(.tab, .tab-ghost).active .close { visibility: visible; color: var(--icon); }
+.tab:hover .title, :is(.tab, .tab-ghost).active .title {
+  /* Fully transparent under the whole button (its hover fill too), then an 8px fade. */
+  --close-cover: calc(var(--close-inset) + var(--close-size) - var(--tab-pad-end));
+  mask-image: linear-gradient(to left, transparent var(--close-cover), #000 calc(var(--close-cover) + 8px));
+}
+/* Translucent so it still reads on a hovered (already grey) inactive pill. Mixed from the tab's
+   text color, not the lighter icon gray, so the fill stays as visible as the title. */
+:is(.tab, .tab-ghost) .close:hover { background: color-mix(in srgb, var(--text-active) 12%, transparent); }
+:is(.tab, .tab-ghost) .close::before, :is(.tab, .tab-ghost) .close::after {
+  content: ""; position: absolute; left: 5px; top: 9.5px;
+  width: 10px; height: 1px; border-radius: 1px; background: currentColor;
+}
+:is(.tab, .tab-ghost) .close::before { transform: rotate(45deg); }
+:is(.tab, .tab-ghost) .close::after { transform: rotate(-45deg); }
+/* "+" sits on the glass like the tabs: same 28px height and glass hover, control radius (tabs keep 8px). */
+#new-tab {
+  flex: 0 0 28px; width: 28px; height: 28px; border-radius: var(--radius-control); padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: none; color: var(--icon-subtle); cursor: pointer;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+#new-tab:hover { color: var(--icon); background: var(--glass-tab-hover); }
+#new-tab svg { width: 16px; height: 16px; }
+/* One focus ring everywhere: the frontend Button's 2px ring in --ring (the accent colour). */
+:is(.tab, .tab-ghost):focus-visible, .tab .close:focus-visible, #new-tab:focus-visible,
+.nav-btn:focus-visible, .sidebar-toggle:focus-visible, .url-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* --- address row (row 2, browser tabs only — design doc §2) --- */
+.chrome-row {
+  position: relative;
+  /* Mirrors the agent chat header row (pen-editor ChatPanel OpenChatHeader: `flex items-center gap-1
+     border-b border-border-default px-2 py-1.5`, a 28px icon button => 41px with the 1px border). The
+     height comes from layout.ts (ADDRESS_ROW_HEIGHT) through the tabbar:state snapshot. */
+  height: var(--address-row-height, 41px);
+  box-sizing: border-box;
+  /* The top of the tab island: island colour and rounded top corners
+     (--island-gap / --island-radius come from layout.ts through the tabbar:state snapshot). */
+  background: var(--island-bg);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 var(--island-gap, 8px) 0 var(--tab-strip-left, 0px);
+  padding: 0 8px;
+  border-radius: var(--island-radius, 12px) var(--island-radius, 12px) 0 0;
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+.chrome-row[hidden] { display: none; }
+.nav-btn {
+  flex: 0 0 28px; width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: none; color: var(--icon); cursor: pointer;
+  border-radius: var(--radius-control); padding: 0;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+.browser-tools-btn { margin-left: auto; }
+.nav-btn svg { width: 16px; height: 16px; }
+.nav-btn:hover:not(:disabled) { background: var(--btn-hover); }
+.nav-btn:disabled { opacity: 0.5; cursor: default; }
+/* A normal flex item, left-aligned right after the reload button like the title of every other
+   surface (the chat header). The Browser tools button follows with margin-left: auto. */
+.url-form {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+.url-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  /* Same box as the .nav-btn buttons beside it: 28px high, their radius and hover fill. */
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-active);
+  /* The chat header title size (text-sm), in regular weight. */
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  text-align: left;
+  text-overflow: ellipsis;
+  padding: 0 10px;
+}
+.url-input:hover, .url-input:focus { background: var(--btn-hover); }
+.url-input:focus { outline: none; }
+/* Finding 5: a rejected submission (couldn't be normalized into a
+   navigable http(s) URL) stays visible instead of silently doing nothing. */
+.url-input.invalid { box-shadow: inset 0 0 0 1px #d64545; }
+
+/* The tab bar view is `radius` px taller than the address row; the ::after tail paints that strip
+   in the active page's background (--tail-bg, sampled by main; --island-bg for canvas/blank tabs), so the notches under the tab view's rounded top corners are not glass.
+   The tab view itself starts exactly below the row: no page content is hidden. */
+.chrome-row::after {
+  content: ""; position: absolute; left: 0; right: 0; top: calc(100% + 1px); height: var(--island-radius, 12px); background: var(--tail-bg, var(--island-bg)); /* below the 1px border */
+}
+
+/* --- sidebar toggle and leading tab icons --- */
+.sidebar-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  position: absolute; left: var(--toggle-left); top: 5px; width: 28px; height: 28px;
+  border: 0; border-radius: var(--radius-control); padding: 0; background: none; color: var(--icon-subtle); cursor: pointer;
+  app-region: no-drag; -webkit-app-region: no-drag;
+}
+.sidebar-toggle:hover { background: var(--glass-tab-hover); color: var(--icon); }
+.sidebar-toggle[aria-pressed="true"] { color: var(--icon); }
+.tab-icon {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 18px; width: 18px; height: 18px;
+  color: var(--icon-subtle);
+}
+:is(.tab, .tab-ghost).active .tab-icon { color: var(--icon); }
+.tab-icon .glyph { width: 16px; height: 16px; }
+/* Pen-set icons keep a constant screen stroke at every size (the frontend's index.css rule; glyphs.ts). */
+[data-pen-icon] * { vector-effect: non-scaling-stroke; }
+/* Dot glyphs have no stroke for `bold` to thicken; grow the dots instead (the frontend's index.css rule). */
+[data-pen-icon^="Dots"][data-weight="bold"] circle { r: 1.35px; }
+

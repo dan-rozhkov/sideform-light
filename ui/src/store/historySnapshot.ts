@@ -1,0 +1,62 @@
+import type {
+  FlatSceneNode,
+  HistorySnapshot,
+  SelectionSnapshot,
+} from "@/types/scene";
+import type { Guide } from "./guidesStore";
+import type { PersistedMeasurement } from "./measurementsStore";
+
+export interface SnapshotSceneSlice {
+  nodesById: Record<string, FlatSceneNode>;
+  parentById: Record<string, string | null>;
+  childrenById: Record<string, string[]>;
+  rootIds: string[];
+}
+
+/**
+ * The ONE place that knows the shape of a history snapshot. Pure — reads no
+ * stores. Both sceneStore mutations (helpers/history.ts) and selection-change
+ * history (selectionStore.ts) delegate here; adding a snapshot field means
+ * editing exactly this function.
+ *
+ * guides is always carried (current page's persistent ruler guides) so guide
+ * create/move/delete round-trips through undo/redo. textStyles is carried
+ * the same way (named reusable text styles) so text-style add/update/delete
+ * round-trips through undo/redo too. fillStyles/effectStyles (shared fill/
+ * effect styles) are carried the same way so their create/update/delete/
+ * apply/detach round-trips through undo/redo too. slideOrder (persistent
+ * slide presentation order) is likewise always carried so `reorderSlide`
+ * round-trips through undo/redo. measurements (persistent pinned distance
+ * measurements) are carried the same way so measurement add/delete
+ * round-trips through undo/redo too.
+ */
+export function buildHistorySnapshot(
+  scene: SnapshotSceneSlice,
+  variables: HistorySnapshot["variables"],
+  selection: SelectionSnapshot,
+  guides: Guide[],
+  textStyles: HistorySnapshot["textStyles"],
+  fillStyles: HistorySnapshot["fillStyles"],
+  effectStyles: HistorySnapshot["effectStyles"],
+  slideOrder: string[] = [],
+  measurements: PersistedMeasurement[] = [],
+): HistorySnapshot {
+  return {
+    nodesById: { ...scene.nodesById },
+    parentById: { ...scene.parentById },
+    childrenById: { ...scene.childrenById },
+    rootIds: [...scene.rootIds],
+    variables: [...(variables ?? [])],
+    guides: [...(guides ?? [])],
+    textStyles: [...(textStyles ?? [])],
+    fillStyles: [...(fillStyles ?? [])],
+    effectStyles: [...(effectStyles ?? [])],
+    slideOrder: [...(slideOrder ?? [])],
+    measurements: [...(measurements ?? [])],
+    selection: {
+      selectedIds: [...selection.selectedIds],
+      enteredContainerId: selection.enteredContainerId,
+      lastSelectedId: selection.lastSelectedId,
+    },
+  };
+}

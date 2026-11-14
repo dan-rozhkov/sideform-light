@@ -1,0 +1,737 @@
+# CLAUDE.md — pen-editor
+
+## Commands
+
+```bash
+npm run dev       # Start Vite dev server
+npm run build     # tsc -b && vite build (type-check + production build)
+npm run lint      # ESLint on all files (0 errors expected — enforced in CI)
+npm test          # Vitest unit tests
+npm run test:e2e  # Playwright e2e smoke test (starts the dev server itself)
+npm run preview   # Preview production build
+```
+
+CI (`.github/workflows/ci.yml`) runs lint + unit tests + build and the e2e job on every push to `main` and every PR.
+
+## Testing
+
+- **Unit tests** (Vitest + happy-dom) live in `src/**/__tests__/`. Tool handlers are tested against the real Zustand stores: call `resetStores()`/`seedScene()` from `src/test/fixtures.ts` in `beforeEach`, invoke the handler, assert on store state plus the returned string. `src/test/setup.ts` stubs the canvas 2D context (happy-dom has none; sceneStore measures text with it). Test files compile under `tsconfig.test.json` — a separate project so the strict app build (`tsc -b`) never sees test code or node types.
+- **`useDesignChat`** is tested with a stubbed `fetch` that returns an AI SDK v7 UI message stream (SSE). `src/hooks/__tests__/useDesignChat.test.ts` is the reference for the chunk format (`data: {"type":"tool-input-available",...}`, `x-vercel-ai-ui-message-stream: v1` header, `data: [DONE]` terminator).
+- **Tool-name contract**: `src/lib/__tests__/toolContract.test.ts` pins the `toolHandlers` name list and, when the sibling `../pen-editor-backend` checkout exists, imports its `src/ai/tools.ts` to assert the sets stay in sync (skipped otherwise). In CI the `contract` job checks out the backend's **`main`** at run time and sets `CONTRACT_REQUIRE_BACKEND=1`, so it cannot self-skip. It asserts both directions — every `penTools` entry has a handler here, and `FRONTEND_ONLY_TOOLS` is empty (`get_screenshot` was the lone exception until it regained a backend schema) — so a tool breaks the contract until both halves land, and this job is red for *every* push here while that gap is open. **Land a new tool's backend schema on backend `main` first, then merge the handler here**, back-to-back: that way this job passes on the first try. Handler-first fails your own push and needs a re-run after the backend lands.
+- **`batch_get` search patterns are compiled through `src/lib/tools/namePattern.ts`**, which refuses patterns that nest a quantifier inside a quantified group (`(a+)+`) and anything over 200 characters. `batch_get` compiles a caller-supplied regex and tests it against every node name, synchronously: catastrophic backtracking freezes the tab for the *user*, and nothing downstream can stop it — the timeout in `executeToolCall` cannot preempt synchronous work, and this tool is deliberately off the serial queue. The check is a heuristic tuned to false-negative on purpose: it is shared with the chat agent, and wrongly rejecting an ordinary layer search (`^Button`, `Card \d+`) is a worse everyday outcome than missing an exotic hang.
+
+- **E2E** (`e2e/`, Playwright, chromium only): stubs `/api/chat` and `/api/models` with `page.route` — no backend or LLM needed — and verifies message → streamed tool call → local execution (node lands in sceneStore and LayersPanel) → auto-continuation. `window.__sceneStore` is exposed in dev mode (`src/main.tsx`) for assertions. Keep e2e out of Vitest (`exclude` in `vitest.config.ts`) and out of `tsc -b` (own `e2e/tsconfig.json`).
+- **Lint rules against flaky/sloppy tests**: `eslint.config.js` scopes `eslint-plugin-playwright`'s flat/recommended config to `e2e/**` (`no-wait-for-timeout`/`no-focused-test`/`no-skipped-test` — the last with `allowConditional: true` so `test.skip(condition, "reason")` still works — forced to `error`), and `@vitest/eslint-plugin`'s recommended config to `src/**/__tests__/**`/`src/test/**` (`no-conditional-tests`/`no-conditional-in-test`/`no-disabled-tests`/`no-focused-tests` forced to `error`). `src/test/assertions.ts` (`assertDefined`/`assertOk`/`assertErr`/`assertField`) replaces the `expect(result.ok).toBe(true); if (!result.ok) return;` guard-clause idiom with a real assertion + TS type predicate, so a discriminated-union-narrowing test body doesn't need an `if` at all.
+- **Test duplication ratchet:** `npm run check:dup:tests` (`scripts/check-test-dup.mjs`, config `test-dup.config.json`) runs jscpd over unit tests and `e2e/` and fails if duplicated lines exceed `test-dup-baseline.json` — the prod `check:dup` ignores `__tests__`, so this is the only gate on test copy-paste. The baseline only goes down (`--update` never raises it). Before writing a test, reuse `src/test/`, neighbouring `__tests__/*Fixtures.ts(x)` and `e2e/support/*`; a third near-identical case → `it.each`, a second file with the same setup → shared helper. Helpers hide mechanics; `expect` stays in the test body unless the helper is named `expect*`. The script passes its own jscpd config on purpose: jscpd 5.x applies `.jscpd.json`'s `ignore` even to explicit paths and silently scans 0 files.
+- **Flaky-test visibility**: Vitest retries once under CI (`retry` in `vitest.config.ts`); `scripts/flakyReporter.ts` (a custom reporter — Vitest's built-in reporters don't expose retry counts anywhere actionable) records every test that only passed after a retry to `flaky-tests.json`, and `npm run test:flaky-summary` (`scripts/flaky-summary.mjs`) turns that into a `$GITHUB_STEP_SUMMARY` table in CI. Playwright's `reporter` in both configs is `["list", "html", ...(CI ? ["github"] : [])]` — the HTML report (with the trace viewer per retry attempt) is uploaded as a CI artifact.
+- **Sharded unit tests in CI**: CI runs the unit suite in 2 shards (`npm run test:coverage:shard -- --shard=N/2`, jobs `unit (N/2)`) that write Vitest blob reports; the `coverage` job downloads them and merges with `npm run test:coverage:merge`. That job is the only place `coverage.thresholds` are enforced — `VITEST_COVERAGE_SHARD` (set by the shard script) disables them per shard, since a shard sees half the tests. Each shard posts its own flaky-test summary. `npm run test:coverage` remains the local single-run equivalent.
+- `get_screenshot` needs WebGL and cannot be unit-tested — e2e territory. PixiJS must never be initialized in unit tests.
+- **Screenshot capture must await pending image-fill loads.** `applyImageFill`/`applyImagePaintStack` (`src/pixi/renderers/imageFillHelpers.ts`) load remote textures fire-and-forget — the Sprite is attached only in an async `onReady`, well after `withTexture` returns, so an agent that sets an image fill and immediately calls `get_screenshot` could extract a container with no sprite yet (worse for R2 URLs, which usually fall through the CORS retry chain to `/api/image-proxy`). Both `getScreenshot.ts` and `captureNodeScreenshot.ts` go through the shared `extractPixiNodeDataUrl()` (in `captureNodeScreenshot.ts`), which calls `waitForPendingImageFills()` (`src/pixi/renderers/pendingImageLoads.ts`, a Pixi-free module-level registry, unit-tested directly) before `extract.base64`. The full order matters: `requestCanvasRender()` + a frame wait *first* (pixiSync flushes on its own rAF, and that flush is where `withTexture` registers the load — waiting before it would race an empty registry), then the wait, then a final render + frame settle so the newly-attached sprites are in the frame extract reads. Every frame wait is bounded and skipped outright when `document.hidden` — plain `requestAnimationFrame` never fires in a background tab, which is exactly where the MCP/desktop bridge drives this tool (same gotcha as `src/lib/h2dCapture/captureEmbed.ts`). The wait never rejects and always resolves by its timeout, so a genuinely broken image still degrades to today's blank-sprite screenshot instead of hanging the tool call. The Pixi container is re-resolved *after* the awaits, since a `fullRebuild` can destroy every container while we wait.
+
+## Path Alias
+
+`@/` maps to `src/` (configured in both `tsconfig.app.json` and `vite.config.ts`).
+
+```ts
+import { useSceneStore } from "@/store/sceneStore";
+```
+
+## Architecture
+
+### Rendering Backend — PixiJS
+
+The editor uses a single PixiJS renderer (Konva has been removed).
+
+- Entry: `src/pixi/PixiCanvas.tsx`
+- Node rendering: `src/pixi/renderers/` (per-node files: `frameRenderer.ts`, `textRenderer.ts`, etc.)
+- State sync: `src/pixi/pixiSync.ts` (subscribes to Zustand stores, updates PixiJS containers)
+- Viewport: `src/pixi/pixiViewport.ts`
+- Interaction: `src/pixi/interaction/` (`dragController.ts`, `drawController.ts`, `transformController.ts`, etc.)
+- Overlays: `src/pixi/SelectionOverlay.ts`, `src/pixi/OverlayRenderer.ts`
+- Canvas UI hooks: `src/components/canvas/` (`CanvasOverlays.tsx`, `useCanvasFileDrop.ts`, etc.)
+- Shaders (`@paper-design/shaders`): any node may carry a `shader?: ShaderConfig` (a curated `@/lib/shaders/registry` kind + preset + params). Shaders render **inside Pixi**: `@/lib/shaders/shaderRaster` bakes a static frame (`speed: 0`, `preserveDrawingBuffer: true`) of the `@paper-design/shaders-react` component to a `Texture` off-screen, and `src/pixi/renderers/shaderFillHelpers.ts` applies it as a masked `Sprite` on the node's container (above the background/image fill, below child nodes). Because the sprite lives in the scene graph, a shader node obeys z-order and can sit under/between other nodes. `renderers/index.ts` calls `applyShaderFill` on create and `shouldRebakeShader`-gated on update (shader-config or size change). Image-filter shaders (`category: "image"`) rasterize the node's own render via `@/lib/shaders/nodeRaster` as the shader input. Shaders are static (no in-canvas animation). A shader is added/removed via the Shader section (`ShaderSection`) in the properties panel. The pure display-list logic (`placeShaderSprite`/`shouldRebakeShader`/`destroyShaderFill`) is unit-tested; the WebGL bake (`shaderRaster`, `nodeRaster`) is not (like `get_screenshot`). The registry, prop-builder, and `ShaderSection` are unit-tested directly.
+
+### Rendering performance (large documents)
+
+The sync/culling layer is built to keep per-frame work O(changed), not O(document). Spec with measured results: `docs/superpowers/specs/2026-07-17-pixi-rendering-performance-design.md`.
+
+- **Dirty-set diffing.** Scene mutators call `markNodesDirty(ids)` (`src/store/sceneStore/dirtyTracking.ts`) so `pixiSync`'s flush diffs only touched ids (`src/pixi/syncDiff.ts`). Any store mutation *not* preceded by `markNodesDirty` poisons the batch to a full scan — safe but slow, and this is deliberate: structural ops (`deleteNode`, group/ungroup, boolean, undo/redo) rely on that fallback. **Convention: call `markNodesDirty` *inside* the `set()` updater, after all no-op guards, right before returning changed state** — zustand skips subscriber notification on a same-reference return, and marking before the guard leaks the armed flag into the next unrelated mutation (see `basicMutations.ts` comments). Dev builds cross-check dirty vs full diffs and `console.warn` on mismatch (disable: `localStorage pen.diffCheck=off`).
+- **Spatial-index culling + hit-test pruning.** `src/pixi/cullingIndex.ts` (uniform grid over absolute rects, `src/pixi/spatialGrid.ts`) replaces full-tree walks; `updateCulling` applies visible-set *diffs*. The index stores **store coordinates** — live layout sizes diverge for auto-layout `fit_content` frames, which is why hit-testing (`hitTesting.ts`) never prunes `line`/`connector`/fit_content-frame roots and the raster cache excludes fit_content frames. Extending that stored-vs-live divergence to a new node type/sizing mode means extending those exclusion lists.
+- **Raster cache** (Figma-tiles analogue): `src/pixi/rasterCacheManager.ts` + pure decision logic in `rasterCache.ts`. Quiet (≥500ms), cold, size-bounded top-level frames get `cacheAsTexture` at a resolution bucket derived from `zoom × devicePixelRatio`. On by default; kill switch `localStorage pen.rasterCache=off` + reload. Eviction is synchronous-before-mutation (`onFlushStart` in the flush; that ordering is the fix for the historical stale-texture bug that once got `cacheAsTexture` disabled). **Invariant: any code that mutates Pixi containers *outside* a store flush must call BOTH `requestCanvasRender()` and `rasterCacheManager.onDirectContainerMutation(ids, state)`** — theme recoloring and the auto-layout drag animator are the two existing cases, and renderers that attach content asynchronously (an image-fill texture finishing its load in `imageFillHelpers.ts`'s `withCachedTexture`) do it via `notifyAsyncContainerMutation(container)` (`src/pixi/renderers/asyncContainerMutation.ts`, handler installed by `pixiSync`); a new animator that skips the second call reintroduces frozen-texture bugs. Frames with culled descendants or in overview zoom are never cached (culled/hidden state must not get baked into textures).
+- **Perf harness.** Dev-only `?perf=N` URL param seeds a synthetic N-node document (`src/dev/perfScene.ts`); `window.__perfStats.summary()` reports flush/culling frame times. `e2e/pixi-large-document-performance.spec.ts` enforces hard frame-time budgets in CI — if a change reintroduces O(N) work on a hot path, that spec fails.
+
+### State Management — Zustand
+
+All global state lives in `src/store/`. Key stores:
+
+| Store | Purpose |
+|---|---|
+| `sceneStore` | Scene graph (nodes, tree structure) |
+| `layoutStore` | Computed layout rectangles |
+| `selectionStore` | Selected node IDs |
+| `viewportStore` | Pan/zoom state |
+| `historyStore` | Undo/redo |
+| `dragStore` | Active drag operations |
+| `variableStore` | Design variables/themes |
+| `drawModeStore` | Shape drawing mode |
+| `hoverStore` | Hovered node state |
+| `chatStore` | AI chat state |
+| `clipboardStore` | Copy/paste clipboard |
+| `measureStore` | Measurement overlay |
+| `pixelGridStore` | Pixel grid display |
+| `smartGuideStore` | Snapping/smart guides |
+| `themeStore` | Active theme |
+| `uiThemeStore` | Editor UI theme |
+| `canvasRefStore` | PixiJS canvas ref |
+
+### Scene Graph & Layout
+
+Nodes are stored as a flat map (`nodesById`) with parent-child references (`parentById`, `childrenById`, `rootIds`). The layout engine computes absolute positions/sizes from the tree. Node types: frames, text, rectangles, ellipses, paths, groups, lines, polygons, embeds, connectors.
+
+`sceneStore` is split into modules:
+- `src/store/sceneStore/index.ts` — main store
+- `src/store/sceneStore/complexOperations.ts` — multi-step mutations
+- `src/store/sceneStore/helpers/` — history, textSync, flatStoreHelpers, treeCache
+
+### HTML → Design Conversion
+
+Pasting/converting external HTML (e.g. `convertEmbedToDesign`) renders the markup in a hidden iframe and captures its computed layout via `src/lib/h2dCapture/captureEmbed.ts` (wrapping the vendored `src/vendor/h2dCapture/` bundle), then converts the capture into scene nodes with `src/lib/h2dPaste/h2dToScene.ts`. `src/lib/htmlToDesign/` remains in use as the shared CSS-parsing library (colors, gradients, shadows, text properties) consumed by the h2d pipeline, and it still contains the legacy DOM-walk importer (`convertHtmlToDesignNodes`), which is unused by the store but kept for reference/tests.
+
+### Embed entry: the MCP Apps canvas widget
+
+A second Vite entry (`embed.html` → `src/embed/main.tsx`, same build) is the editor packaged as an **MCP Apps widget**: the backend's `open_canvas` tool returns a `ui://` resource whose HTML shell loads `${APP_ORIGIN}/embed/loader.js` inside a host's sandboxed iframe (different origin, no router, no `/app`). Embed mode = canvas + the real `LeftRail` (every section except Agents, via `hiddenSections`) + `LeftSidebarBase` (the app's `LeftSidebar` is a thin wrapper injecting the Toolbar and the Agents chat pane, so the embed never imports them) + properties (open by default) + a slim top bar (`src/embed/EmbedApp.tsx`); the host's `hostContext.theme` (else prefers-color-scheme) drives the whole UI through `setUIThemeTransient` (`uiThemeStore`: applies the `.dark` class without saving the user's stored preference); it must never import the router, chat, showcase, auth, analytics, WebMCP, desktop bridge or the token/cookie bridge (`src/embed/__tests__/boot.test.tsx` fails if the router/chat/WebMCP get into its graph).
+
+- **`vite/embedLoader.ts`** emits the one NON-hashed file, `dist/embed/loader.js`: it injects the hashed entry CSS and `import()`s the hashed entry JS using URLs derived from the loader's own `import.meta.url` (never `location`), and publishes that base as `globalThis.__SIDEFORM_ASSET_BASE__`. `renderBuiltUrl` in `vite.config.ts` makes lazy-chunk/CSS preload URLs honour that global (unset everywhere else, so `/` and `/app` resolve exactly as before). The widget is loaded cross-origin, so `/assets/*` and `/embed/*` must be served with `Access-Control-Allow-Origin` — configured in the Render static-site headers (a `public/_headers` file does nothing there); the injected stylesheet links carry `crossorigin=anonymous`.
+- **`src/embed/hostBridge.ts`** is the only code that talks to the host (ext-apps `App`, postMessage transport on `window.parent`): reads the `{ticket, wsUrl}` from the `open_canvas` tool result (`_meta["sideform/bridge"]`), starts `McpBridge.forTicket(...)`; a ticket is single-use, so on a dropped socket it calls the app-only `sideform_bridge_ticket` tool via `callServerTool` (`_meta` first, structuredContent fallback) and reconnects with backoff. Expand → `requestDisplayMode("fullscreen")`; "Open in Sideform" → the anonymous share API, then host `openLink` (link built from the bundle's own origin, not the sandbox's).
+- **`McpBridge` ticket mode** (`McpBridge.forTicket`): connects to `${wsUrl}?ticket=…`, same hello/ack/go protocol, but never reconnects itself — it reports `onOpen`/`onClose` and the owner mints a new ticket.
+- The scene autosaves to `localStorage` key `sideform.embed.doc` (try/catch everywhere; sandboxes may deny storage). The embed API base comes from the same `VITE_*` env as the app — a same-origin (empty) base cannot work from a sandbox, so sharing is disabled there.
+
+### Chatless mode (`/app?chat=off`)
+
+The full editor minus the agent chat — not the embed entry. The desktop app puts the chat in its own always-visible left panel and loads the canvas as a tab of `/app?chat=off`. The one predicate is `isChatDisabled()` (`src/lib/chatMode.ts`): `chat=off|0|false`, or `window.penDesktop?.agentLayout === true` (the desktop editor-tab preload exposes it when the agent layout flag is on, so a reload that dropped `?chat=off` stays chatless). It is sticky only once seen ON — while false the URL is re-read on every call, so a store imported early on `/` cannot freeze the mode before a client-side navigate to `/app?chat=off`; once ON it survives `navigate("/app")` (query dropped, mode kept) until a full reload without the flag. It hides the Agents rail section (`leftSidebarStore` also refuses to land on `"agents"`, so the pane, `ChatPanelContent` and `useDesignChat` never mount), hides every canvas entry point that starts a chat **unless a canvas host is running** (see below): the on-canvas agent buttons through ONE gate — `AgentComposerButton` returns null when `!canLaunchAgent()` (`FrameAgentButton`, `EmbedAgentButton`, `EmbedElementAgentButton` all render through it; do not add call-site gates) — plus the `EmbedPromptHost` input (an empty embed keeps its dashed placeholder, `composer={canLaunchAgent}`) and comment "Send to agent"; the OpenCode palette command (the chat model picker's BYOK flow) stays hidden. **The one entry-point predicate is `canLaunchAgent()` (`src/lib/canvasLink/agentLaunch.ts`) = chat enabled (`!isChatDisabled()`) OR the canvas host is running** (chatless + desktop link); React components use `useCanLaunchAgent()` because the host registers after the first render. Plain chatless mode without a host (`/app?chat=off` in a browser) keeps the entry points hidden and the launch helpers return false. **`loadModels()` is NOT skipped**: the same response carries image-ops capabilities (`canRemoveBackground`, `canVectorize`) and vision metadata used by non-chat tooling; `reconcileModels` only touches chat-store ids. **The showcase agent prompt** (`pen:showcase-agent-prompt:v1`) is NOT consumed in plain chatless mode; with a running canvas host `launchShowcaseAgentChat` forwards it once as a `launch` and removes it (`App.tsx` retries on `subscribeCanvasHost`, so a host that registers later still gets it). WebMCP, the MCP bridges, plugins and the tool handlers stay on so an external driver can still operate the canvas. **Any new agent entry point (button, palette command, context-menu item, deep link, chat-only startup fetch) must be gated on `canLaunchAgent()` (or `isChatDisabled()` for chat-only work with no panel equivalent); never parse the URL ad hoc.**
+
+### Canvas link — canvas side
+
+In the desktop agent layout a chatless tab (`isChatDisabled()`) with `window.penDesktop?.canvasHost` registers as a canvas host: `App.tsx` has one effect calling `maybeStartCanvasHost()` (`src/lib/canvasLink/canvasHost.ts`; gate = chatless AND bridge AND NOT the shared viewer; edit/view/present toggles do NOT restart the host, which refuses mutating calls/frames/place-node itself via `canMutateScene()` from `lib/webmcp/registerTools.ts`, the one editability rule; stop (unmount / viewer) calls `bridge.unregister()`, clears the adapters' `"canvas-link"` session and abandons open streams; no read tools are ever published on a shared canvas because the host does not start there). It serves the agent panel per `docs/canvas-link.md`: `stream` frames go through an `AppendDecoder` per `toolCallId` into `getStreamingToolAdapter(tool).onFrame` (session `"canvas-link"`), a seq gap answers `resync`, `stream-end` "abandoned" runs `onAbandon` (also after "complete": the tool name is kept until the matching `call`), `call` runs `executeToolCall(..., "canvas-link")` with `callId === toolCallId` (the invariant that hands the streamed state to the handler: one undo entry, nodes once; the stream entry is kept until the handler really starts, signalled by `ctx.onStart`, which also posts `started` to the panel; a call that ends without running rolls its stream back via `onAbandon`) and `{timeoutMs}` as `executeToolCall`'s per-call budget override (5th arg; the ONE timeout, started inside the queue; a call whose signal aborted before its queued task starts never runs), `cancel` aborts the signal, a main-made `panel-gone` aborts every call silently and abandons every stream, a still-running duplicate `callId` is ignored, mutating calls (any tool outside `UNSERIALIZED_TOOL_NAMES`) and frames are refused when the canvas is not editable, `place-node` runs `placeNodeOnCanvas`, `context-request` answers `JSON.stringify(buildSceneContext({model}))` (the SCENE part only; the panel appends chat-side `likedReferences` as the last key), and the host publishes the composer's selection chips as `selection` (coalesced, deduped, once after register and on `selection-request`; see the panel side). **Agent entry points:** `deliverAgentLaunch(payload)` (`canvasLink/agentLaunch.ts`) posts `{kind:"launch", launchId, payload:{text, images?}}` through the running host (false without one). `launchNodeAgentChat` (and its wrappers `launchFrame/Embed/EmbedElementAgentChat`), `sendCommentToAgent` and `launchShowcaseAgentChat` call it instead of launching locally when `isChatDisabled()`; every local helper makes a NEW chat, and so does the panel. No entry point selects a node or sends node ids; the tab's own selection reaches the panel through its `canvasContext`. `place-node` needs a string `type`, generates a missing `id`, errors on an existing one. `buildSceneContext` (`canvasLink/sceneContext.ts`) is the scene part of `canvasContext`, shared with `buildCanvasContext` in `useDesignChat.ts`, which only adds chat-side `likedReferences`; keep key order stable (prompt cache). The message's `timeoutMs` replaces the tool's default budget; a handler that ignores its abort signal still holds the tool queue until `executeToolCall`'s own timeout.
+
+### The `/agent` route (chat without a canvas)
+
+`/agent` (`src/routes/AgentPage.tsx`, lazy in `AppRouter.tsx`) is the Agents chat on its own: `ChatPanelContent` (chat list + open chat) at full viewport height, in `EditorProviders` (TooltipProvider + Toaster, shared with `App`), meant for a narrow fixed panel in the desktop shell (300-600 px). It must NOT import `App.tsx` or mount `PixiCanvas` / a pixi.js `Application` (no `<canvas>`): the chat's tool registry legitimately reaches some `src/pixi/` modules (e.g. `autoParentPlacement`), so the invariant is "no canvas is mounted", not "no pixi import"; `AgentPage.test.tsx` mocks `PixiCanvas` and `pixi.js`'s `Application` to throw. It is **gated**: it renders only where `isAgentPanelHost()` (`src/lib/agentPanel.ts`) is true (`window.penAgentPanel`, exposed by the desktop agent-panel preload, or a dev build) and otherwise redirects to `/app`, because tool calls would hit an empty in-memory scene and the work would vanish. `startBridges()` (desktop menu/MCP bridges, WS bridge) returns early on this route so a canvas-less page never registers as an editor/MCP target. Chat visibility is passed as `<ChatPanelContent isVisible>`; it never writes the global `leftSidebarStore` (that would leak into `/app` on SPA navigation). Model bootstrap is the shared `useChatBootstrap()` hook (also used by `App`), and `ChatPanelContent` hides the "Expand panel" header button (`hideExpandToggle`).
+
+**Chat disk persistence (desktop panel only).** `startDesktopChatPersistence()` (`src/lib/chats/desktopChatPersistence.ts`, one effect in `AgentPage`; no-op unless `window.penAgentPanel.chats` has `list/read/save/remove`) keeps the panel's chats in the shell's `<userData>/chats/` (spec: `pen-editor-desktop/docs/superpowers/specs/2026-10-25-agent-chat-storage-design.md`). EAGER: at startup it reads every chat (10 s timeout per call), sanitizes it (`sanitizeStoredMessages.ts`: unfinished tool parts -> `output-error`, streaming text/reasoning -> done, empty assistant messages dropped) and parks the messages for `useOwnedChat`'s `new Chat({messages: takeInitialMessages(id)})` BEFORE the summary enters `chatStore`; an unreadable chat is skipped and its file left alone. The entry lives until the chat is deleted, so a remounted session gets its history again. The module subscribes to each `Chat` itself (a turn that settles after unmount still saves); saves are debounced 300 ms after `ready`/`error` and carry the summary's `updatedAt`; a title/model change saves too. Empty messages go through the same debounce: only a handle that had messages and is settled empty removes the file (Clear), never a fresh empty `Chat`. Deleting a chat removes it. `window.penChatsFlush` (the shell awaits it on quit/close) saves pending work regardless of status. `ChatPanel`'s unread effect skips its first run, so a restored history is not a "New reply". Not stored: activity notes, liked references, context tokens, drafts, attachments in the composer.
+
+#### Canvas link — panel side
+
+In the desktop panel (`window.penAgentPanel.version >= 2` with `canvas`) the chat has no scene, so canvas tools run in a canvas tab (`/app?chat=off`) over the link in `docs/canvas-link.md`. `src/lib/canvasLink/panelClient.ts` is the React-free client (bridge and clock injected; tested against `__tests__/fakeCanvasBridge.ts`); `panelRuntime.ts` holds the singleton and the seams `useDesignChat` calls, all inert outside the panel (`isPanelCanvasLinkActive()` = `isAgentPanelHost()` plus a canvas bridge, so a dev `/agent` without the preload keeps the old local behaviour). Tool placement is `canvasTools.ts` (`runsInCanvasTab`): `ask_user`, `analyze_image`, `open_canvas_tab`, the static guideline tools and every `browse_*`/`qa_*` stay in the panel, everything else goes to the tab.
+
+- **Seams in `useDesignChat`** (keep them few): `onToolCall` -> `panelCallTool` (per-tool `getToolCallTimeoutMs` as `timeoutMs`; the taste check / `addToolOutput` flow is unchanged); the streaming effect -> `panelForwardFrame` (instead of the local adapter); both abandon paths -> `panelEndStream(..., "abandoned")` (completion is `callTool` closing the stream); the transport `body` -> `withPanelCanvasContext` (async; `DefaultChatTransport` awaits `body`).
+- **Binding** is per chat (`sessionId`) and has ONE path, `PanelClient.establish` (implicit `bind`, `bindExplicit` for `open_canvas_tab`, `bindTo` for `launch`): binds of one chat run one after another (`binding$` is the queue), so concurrent binds never overwrite each other half-way, but only the implicit one (a canvas tool frame) reuses a binding another bind just made; an explicit bind honors its own target (`open_canvas_tab` "new" ALWAYS opens a fresh tab, `bindTo` returns null unless the result is exactly the asked tab); abort and latch are checked BEFORE `activateTab`/`openTab`, and once `openTab()` resolved the tab is bound and the call succeeds even if aborted. After a switch the new tab's context is prefetched (`primeContext`, 2 s, with the chat's own model via `resolveSessionModel`) and, if that fails, `{}` is held (see `canvasContext`). Implicit rule: one tab -> it, several -> first in the list, none -> `openTab()`, bound with the `{tabId, registrationId}` it resolves with (never a registration looked up in the tab list, which may lag). The FIRST streamed frame of a canvas tool call binds/opens, frames arriving while `openTab()` is pending are buffered and flushed in order. `tab-gone` is a latch per `tabId`+`registrationId`: pending calls fail at once with `{"error":"The canvas tab was closed."}`, its streams end, nothing is sent to it again (a late frame never reopens a stream), the binding AND the chat's remembered `canvasContext` are cleared (a main `error` for a call/context request whose tab is no longer listed latches it too, so the next call rebinds); a reloaded tab (new `registrationId`) is usable. A `resync` makes the encoder send a "full" frame.
+- **`launch`** (tab -> panel, `PanelClient` `onLaunch` -> `handleLaunch` in `panelRuntime.ts`): creates a NEW chat (inactive until the bind worked, so a refused launch keeps the user's active chat), BINDS it to the sending tab with `PanelClient.bindTo(sessionId, tabId)` (registration looked up in the refreshed tab list; replaces any binding), ACKS, primes the tab's context (`primeSession`, up to 2 s) and only then queues `{text, images}` through the normal `queueLaunchPayload` -> `consumeLaunchPayload` path, so the first request already carries that tab's `canvasContext` (selection). Each `launchId` is handled once and ALWAYS answered with a `launch-ack` (`error` = refused): a tab that is unlisted/latched (`probeTab`) is refused before any chat is created. `panelRuntime` also calls `forgetSession` for every chat that leaves `chatStore`, so the client's per-chat maps do not leak. The `PanelClient` is created when `/agent` mounts (`startPanelRuntime()` in `AgentPage`), not on the first chat request, so a launch before any chat activity is received. The canvas side (`agentLaunch.ts`): the ONE dispatcher is `launchAgentChat` (local chat OR `deliverAgentLaunch`; neither selects a node), `deliverAgentLaunch` waits 8 s for the ack (`LAUNCH_ACK_TIMEOUT_MS`; toast "The agent panel did not respond." and `false` otherwise; a launch that could not be posted at all, host stopped or `bridge.post` threw, fails at once with "Could not reach the agent panel."), the showcase prompt stays in sessionStorage until the ack and `launchShowcaseAgentChat` retries an unacked launch 3 times, 5 s apart, while the host runs, and `isCanvasHostRunning()` is true only after `register()` succeeded.
+- **`canvasContext`**: requested from the bound tab (2 s timeout) with this chat's `likedReferences` appended as the LAST key of the JSON (parse + add + stringify, deterministic). An unbound chat binds PASSIVELY to the first registered tab for it (never `openTab()`), so a new chat with an existing tab sends that tab's context on its first message. **When a request for it fails** (timeout, error, empty) the client sends the LAST good context that chat received, so the prompt does not flap. **After a bind to a new tab (`open_canvas_tab`, `launch`) the chat's context is primed once from that tab (the old tab's context is never kept: its ids are stale); if the prime fails, the held value is `{}` and the field is still sent (`{}` plus `likedReferences`), so the pointer block does not flip.** **A chat with no scene context (no canvas tab at all, a gone tab with nothing newer) sends NO `canvasContext` field**, or just `{"likedReferences":[...]}` (read from `useChatStore` via `canvasLink/likedReferences.ts`, same source as `buildCanvasContext`) when it has liked references: the backend then renders no `<canvas_context>` message and no pointer block in the system prompt (`canvasContextDelivered` in `chatTurn.ts`), which is saner than presenting the panel's empty scene as the design. Cost: one system-prompt change when the first context starts to arrive.
+- **Selection chips**: the composer chips (`useSelectionContext` / `useEmbedElementContext`, display only, no actions) read `usePanelSelection(sessionId)` in the panel: `PanelClient` keeps the tab's latest `selection` snapshot per `tabId` (cleared on `tab-gone`), `selectionFor(sessionId)` = the bound tab, else the first listed tab, and it asks tabs it has no snapshot for with `selection-request` only while a chip consumer is subscribed. `/app` keeps reading its own stores (the hooks only switch when `isPanelCanvasLinkActive()`).
+- **Browser tools** run in the panel on `window.penAgentPanel.browser` (same shape as `penDesktop.browser`): `desktopBrowserBridge()` in `tools/browser/bridge.ts` is the one place that picks it, so `isDesktopBrowserAvailable()`, `CLIENT_CAPABILITIES` (`desktopBrowser`, `browseIsolation`, `browseAssert`) and isolated QA sessions follow. Their one scene write, `placeNodeOnCanvas`, is redirected (`setPlaceNodeRedirect`, installed by `panelRuntime`) to a `place-node` request: the node goes without position, `options` = `{x?, y?, size}` (`x`/`y` only as a pair); an error answer throws, an aborted call returns `undefined`. The browse handlers pass `context.sessionId` and the tool's `signal` to `placeNodeOnCanvas`, so a background chat's capture lands in ITS bound tab (a caller without a session falls back to the active chat). A placement the tab answered is returned even if the signal aborted meanwhile (the node exists). `browse_screenshot` reports a failed placement as `placeError` next to its capture; `browse_capture` reports it as its error.
+- **Timeouts and analytics**: a call's `timeoutMs + 2 s` budget starts when the tab posts `started` (its queued task began the handler), so queueing behind another call is not charged; before `started` only a 10 min safety net (`PRE_START_TIMEOUT_MS`) applies. A timeout posts `cancel`, like an abort. `agent_tool_executed` for a call that reached the tab comes ONLY from the tab's `executeToolCall` (source `canvas-link`); the panel reports (`panelRuntime.trackCanvasCallFailed`, source `canvas-link`, `error_kind` `canvas_link_{tab_gone,main_error,timeout,bind_failed}`) only failures that never got the tab's answer. `executeToolCall`'s per-call budget rides on the execution context (`ctx.timeoutMs`); the single executor's `timeoutMs(toolName, input, ctx)` prefers it over `getToolCallTimeoutMs`.
+- **Jev taste check runs in the tab.** The touched-embed registry (`tasteCheckRegistry`) is filled by the `batch_design`/`edit_embed_html` handler in the canvas tab's process, so `useDesignChat` sends `brief` (the last user message text) with those two calls (not after a Stop) and `canvasHost`'s `call` case runs `runTasteCheckForToolCall` after `executeToolCall` (fail-open, call's abort signal), returning the merged result; the panel's own `hasTouchedEmbeds` branch stays false for link calls. A call with a `brief` waits `TASTE_CHECK_MARGIN_MS` (9 s) longer in the panel.
+- **A tab that closes while a tool's INPUT still streams**: `latchRegistration` reports each live stream it drops (`onStreamLost` -> `subscribePanelStreamLost(sessionId, cb)` in `panelRuntime`); `useDesignChat` then records the call key as abandoned (never re-dispatched), sets `turnStoppedRef` (blocks auto-continuation), calls `chat.stop()` and shows `toast.error("The canvas tab was closed.")`. It writes NO tool output (the part stays as the SDK left it: a truncated `input-streaming` part is dropped by `convertToModelMessages` like after a user Stop, and an output would make a truncated or undefined input a permanent completed call) and does NOT call `clearStreamingToolSession` (it would abort unrelated live QA runs and taste checks). The client also remembers the lost `toolCallId`: a later `callTool` for it answers `TAB_CLOSED_ERROR` instead of binding another tab.
+
+### Markdown documents (`/doc`)
+
+A second panel-side surface next to the canvas: markdown documents the agent writes and the user edits in a desktop `/doc?id=<docId>&chat=off` tab. `src/lib/docs/docStore.ts` is a localStorage store (`pen.docs.index` + `pen.docs.doc.<id>`; every access try/catch-wrapped) that publishes changes over a `BroadcastChannel` (`pen.docs`) so the panel (`/agent`) and the doc tab (same origin, same storage partition) stay in sync with no IPC. Sync is ordered by `Doc.rev` alone (monotonic, create = 1, +1 per successful write, a body without `rev` reads as 0); `updatedAt` is display/sorting only. A write stores the body, then the index; if the index write fails the previous body is restored (or the new key removed) and `DOC_STORAGE_ERROR` is thrown, and listeners are notified only after both succeeded, each in its own try/catch (a throwing listener never fails a write). A `DocChange` carries the written `doc` (absent for deletes) because a message can arrive before the receiving renderer's localStorage cache has the write. A `storage` event listener is the backup signal: it emits a change with NO `source` (`source` is optional and informational). `updateDoc(id, patch, source, { expectedRev? })` returns the doc, `"conflict"` (stored rev differs, nothing written) or `null`; `readDoc(id)` tells `ok` / `missing` / `unreadable` (`getDoc` is the null-on-both wrapper). Agent tools write without `expectedRev`. Writes that hit a full/blocked localStorage (body or index) throw `DOC_STORAGE_ERROR`; `repairDocIndex(id)` re-adds the index entry of an orphaned body. The agent's `doc_list/doc_create/doc_read/doc_edit/doc_open` (`src/lib/tools/docTools.ts`, pure edit logic in `docs/applyDocEdits.ts`) are **panel-local**: `"doc_"` is in `PANEL_LOCAL_PREFIXES` (`canvasTools.ts`), they are unserialized, and they never go to a canvas tab. Opening a tab goes through `window.penAgentPanel.docs.open(docId)` (`getAgentPanelDocsBridge()` in `agentPanel.ts`); `clientCapabilities.docTabs` (`chatTransport.ts`) is true only when that bridge exists, and the backend offers `doc_*` only then. A missing or failing bridge never loses the document: `doc_create` returns `openError` next to the id.
+
+**Disk mirror (desktop shell only).** The shared mechanics (startup reconcile, tombstones, ready promise, sink wiring) live in `src/lib/desktopMirrorCore.ts` (`createMirror`) + `src/lib/localStoreKit.ts`; `src/lib/docs/desktopDocMirror.ts` (`startDesktopDocMirror()`, called once from `main.tsx` only on `/agent`, `/doc` and `/trace/<id>` via `isAgentRoutePath`/`isDocRoutePath`/`isTraceRoutePath`, never on `/` or `/app`; no-op without a bridge) mirrors every successful local write to `<userData>/documents/<id>.json` through `penAgentPanel.docs` (panel first) or `penDesktop.docs` `list/save/remove` (feature-detected) via the `setDocPersistence` sink in `docStore.ts` (called only for writes made by this page, never for broadcasts or `importDoc`). At startup it reconciles by `rev`: FIRST every local body with `rev` 0 (a legacy body without `rev`) is raised to rev 1 in localStorage (`upgradeLegacyRev`: keeps title/markdown/updatedAt, no sink call, notifies like `importDoc` so open editors adopt the rev), so local and disk agree and the next edit saves rev 2 (the shell rejects rev 0; the sink and the upload skip any body with rev < 1 with a warning, they never fake the rev); then newer disk docs come in through `importDoc` (keeps `rev`/`updatedAt`, notifies with no `source`), and local-only or locally newer docs are saved to disk. `whenDesktopDocsReady()`/`isDesktopDocsReady()` say when that reconcile is over (immediately where the mirror was not started). Everything that reads or writes documents waits for it: `useDocSync` keeps its loading state (`id` null, no URL rewrite) for ANY `?id=` and for the no-id initial pick until ready, and the agent's `doc_*` handlers `await whenDesktopDocsReady()` first, so right after panel load they see disk-only docs. **Delete tombstones:** only where a persistence sink is installed (web pages never accumulate them), `deleteDoc` records `{ [id]: { rev, at } }` (`at` = Date.now()) under localStorage `pen.docs.deleted` (the old numeric format is ignored); `importDoc` refuses a copy with `rev <=` the tombstone rev (a stale listing or a failed `remove` cannot resurrect it) and a higher rev wins and clears it. A tombstone is NEVER cleared because a listing no longer shows the doc (a late save may re-create the file): the reconcile keeps retrying `remove(id)` for tombstoned ids present on disk, and prunes entries older than 30 days (`pruneTombstones`). `dropStaleIndexEntry` never calls the sink (the disk copy may be the only one left). localStorage stays the synchronous working copy.
+
+**Canvas disk persistence (desktop shell only).** `startDesktopCanvasPersistence()` (`src/lib/canvases/desktopCanvasPersistence.ts`, one effect in `App.tsx` declared after the `?view` effect and BEFORE the canvas-host effect) saves the editor canvas through `window.penDesktop.canvases` (`read`/`save`, typed in `desktopBridge.ts`; `<userData>/canvases/`, spec `pen-editor-desktop/docs/superpowers/specs/2026-10-24-empty-start-recent-items-design.md`). No-op on the web, on an older shell, outside edit mode and in the shared viewer (the App effect depends on `[isSharedView, mode === "edit"]`, so it also starts when the editor enters edit mode later; the module does not parse `?view` itself). **Id:** `ensureCanvasIdInUrl()` takes `?canvas=<id>`, else the id kept in `sessionStorage` `pen.canvasId` (per tab; survives a router `navigate('/app')` that drops the query, try/catch around storage), else a new `cv_<random>`; it writes the id to both, adding the param with a raw `history.replaceState` (keeps other params, hash and `history.state`; the router is not told). **State is module-level** (one `Session` per id: phase loading/ready/disabled, `rev`, `stored`, fingerprint of the last document): a remount with the same id (navigate, StrictMode) shares the one read and never re-reads or re-applies over newer in-memory edits — **unless the stores were replaced while App was unmounted** (shared viewer -> "Open editor"/"Make a copy"; detected by comparing the store slice references saved at teardown), in which case the remount FORKS to a new id; `resetDesktopCanvasPersistenceForTests()` clears it. **Load, then autosave:** `read(id)` first; a stored canvas goes through `deserializeDocument` + `applyOpenedDocument(..., {syncUITheme: false})` (a silent restore must not write/sync the `ui-theme` chrome theme; File > Open keeps the default); the baseline fingerprint is taken only after a post-apply settle (macrotask + frame, capped 100 ms) so layout/migration passes do not count as edits, and `phase` stays loading until then; **fork rule:** if the live scene already has nodes when the read resolves (agent's first batch_design after the host's 5 s cap, a paste, the viewer path) and a canvas was stored, neither side overwrites the other: the stored canvas stays intact and listed, this tab gets a NEW id (`assignNewCanvasId()`: URL param + sessionStorage), `stored=false`, rev 0, and autosaves the live scene under it (console warning); a read error or a document that fails to apply means NO autosave for that id (never overwrite what could not be read). **Canvas host:** `maybeStartCanvasHost()` defers `bridge.register()` while `isCanvasLoadPending()` (`whenCanvasLoadReady()`, capped at 5 s, resolves at once when persistence is inactive), so the agent's first `batch_design` cannot be replaced by the loaded scene. **Autosave** subscribes only to document slices (scene nodes/children/roots/background/slide order, page content, variables, styles, theme, guides, measurements, comments, file name; UI-only state such as `expandedFrameIds`, viewport or history never triggers it), debounces 1000 ms with a 5 s max-wait since the first unsaved change, keeps one save in flight (a change meanwhile schedules another), flushes on `pagehide` (best-effort fallback) AND on teardown when `dirty || timer pending`; while active it defines **`window.penCanvasFlush(): Promise<void>`** (typed in `desktopBridge.ts`; removed on teardown only if still ours): it waits for the initial load (capped) and an in-flight save, forces a save of anything unsaved and resolves after that save's `canvases:save` reply (at once when nothing is pending), NEVER rejects — the shell awaits it before closing a tab and on quit; ticks skip serialization when no subscribed store slice reference changed since the last save, a zero-page document is never written, and a failed save rolls `rev` back only if it is still the rev that save sent; skips content whose fingerprint equals the last saved one (no second copy of the string is held), and does not save a canvas that never had a node and has nothing stored. The file is compact JSON (`serializeDocument(..., pretty=false)`; `deserializeDocument` reads both). The document comes from `buildLiveDocumentData()` in `fileCommands.ts`, the ONE non-mutating builder (active page from the live stores, other pages from pageStore); `collectDocumentData()` (export, share) = `saveCurrentPageState()` + that builder. `rev` = last known + 1 per save; a `stale` answer adopts the disk rev and retries; a failed save retries after 5 s. **User notices** (sonner, once per kind): "Could not open the saved canvas." on read/apply failure (once per tab), "This canvas could not be saved. Export it to keep your work." after 2 consecutive save failures (re-arms after a successful save). Title: file name without extension, else the first top-level frame of page 1, else "Untitled canvas".
+
+The `/doc` page (`src/routes/DocPage.tsx`, lazy; Tiptap + `@tiptap/markdown`, extensions in `components/doc/docExtensions.ts`) must not import App, Pixi or the chat. All sync lives in `components/doc/useDocSync.ts` (editor-agnostic, tested with `renderHook`): selection via `?id=` (an id missing from the index but with a body is repaired into the index, not abandoned), `?new=1` creates exactly one document (`createAndSelectNewDoc`, other params kept), autosave is debounced 300 ms with a 1000 ms max wait from the first unsaved change. The hook keeps `baseRev`/`baseMarkdown` (last adopted or saved) and one `pending {id, markdown?, title?}`: a change for the open doc with `rev <= baseRev` is ignored (duplicates, stale copies, own saves); a newer one is adopted when nothing is pending, else remembered as `latestRemote` and resolved by the save. A save is compare-and-set on `expectedRev = baseRev`; on a conflict with equal markdown the stored rev is adopted silently, otherwise the stored version wins with the toast "The agent changed this document. Your last edits were replaced."; a storage error keeps the edit and toasts once per failure streak; `null` means deleted (toast, only a stale index entry is removed, never a body) or unreadable (error toast, nothing deleted). Switching docs flushes first and drops a pending edit whose flush failed (the user was warned); an `?id=` missing from the index is checked once per id and repaired into the index, and opened by its body even if the repair fails. `startBridges()` skips `/doc` (`isDocRoutePath`), like `/agent`. Strikethrough is bound to Mod-Shift-x (not Mod-Shift-s, the desktop menu's export). Supported markdown: headings, lists, task lists, tables, quotes, code, images, links, plus three GitHub-compatible extensions in `components/doc/extensions/`: toggles as `<details open><summary>…</summary>…</details>` (balanced scan skips code; only at a line start; inside a loose list item it works, in a tight ordered item the tag is lost but no text is), text/background colours as `<span data-color="red" data-bg="yellow">` with palette NAMES only (`docPalette`, never hex; nested spans merge, inner wins per attribute; never on code), and ```` ```mermaid ```` fences rendered by pele (`mermaidRender.ts`, `links:false, images:false`; the source stays visible whenever there is no valid SVG). All other raw HTML and footnotes are NOT preserved by the round trip. The editor UI is Notion-like: a title field, a bubble menu for selected text, a slash menu and a block handle (drag/menu). Tests use a parse-twice helper (load → `getMarkdown()` → load → `getMarkdown()` must be equal and `doc.check()` must pass on both). `doc_*` are NOT in `mcpToolNames.ts` / WebMCP / plugins.
+
+**Property list (fourth extension, `extensions/docProperties.ts`).** Notion-style field/value rows stored as a GFM table with exactly TWO columns whose header cells are both empty: `|  |  |` / `| --- | --- |` / `| key | value |` per row (values keep inline marks, `|` is escaped as `\|`, an empty value is an empty cell). `DocTable` (the stock `Table` extended) owns the `table` token and returns a `propertyList` (`propertyRow` > `propertyKey` + `propertyValue`) for that shape with at least one body row; every other table, including a 2-column one with a non-empty header, is delegated unchanged to the stock parser. The header LINE must also match our own shape (`OWN_HEADER`: each cell at most two whitespace characters, so `| | |` / `|  |  |`): the stock table serializer pads the empty header of a header-less table (pasted HTML without `<th>`, cleared header cells) to `|      |     |`, and without that check such tables silently turned into property lists. Paste whose target is the selection inside one key/value is flattened to inline content (`handlePaste`; blocks joined by a space), and a drop is flattened only when `handleDrop` resolves its coordinates inside a cell (`insertFlattenedIntoCell`) - a drop elsewhere stays default even with the caret in a cell. The slash menu is disabled inside cells (`isInPropertyCell`), the Properties and Table items are hidden inside table cells (`slashItemsAt`), and Enter/Tab yield (return false) while it is open; only Enter replaces a non-empty selection, Tab/Shift-Tab just move; Tab in the last row's value appends a row, Shift-Tab in the first key is swallowed; Backspace at the start of a non-empty row's key is swallowed (so Tiptap's `clearNodes` never runs on a key), at the start of a value it moves the caret to the end of the key, and a row counts as empty by `content.size` (an inline atom or hard break is content); `insertPropertyList` finds the new list from the step map, not the selection; `blockHasText` is false for `propertyList`, so Turn into is not offered. The row icon (text/calendar/link/list/hash/lines) is inferred from the value at render time by `inferIconKind` in the row node view and is NOT stored in markdown; the `Empty` placeholder is CSS (float/height 0 so it never pushes the caret). Enter/Tab/Shift-Tab/Backspace are handled by `DocPropertyKeys` (priority 1000).
+
+**Callouts (`extensions/docCallout.ts`, `CalloutView.tsx`).** GitHub alerts: a blockquote whose FIRST line is exactly `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` (case-insensitive on load, upper-case on save) followed by `> `-prefixed block content (a blank body line is `>`) becomes a `callout` node (`kind` attr, `block+` content). A custom block tokenizer (as in `docDetails.ts`) claims it before marked's blockquote, so plain quotes and unknown markers (`[!FOO]`) stay stock `blockquote`s. Lazy continuation lines (no `>`) end the callout. The icon button opens a five-kind menu; Backspace at the very start turns an empty callout into a paragraph (otherwise lifts the first block); the slash item "Callout" (`insertCallout`) is hidden in table cells. Colours come from the doc palette tokens in `docProse.css` (blue/green/purple/yellow/red), so both themes work.
+
+**Image width (`extensions/docImage.ts`).** Single images are resizable (left/right handles, aspect kept, editable only). Only the WIDTH is stored, as a URL fragment: `![alt](url#width=480)`, or `&width=480` when the URL already has a `#` fragment (a `&width=` in a query string with no `#` is a real query param and is left alone). `splitImageWidth`/`normalizeImageAttrs` strip the marker from `src` on every entry path (markdown, `setImage`, input rule, HTML paste), so `src` never contains it; height is never stored (the node view's commit writes `width` only). All image lines are written by `buildImageMarkdown(alt, url, title?)` (`lib/docs/insertImage.ts`), the one image serializer.
+
+**Trace switcher.** `src/components/trace/TraceSwitcher.tsx` is a "Traces" list-icon dropdown first in the viewer header (`TraceHeader` via `TraceViewer`'s `switcher` prop; also in a minimal top bar above `TraceFailure`; never on `TraceFilePicker`). It reloads `window.penDesktop.traces.list?.()` (`src/lib/browseTraceList.ts`, never rejects) on every open, checks the current local trace and navigates to `/trace/<id>` with `src=local`, keeping other params (`chat=off`) but dropping `step`. There is no cloud list: without `traces.list` (web, older shell) the switcher does not render.
+
+Trace tabs are readable by the panel agent too: `trace_list` / `trace_read` (`src/lib/tools/traceTools.ts`) are panel-local read-only tools, and `trace_open` is a panel-local action tool (opens or activates the trace tab via `traces.open(id)` without keyboard focus; it first checks `read(id, {frames:false})` so a missing trace opens no broken tab; a read `{error}` is passed through) (`"trace_"` prefix in `canvasTools.ts`, unserialized, not MCP/WebMCP). They call `window.penAgentPanel.traces.listTabs()` / `.read(id, { frames: false })` (frames-free: the shell sends no base64 images; `getAgentPanelTraceTabsBridge()` in `agentPanel.ts`, which needs BOTH functions); `clientCapabilities.traceTabs` is true only then, and the backend offers the four `trace_*` tools (`trace_list`, `trace_open`, `trace_read`, `trace_frame`) only then. `trace_read` parses with `parseBrowseTrace` and returns a bounded JSON summary (steps, QA checks, console errors, failed requests; counts capped with an `omitted` figure, ~30k chars max) and never frames, screenshots, data URLs or asset paths. Failures return `{"error": "..."}`, never a throw.
+
+**Links and templates in `/doc`.** Plain relative markdown links: `[Title](/doc?id=<docId>)` switches the tab to that document (`handleLinkClick`/`openDocLink` in `src/lib/docs/docLinkActions.ts`, wired by the `DocLinkClick` extension; StarterKit's `openOnClick` is off, external links open in a new tab from the same handler) and `[Name](/app?node=<nodeId>)` posts `focus-node` on BroadcastChannel `pen.canvas-focus` (`canvasFocusRequest.ts`; no ack in 1.5 s toasts "Open the canvas that has this frame."). The canvas answers from `startCanvasFocusListener()` (`src/lib/canvasFocus/`, one effect in `App.tsx`): selects + fits the node, then acks; a tab without the node stays silent. `/doc` must not import the listener (it pulls the scene stores). `DOC_ID`/`NODE_ID` template placeholders only toast. The icon before such a link is CSS in `docProse.css`. Slash "Link to document" opens `DocLinkPicker`. Templates come from `GET /api/doc-templates` via `apiFetch` (`docTemplates.ts`, cached per page load; a failure hides the Templates slash group and the empty-document "Start from a template" row); inserting parses the body with `editor.markdown.parse` and sets the title only if it is empty (`titleAfterTemplate`). `/app?node=<id>` on load is not handled (the document is in memory, so a fresh tab has nothing to select).
+
+### Workflows (`/workflow`)
+
+A workflow is a titled, ordered list of text steps (sequential, no branching). `src/lib/workflows/workflowStore.ts` is a localStorage store modelled on `docStore.ts`, mirrored to the desktop disk like docs: keys `pen.workflows.index` + `pen.workflows.wf.<id>`, `BroadcastChannel` `pen.workflows` (plus the `storage` event as backup), every sync decision by `Workflow.rev` (create = 1, +1 per write), `updateWorkflow(id, patch, source, { expectedRev? })` returns the workflow, `"conflict"` or `null`, a blocked/full storage throws `WORKFLOW_STORAGE_ERROR`. **Disk mirror (desktop shell only):** `src/lib/workflows/desktopWorkflowMirror.ts` (`startDesktopWorkflowMirror()`, called from `main.tsx` on the agent and workflow routes only) is the docs mirror's twin on `desktopMirrorCore.ts` + `localStoreKit.ts`: bridge `penAgentPanel.workflows` (panel first) or `penDesktop.workflows` with `list/save/remove/onRemoved` (feature-detected), `setWorkflowPersistence` sink in the store, reconcile by `rev`, delete tombstones under `pen.workflows.deleted`, `whenDesktopWorkflowsReady()`/`isDesktopWorkflowsReady()`. `useWorkflowSync` returns `loading: true` (no selection, `create()` and `?new=1` held, the page renders nothing) until the reconcile ends. Index entries carry `stepCount` (non-blank steps only, written by every commit, same count as `workflow_read` / `workflowToPrompt`) so lists never parse bodies; pickers and `workflow_list` hide entries whose body key is gone (`isWorkflowBodyMissing`, a key check); `dropStaleWorkflowIndexEntry(id)` removes an index entry only when NO body exists (never deletes a body). The agent's `workflow_list/create/read/edit/open` (`src/lib/tools/workflowTools.ts`) are **panel-local** like `doc_*`: `"workflow_"` is in `PANEL_LOCAL_PREFIXES`, they are unserialized, not in `mcpToolNames.ts` / WebMCP / plugins. Tool output: `workflow_list` -> `{workflows:[{workflowId,title,stepCount,updatedAt}]}` (entries whose body key is gone skipped), `workflow_create` -> `{workflowId,title,stepCount,markdown,openError?}`, `workflow_read`/`workflow_edit` -> `{workflowId,title,rev,steps:[{index,text}],markdown}` with only non-blank steps numbered 1..n like the markdown; max 100 steps. `workflow_edit` replaces the whole step list but keeps the id of a step whose trimmed text equals an unused current step (first unused match in order); other steps get new ids. Tabs open through `window.penAgentPanel.workflows.open(workflowId)` (`getAgentPanelWorkflowsBridge()` in `agentPanel.ts`); `clientCapabilities.workflowTabs` (`chatTransport.ts`) is true only when that bridge exists, and the backend offers `workflow_*` only then. A missing or failing bridge never loses the workflow: `workflow_create` returns `openError` next to the id. An attached workflow reaches the model as the `workflowToPrompt` block (`workflowMarkdown.ts`): `<workflow id="<id>" title="<title>">` (title on one line: whitespace collapsed, `"` becomes `'`), an instruction line, a numbered list, `</workflow>`.
+
+The `/workflow` page (`src/routes/WorkflowPage.tsx`, lazy in `AppRouter.tsx`) is a visual editor over `workflowStore`: a dot-grid canvas with one centred column of step cards (number tile, auto-growing textarea "Step N"; the card shows the composer's accent border and an accent number tile while its textarea has focus) with a doc-editor-style hover gutter left of the card ("+" adds a step below; the grip drags and, on click, opens a menu with Move up/down, Duplicate, Delete; below `sm` the gutter floats over the card's top-right edge) joined by thin solid 1px connectors with a thin open arrow head, not dashed (hover "+" inserts a step there) and ending in a round "+" button. Icons are `weight="light"` and the page uses neutral colours, except the accent focus state. Keyboard: Enter adds the next step, Backspace in an empty step deletes it, Alt+ArrowUp/Down moves it, ArrowUp/Down at the text edge hop between steps. The header has the workflow switcher, an editable title and an options menu (Copy as Markdown, Paste from Markdown in a dialog with replace/append, Delete workflow behind an AlertDialog). `?id=` opens a workflow, `?new=1` creates exactly one (StrictMode-safe, other params kept), no id opens the newest. It must not import App, Pixi, the scene stores or the chat; `isWorkflowRoutePath` (`agentPanel.ts`) makes `startBridges()` skip it, and the doc disk mirror is not started there (the workflow mirror is). `components/workflow/useWorkflowSync.ts` is a simplified `useDocSync`: debounced autosave (300 ms, 1000 ms max wait) with compare-and-set on `baseRev`, a conflict adopts the stored version and toasts "The agent changed this workflow. Your last edits were replaced.", a newer foreign `rev` is adopted when nothing is pending, a delete falls back to the next workflow, a selected id with no readable body falls back too (an index entry with no body is dropped; an unparseable body is left untouched and toasts once, never written), a storage error toasts once, and pagehide/unmount/switch flush.
+
+Composer attachment: `ChatInput` has ONE "Attach" paperclip button (`AttachMenu`, `components/chat/AttachMenu.tsx`; also passed to `renderFooter` as `attachMenu` so `ChatPanel` places it) opening a flat menu: an "Image" item (disabled with the reason, e.g. "Max 4 images", when images cannot be attached; hint "described as text" on the description-only path), then a "Workflow" group listing workflows by title only, newest first, live through `subscribeWorkflows`. One workflow at most shows as a removable chip (icon, title, remove button) above the input (per-chat `chatStore.attachedWorkflowIds`, not persisted). On send the text is the user text + `"\n\n"` + `workflowToPrompt(getWorkflow(id))`, read fresh at send time (a deleted workflow is sent without and toasts); a workflow alone may be sent; the chip clears only when `onSubmit` returned true, like images. User bubbles parse a trailing `<workflow id="..." title="...">` block (the old form without `id` still parses) with `parseWorkflowAttachment` (`lib/workflows/workflowAttachment.ts`, the reading half of `workflowToPrompt`) and `MessageList` shows `WorkflowAttachmentCard` (a small non-interactive chip: `TreeStructureIcon` + title, no step count or step preview) instead of the raw tags. Roll back restores only the text before the block and re-attaches that workflow BY ID when `getWorkflow(id)` still exists; otherwise (no id, or deleted) it toasts "The workflow “title” no longer exists. It was not re-attached."; the auto chat title comes from that text, or `Workflow: <title>` for a workflow alone.
+
+**Scheduled workflows (desktop only).** A workflow can be started on a schedule, like Claude Code Desktop's local scheduled tasks: at the set time the desktop agent panel creates a NEW inactive chat titled after the workflow and sends it the opening message + a `Scheduled run of this workflow for <occurrence>. Started at <now>.` line + the trailing `workflowToPrompt` block (so the bubble still shows the workflow card). Store: `src/lib/workflows/workflowSchedule.ts`, TWO localStorage keys (maps by workflow id): `pen.workflowSchedules` holds the config and is written ONLY by `saveSchedule`/`deleteSchedule`; `pen.workflowSchedules.runs` holds run bookkeeping (`lastRunAt`, `lastOccurrenceAt`, `lastChatId`, `lastSkip`) and is written ONLY by `recordScheduledRun`/`recordScheduledSkip` (which return false for an id with no config, so a deleted schedule is never resurrected; `deleteSchedule` deletes the config first and throws `SCHEDULE_STORAGE_ERROR` if that write fails, then clears the runs). `getSchedule`/`listSchedules` return the merged schedule (ids from the config map) and serve a cached object until either raw string changes; a `storage` event emits only the ids whose merged value changed. BroadcastChannel `pen.workflowSchedules`. Kept apart from `workflowStore` so bookkeeping never bumps a workflow's `rev`. Frequencies: hourly (minute of `time`), daily, weekdays, weekly (`weekday` 0 = Sunday), local time. `dueOccurrence` = the LATEST occurrence at or before now that is after both `updatedAt` (saving never runs a time already past; `saveSchedule` moves `updatedAt` only when the timing changes: new schedule, frequency/time/weekday, or off to on, so a message-only edit keeps a due run) and `lastOccurrenceAt`: any number of missed times (computer asleep, app closed) collapse into ONE catch-up run. Runner: `src/lib/workflows/workflowScheduler.ts`, started ONLY from `AgentPage` (so only where `isAgentPanelHost()`); it checks at start, every 30 s, on visible/focus/online and on any schedule change, with a PER-OCCURRENCE claim: before launching, `navigator.locks.request("pen.workflowScheduler.run.<workflowId>.<occurrenceAt>", {ifAvailable:true})`; a refused claim skips the occurrence without recording, a granted one launches inside the callback and HOLDS the lock for 10 minutes (or until `stop()`), long after another window's localStorage has caught up (there is no global pass lock; `checkScheduledWorkflows(now, claim)` takes an injectable claimer, default "run now", used without `navigator.locks`). Also a fresh `getSchedule` re-read before launch, and a module-level map of the highest `lastOccurrenceAt` seen in any change payload or recorded by this panel, because a BroadcastChannel message can beat this window's localStorage cache; an occurrence at or before it is treated as taken. A tick that arrives during a pass only sets a flag and the pass repeats once from a timer; the schedule-change listener never runs a pass synchronously. `runOne` deletes a schedule whose workflow body key is gone, then checks `dueOccurrence` before reading the workflow. Offline: nothing recorded, retried later. Previous run's chat `isBusy`, `needsAnswer` or with its launch payload still queued: the occurrence is recorded as skipped (chats are per window and in memory, so another window's or a reloaded panel's previous run is not seen). A schedule whose workflow body is gone is deleted (each pass, and at once on a `deleted` change from `subscribeWorkflows`; an unparseable body is left alone). Launch = `createChat({activate:false, parallelCount:1})` + `recordScheduledRun` (a failed record closes the chat) + `setChatTitle` + `queueLaunchPayload` (the hidden `ChatSession` sends it) + a toast with "Open". UI: a clock button in the `/workflow` header (`ScheduleDialog.tsx`, `useWorkflowSchedule.ts`), shown only with `window.penDesktop` or in dev; "Off" keeps the config with `enabled:false` (an invalid time falls back to the stored one); hourly saves keep the hour of the time field, switching to Hourly starts from the minutes of the time field as edited, a minute outside 0-59 or not whole shows an inline error and disables Save, the form is keyed by workflow id, and a failed Remove toasts. Nothing runs in the cloud or while the computer sleeps.
+
+### Desktop shell bridge
+
+The Electron app (`../pen-editor-desktop`, its own repo) loads the deployed
+editor and exposes `window.penDesktop = { onMenuCommand(cb), setDocumentTitle(title), registerMcpBridge?(handler) }`
+from its preload. `src/lib/desktopBridge.ts` (called once in `main.tsx`)
+dispatches received menu-command ids through the command-palette registry
+(`getCommands()`), so **menu items in the desktop repo reference
+`PaletteCommand.id` values** (`file-open`, `file-export-pen`,
+`file-export-json`, `file-export-tokens`, `file-import-tokens`). Renaming or
+removing one of these ids breaks the desktop menu — update
+`pen-editor-desktop/src/main/menu.ts` (and its CLAUDE.md) in the same change.
+`src/lib/__tests__/desktopMenuContract.test.ts` enforces this: the pinned id
+list is checked against `getCommands()` on every run, and when the sibling
+`../pen-editor-desktop` checkout exists it also builds the real menu template
+and asserts the forwarded ids match. The `contract` CI job checks out the
+desktop repo's **`main`** and sets `CONTRACT_REQUIRE_DESKTOP=1` so it cannot
+self-skip — same both-directions, merge-order-sensitive deal as the tool
+contract. On the web `window.penDesktop` is absent and both bridges below are
+no-ops.
+
+`registerMcpBridge` is the desktop shell's loopback-MCP entry point — see
+"MCP bridge" below for the page-side half (`src/lib/desktopMcpBridge.ts`) and
+`../plans/desktop-mcp-bridge.md` for the full cross-repo design (handshake,
+token, tab routing, security).
+
+`window.penDesktop.appIcon` (`get()`, `set(id)`) lets Settings > Appearance
+pick the Dock icon. Both return `{ selected, options: [{ id, label, preview }] }`
+or `{ error }`. `preview` is a `data:image/png` URL from the shell, so this
+repo ships no icon images and keeps no icon list. `AppIconGroup.tsx` renders
+nothing without the bridge, while loading, or on an error.
+
+### browse_task loop (`@sideform/browser-agent`)
+
+The browse_task loop (snapshot -> `/api/browse/step` -> perform, sub-goal
+planning, the action cache `pen.browseActionCache.v1`, loop guard, commit-label
+rules) is NOT in this repo: it comes from `@sideform/browser-agent/loop`
+(`github:dan-rozhkov/browser-agent#v0.2.1`, public MIT repo, no token needed;
+`npm ci` builds its `dist/` through its `prepare` script). Renovate (`renovate.json`) opens bump PRs for `@sideform/browser-agent` only. Patch bumps automerge on green CI. Minor bumps are breaking in 0.x and need a human. Here `src/lib/tools/browser/browseTask.ts` is only
+the `ToolHandler` glue; `backend.ts` builds the one `createHttpBackend`
+(`apiFetch`: base URL and cookie resolved per request) that `browseTask`
+and `browseAct` share. `window.penDesktop.browser` is typed as the package's
+`BrowserBridge`. Loop tests and `commitLabelContract` live in the package.
+
+### Accounts (Better Auth)
+
+Optional sign-in (Google / email link / password); anonymous use is unchanged. Backend contract: Better Auth at `<backend>/api/auth`, `GET /api/auth-config` -> `{enabled, appOrigin?, google, emailEnabled}` (accounts count as enabled ONLY when `enabled` and `appOrigin` equals `window.location.origin`, trailing slash ignored; any other host serving this build, or a backend without `appOrigin`, behaves as `enabled:false`), `POST /api/account/claim-anon`.
+
+- **Client**: `src/lib/auth/authClient.ts` (`better-auth/react` + `magicLinkClient`, `apiKeyClient` from `@better-auth/api-key/client`, `oauthProviderClient` from `@better-auth/oauth-provider/client`). Pin these to the backend's Better Auth version. The auth client chunk is lazy: `AuthMenu` / `AuthBootstrap` fetch `/api/auth-config` first and render nothing (never load the client) when accounts are off or the request fails.
+- **Credentials rule**: every backend call goes through `apiFetch(path)` / `apiFetchUrl(url)` in `src/lib/apiBase.ts` (they set `credentials: "include"` ONLY after `loadAuthConfig()` resolved `enabled:true` — module flag in `apiBase.ts`; before that, or when accounts are off, no credentials); the chat transport resolves it the same way. The auth client always includes (it loads only when enabled). Never write `fetch(resolveApiUrl(...))` — `authPlumbing.test.ts` scans `src/` and fails on it.
+- **Identity**: `src/lib/auth/authState.ts` mirrors the session (written by `SessionSync`). Request bodies/queries use `getRequestUserId()` / `requestUserIdParam()` (omitted while signed in; never MINTS an anon id while accounts are on and the session is unresolved — `peekActorId()` for analytics), never `getUserId()` directly; `getUserId()` stays the single owner of `pen.userId` (with `peekUserId`/`clearUserId`). First sign-in with a stored anon id -> `claimAnonymousData()` -> clear on 200/409 -> reload skills.
+- **Routes** (lazy, `AppRouter.tsx`): `/sign-in` (`?next=` restricted by `safeNext`, `?error=`, `?token=` reset), `/consent` (OAuth query forwarded by the plugin; needs a session), `/account` (API keys, connected agents). Entry points: `AuthMenu` in the editor `Toolbar` and the showcase header.
+- **MCP bridge cookie mode**: `useSessionMcpBridge` (mounted in `App`) connects `/api/mcp/ws` without a token while signed in; token and desktop bridges keep precedence. The bridge sends `{type:"focus"}` on tab focus/visible in both modes. On every (re)connect it first sends `{type:"hello",capabilities:["ack"]}`. A `tool_call` with `ack:true` is answered with `{type:"ack",id}` and HELD (not executed) until `{type:"go",id}` arrives; `{type:"cancel",id}` or 30 s without `go` drops it. A `tool_call` without `ack` executes immediately (old backends never set it), so never ack unprompted: an old backend rejects the call on an unknown `ack` reply.
+- **Desktop sign-in** (spec: `pen-editor-backend/docs/superpowers/specs/2026-10-20-desktop-sign-in-design.md`): the desktop shell exposes optional `window.penDesktop.auth` / `window.penAgentPanel.auth` (`signIn()`, `onToken(cb)`), read through `desktopAuth()` (`src/lib/auth/desktopAuth.ts`). `/auth/desktop` (`DesktopAuthPage`, lazy, no editor imports, skipped by `startBridges`) is the system-browser half: it validates `state`/`challenge` (`^[A-Za-z0-9_-]{43}$`, remembered in `localStorage` `pen.desktopAuth.pending` for 10 min), sends a signed-out visitor to `/sign-in?next=/auth/desktop?...`, and signed in shows a confirmation ("Sign in to Sideform Desktop as <email>?", Continue/Cancel). **There is no automatic hand-off**: any page can open this URL with its own challenge, so only a click POSTs `/api/account/desktop-token` and sets `sideform://auth?token=&state=`. `SessionBridge` (mounted by `AuthBootstrap` on every route, `/agent` included) receives `{token, verifier}` in the shell, POSTs `/api/account/desktop-exchange`, toasts the result (sonner), refetches this view's session with `authClient.$store.notify("$sessionSignal")` and tells the other views by posting `{event:"session",data:{trigger:"getSession"}}` on Better Auth's own `getGlobalBroadcastChannel()` (localStorage `better-auth.message`; its session manager refetches on it; no custom channel; no reload: canvases are in-memory). Inside the shell `AuthMenu`'s Sign in button calls `signIn()`, and `/sign-in` shows only "Continue in browser".
+- Test doubles: `src/test/authMocks.ts` (mock client/session, `stubAuthConfig`).
+
+### MCP bridge
+
+Two independent transports route external MCP calls into the same
+`toolHandlers`/`executeToolCall` path the built-in chat uses. Both share a
+transport-agnostic dispatch core, `src/lib/mcpDispatch.ts`
+(`createToolDispatcher({ send })`): the unknown-tool → `tool_error` branch,
+plus a per-dispatcher queue that keeps one transport's outcomes in the order
+its calls arrived.
+
+Mutual exclusion *across* surfaces is a layer below, in
+`src/lib/toolCallQueue.ts` (`runToolCall`). The scene-mutating handlers —
+`batch_design` above all — build from a snapshot of `useSceneStore.getState()`
+and commit a whole replacement `nodesById`/`childrenById`/`rootIds`, so two in
+flight at once means the second commit discards the first's nodes. That was
+once prevented by arrangement (one queue per transport, and the two bridges
+are mutually exclusive), but chat, WebMCP and plugins are all reachable in one
+editor tab at the same time.
+
+`runToolCall` is called from `executeToolCall` itself, so chat, both bridges
+and the WebMCP surface inherit it without any of them opting in — do **not**
+wrap a call site in it again, or the inner call will wait on the queue the
+outer one holds. Plugins are the one path that bypasses `executeToolCall`
+(`pluginApi.ts`'s `runTool` calls the handler directly, for its own allow-list
+and Dev Mode gate), so they call `runToolCall` explicitly.
+
+**Read-only tools are not queued.** `UNSERIALIZED_TOOL_NAMES` lists them, and
+anything absent from it is serialized — a new tool is safe by default, since
+wrongly serializing a read costs latency while wrongly parallelizing a write
+loses work. The list exists because one global queue otherwise couples
+transports that share nothing: `get_screenshot` in a backgrounded tab (where
+`rAF` never fires) burns its whole timeout, and would stall unrelated traffic
+for that window. The timeout starts *inside* the queued task, so a call that
+waited still gets its full budget.
+
+`executeToolCall` itself already never
+rejects — a throwing handler resolves to a JSON `{"error": "..."}` string —
+so a dispatcher failure always surfaces as a normal *outcome*, not a broken
+queue.
+
+- **WebSocket bridge** (`src/lib/mcpBridge.ts`, `McpBridge`): connects this
+  tab to the backend's `/api/mcp/ws` (started once from `main.tsx` iff
+  `VITE_MCP_WS_TOKEN` is set) so external MCP clients reach the editor over
+  the network. See `pen-editor-backend/CLAUDE.md`'s "MCP server" section and
+  `pen-editor-backend/docs/superpowers/specs/2026-07-23-mcp-server-design.md`
+  for the full design.
+
+  **`VITE_MCP_WS_TOKEN` is baked into the public JS bundle at build time —
+  local/dev builds only. Never set it on a publicly deployed frontend build:**
+  every visitor's tab would get the secret and silently register itself as a
+  bridge session that anyone holding the token can drive.
+
+- **Desktop IPC bridge** (`src/lib/desktopMcpBridge.ts`,
+  `initDesktopMcpBridge`): registers this tab with the Electron shell's
+  loopback MCP endpoint via `window.penDesktop.registerMcpBridge({ protocol,
+  tools, onCall })`, guarded so it is a no-op on the web and on desktop builds
+  predating this feature. `tools` is the MCP tool-name subset of
+  `toolHandlers` (the 7 backend-bridged tools plus the 3 client-side static
+  guideline tools), derived from `src/lib/mcpToolNames.ts` — the single
+  source also imported by `toolContract.test.ts`'s `BRIDGED_MCP_TOOL_NAMES`/
+  `STATIC_MCP_TOOL_NAMES`, so the two can't drift; `protocol` is a single
+  integer bumped only when the call envelope itself changes — adding or
+  removing a tool does not bump it. `onCall` routes through this bridge's own
+  `createToolDispatcher` instance (the same serial-queue dispatch core the
+  WebSocket bridge uses), so two overlapping `mcp:call` IPC messages cannot
+  interleave scene mutations, and it first checks the call's tool name
+  against the advertised `tools` allow-list — refusing anything outside it
+  with `"Unknown tool: <name>"` before the call ever reaches
+  `executeToolCall`/`toolHandlers` — so a shell bug or mismatched build can
+  never reach a tool this bridge doesn't advertise. The resulting promise
+  still resolves rather than rejects, matching `executeToolCall`'s contract.
+
+**Only one bridge may be active at a time.** A dev bundle built with
+`VITE_MCP_WS_TOKEN` and loaded inside the desktop shell would otherwise start
+both — two transports advertising the same tab as their editor session, with
+duplicated status reporting and two sockets to keep alive. (Interleaved scene
+mutations used to be the headline reason too; `runToolCall` now rules that out
+on its own, but the mutual exclusion is still the intended arrangement.)
+`main.tsx` resolves this by ordering, not locking: it awaits `initDesktopMcpBridge()` settling before even importing
+`mcpBridge.ts`, and `mcpBridge.ts`'s `startMcpBridgeIfConfigured()` checks
+`desktopMcpBridge.ts`'s `isDesktopMcpBridgeActive()` and no-ops if the desktop
+bridge already registered — the desktop bridge always wins.
+
+Both bridges drive the same `src/store/mcpBridgeStore.ts`
+(`off | connecting | connected`), shown as a coloured dot plus label in the
+**File → Settings** submenu (`Toolbar.tsx`) — no UI change was needed to
+support the desktop path. It is a plain `<div>`, not `DropdownMenuLabel`:
+Base UI's label part throws unless wrapped in a `Menu.Group`, which crashes
+the whole menu.
+
+### WebMCP (in-page agents)
+
+`src/lib/webmcp/` publishes the editor's agent-facing tools on the page's
+model context, so an agent that can run JavaScript in the tab — the Chrome
+extension, Playwright, CDP, the Electron shell — reaches them without the
+WebSocket or desktop bridge. Started from `App.tsx` (not `main.tsx`), so it
+exists only where a document does; `/` must keep the editor's module graph out
+of its entry bundle, and this module statically imports all of it.
+
+- **The API is polyfilled** (`polyfill.ts`). No stable browser ships WebMCP
+  yet — Chrome 152 exposes neither `document.modelContext` nor
+  `navigator.modelContext` — and Electron lags Chrome by definition, so
+  waiting for it would mean shipping nothing. The polyfill installs **only**
+  when the browser has none, and everything else talks to `getModelContext()`,
+  which prefers the native object. When Chrome ships the API the polyfill
+  stops installing itself and nothing else changes. It deliberately mirrors
+  the native API's awkward parts (arguments as a JSON *string*; a handler's
+  error message replaced by a generic "Tool invocation failed") — being nicer
+  than Chrome would let client code depend on detail Chrome will never give.
+  **It publishes one object under two names** — `navigator.modelContext` and
+  `document.modelContext` — because the proposal says `navigator` while the
+  Chrome builds that expose the API at all put it on `document`, so an agent
+  checks whichever its own reference named and concludes "unsupported" if it
+  looks at the other. That is not hypothetical: it is exactly how an external
+  agent reported this surface missing. The `document` write is best-effort —
+  a failure there is logged and the install still succeeds, since the surface
+  already exists and `getModelContext()` finds it — and the two names must
+  stay the *same* object, or a caller that registers through one and executes
+  through the other gets "Unknown tool".
+- **21 tools**, a curated subset of the desktop bridge's
+  (`DESKTOP_MCP_TOOL_NAMES`), of which eight write: `batch_design`,
+  `set_variables`, `edit_embed_html`, `rename_layers`, the three comment writers
+  and `attach_local_repo` (session state). The style readers
+  (`get_styles`, `get_text_styles`) are read-only; the
+  style writers and the component tools are on `/mcp` and the desktop bridge
+  only, never here. Nothing consequential is exposed —
+  `publish_to_showcase` in particular is not, and `webmcpContract.test.ts`
+  fails if it drifts in.
+- **Schemas live in `schemas.ts`** because they must ship in the bundle, which
+  makes them a second copy of contracts owned by the backend's zod shapes.
+  `__tests__/webmcpContract.test.ts` imports the sibling backend checkout the
+  same way `toolContract.test.ts` does and asserts the copy is *tighter*,
+  never looser: no property the backend does not declare, nothing required
+  the backend does not accept. `batch_design` is the one deliberate
+  tightening — the backend shape carries three alias keys for models that emit
+  the wrong name, and this surface publishes canonical `operations` alone.
+- **A failed tool call comes back as a result, not a rejection.** A rejection
+  loses its message — the WebMCP layer replaces it with a generic "Tool
+  invocation failed", which the polyfill mirrors on purpose — so tool-level
+  failures return `{isError: true, error, ...}` instead, MCP's own convention
+  for the split. The handler's other fields ride along, which is what makes
+  `batch_design`'s resume point (`completedOperations`, `truncated`) reach a
+  caller that needs to continue a long script rather than restart it. Only
+  protocol-level problems still throw: an unknown tool, or arguments that are
+  not a JSON string.
+- **Input is validated at execute time** (`validateInput.ts`, a small
+  JSON-Schema subset) and unknown keys are *rejected, not stripped*: a closed
+  schema whose runtime quietly accepts extras is a decorative contract. If the
+  schemas ever outgrow that subset, replace the validator rather than
+  extending it — one that ignores a keyword it does not understand is worse
+  than none.
+- **The read-only gate is the safety-critical part, and it is two-layered.**
+  `sharedViewStore.ts` is explicit that tool handlers mutate the scene stores
+  *below* every UI-level guard, so hiding entry points is the only real
+  protection — and WebMCP is a new entry point. Mutating tools are therefore
+  withheld from registration when the canvas is not editable, **and** refused
+  again inside `execute`. Both are needed: registration alone races
+  (`/c/:shareId` sets its flag from a parent effect while the editor mounts
+  lazily underneath, and editability can change after registration), while
+  refusal alone would advertise tools that always fail. Editability is read
+  from the app's own rules — `isSharedView` plus `canEditScene(mode)`, the
+  latter being what also covers `/app?view`, which never sets the shared-view
+  flag. Note what each is worth: `isSharedView` is a real boundary (the
+  viewer refuses to leave view mode — `keyboardCommands.ts:209`), while
+  `?view` on your own document is a UI mode, not a security control — Escape
+  exits it by design, and a synthetic `KeyboardEvent` can do the same. Gating
+  on it is honesty about what the page currently is, not a defence.
+  **The `startWebMcp()` effect in `App.tsx` is declared after the
+  `?view` effect on purpose**: passive effects run in declaration order, so
+  registering first would advertise the editing tools a moment before view
+  mode is entered.
+- **Registration re-runs on every editor mount, and the surface is torn down
+  on unmount.** Neither is optional. Forking a shared canvas
+  (`SharedCanvasBar`) navigates `/c/:shareId` → `/app` client-side, so a
+  result memoized from the read-only mount would leave the forked, editable
+  document advertising read-only tools for the rest of the tab session. In the
+  other direction, browser Back to the showcase unmounts the editor while the
+  tools stay published (nothing can unregister one), so `stopWebMcp()` marks
+  the surface unowned and `execute` refuses everything until an editor mounts
+  again.
+- **On someone else's canvas, reads are narrowed to what the viewer can see**
+  (`sharedViewRedaction.ts`). This answers a threat that needs no XSS: on
+  `/c/:shareId` the read tools stay published, so anyone who can send a share
+  link can write instructions into a document that a stranger's agent will
+  read. The rule is provenance — an agent must see what the victim's screen
+  can show — so hidden nodes keep only id/type/name (the layers panel shows
+  those anyway) and embed source HTML is removed, since it is never
+  rendered as text and is the densest hiding place in the format. Redaction is
+  marked, never silent, or the agent would describe an embed as empty. **Its
+  honest limit: it removes the invisible channels, not the inattentive ones** —
+  text that is genuinely drawn, just far from the viewport, still reaches the
+  agent, and only refusing to publish the tools at all would change that.
+  `untrustedContentHint` does not help here; nothing enforces it.
+- **A published tool's name cannot be silently taken over.** `registerTool`
+  replaces by name (remounts, hot reload), so `polyfill.ts` requires a claim
+  token to replace a name the page already claimed. This is not a defence
+  against script that already runs in the page — that script can do worse
+  directly — it exists because `getTools()` omits `execute`, which makes a
+  substituted tool byte-identical to the real one for the agent, the one party
+  with no way to detect it.
+- **The context is installed from the entry bundle; the tools arrive later.**
+  `installModelContextForEditorRoute()` runs in `main.tsx` (`earlyInstall.ts`),
+  route-gated to `/app` and `/c/`, and never on the showcase. Registration
+  still happens from `App.tsx`, which is a lazily imported chunk — measured on
+  production, that chunk does not begin downloading until *after* the `load`
+  event (entry 432-767ms, `load` 1312ms, editor chunk 1311-1656ms), and the
+  effect runs later still. An agent that waits for `load` and looks once —
+  the default behaviour of every browser-driving agent — used to find no
+  model context at all and conclude the page does not support WebMCP. It now
+  finds an empty `getTools()`, which means "not yet, ask again". Keep
+  `earlyInstall.ts` cheap enough for the entry bundle: `polyfill.ts`'s only
+  import is type-only, and nothing here may reach the tool registry or the
+  stores.
+  **Recipe for an agent author:** poll `getTools()` until it is non-empty
+  (a second or two is normal on a cold load) rather than sampling once. There
+  is no readiness event, in this implementation or in the native API.
+- **The surface announces itself, because nothing else does.** WebMCP is
+  passive: a page that publishes tools looks exactly like one that does not,
+  so an agent finds them only by already knowing to look — which is the whole
+  problem for the audience this surface exists for. Two signals close that,
+  aimed at the two ways an agent meets the page.
+  **Console** (`announce.ts`): one banner when the context is installed
+  (`earlyInstall.ts`) saying the tools are still loading, and one when
+  registration finishes, listing them plus a copy-pastable
+  `executeTool("name", "{}")` call. Every line carries the literal `[webmcp] `
+  prefix on its own — no `%c`, no `console.group`, both of which some
+  harnesses fail to unwrap before regex-matching. The method name comes from
+  `keyof ModelContextLike`, so renaming it breaks the typecheck instead of
+  leaving the snippet quietly wrong. The registered banner is deduplicated on
+  the registered+withheld set, since registration re-runs on every mount, and
+  the whole body is guarded: `startWebMcp` calls it outside its own `try`, and
+  `App.tsx` invokes that as `void startWebMcp()`, so an escaping throw would
+  become an unhandled rejection.
+  **Static** (`manifest.ts` + `vite/webmcpManifest.ts`): `/webmcp.json`, for
+  an agent that only fetched the URL and got an empty SPA shell. It is built
+  from `WEBMCP_TOOL_SPECS` and emitted by a Vite plugin rather than committed,
+  so it cannot become a third copy of the contract that drifts — which is also
+  why `manifest.ts` and everything it imports must stay free of the `@/` alias
+  and of DOM globals (`vite.config.ts` is loaded by esbuild with neither), a
+  rule `manifest.test.ts` enforces against the module *source*. `index.html`
+  points at it with `<link rel="mcp-tools">` plus a `<meta name="webmcp">`;
+  both name the editor routes rather than claiming tools exist on the current
+  page, because that same HTML also serves the showcase at `/`. Routes in the
+  manifest are written under the configured `base` (the Pages build is not at
+  the origin root). This used to need two workbox carve-outs — keeping `json`
+  out of the precache so the manifest could not go stale, and denylisting
+  `/webmcp.json` from the navigation fallback so `page.goto` got the manifest
+  rather than the precached SPA shell. Both are gone with the service worker
+  (see "No service worker" below): nothing precaches, and the host's
+  single-page-application fallback only applies to paths with no real file,
+  which `/webmcp.json` is not.
+- `webmcp.e2e.json` at the repo root is the expectation manifest — risk class,
+  annotations and a safe fixture input per tool. Nothing executes it; it is
+  what a person checks a running editor against.
+
+### No service worker
+
+This app deliberately ships none, and `public/sw.js` is a tombstone rather
+than a worker: browsers that loaded a pre-removal build still have the old
+workbox worker registered at that URL and keep polling it, so the file has to
+keep existing to tell them to unregister, drop their caches and reload. It
+skips `/app` clients on purpose — an editor document is in-memory only, so
+force-reloading that tab would discard unsaved work; those tabs are
+unregistered too and pick up the live bundle on the user's own next reload.
+Do not add a `fetch` handler to it.
+
+**Never delete `public/sw.js`, and do not treat that as a temporary state.**
+The obvious assumption — that once the removal shipped, a missing `/sw.js`
+would simply 404 and the browser would give up on the worker — is wrong, and
+was measured rather than reasoned about. Serving `404 text/plain` (exactly
+what this host returns for a deleted file — it does *not* fall back to the SPA
+shell) leaves the registration, the precache and the stale page fully intact
+after repeated navigations, in both chromium and webkit. A 404 is not an
+unregister signal; it just fails the update check and keeps what is already
+installed. So deleting this file does not retire the worker, it freezes every
+client that still holds one, permanently.
+
+There is also no way to know when the last such client has checked in. That
+would need `/sw.js` request counts, and the Render static site emits only
+build logs — no request logs at all. Nothing else ever fetches this file (the
+app registers no worker), so its traffic is exactly the population still stuck
+— which is precisely the number that cannot be observed here. With no
+observable stopping condition and a 2 kB cost, the file is permanent.
+
+To verify a change to it, drive a real browser: serve a page whose old worker
+precaches a stale copy of itself, swap `/sw.js` to the candidate script, and
+assert the client ends up unregistered, cacheless and on the live bundle
+without a reload loop, while an open `/app` tab keeps its document. Vitest
+cannot: it never executes a service worker.
+
+Nothing may call `serviceWorker.register()` again. `src/__tests__/
+serviceWorkerRemoval.test.ts` enforces both halves — the tombstone's contents
+and the absence of any registration in `src/**` — because neither is visible
+to any other test: the worker never runs under Vitest.
+
+The web app manifest stays (`public/manifest.webmanifest`, base-relative URLs
+so it works under any deploy base), so icons, theme colour and iOS
+add-to-home-screen are unaffected. Chrome's install prompt needs a worker and
+is the one capability given up.
+
+### The agent's self-improvement, seen from the frontend
+
+The backend (v0.38.0+) lets the design agent keep per-user memory and write its
+own skills. Everything here is the *visibility* half of that: the rule is that
+the agent never changes itself invisibly. All of it is inert when the backend
+has `MEMORY_ENABLED` / `SELF_SKILLS_ENABLED` off — the tools simply never
+appear in a turn and the activity endpoint returns nothing.
+
+- **`src/lib/userId.ts`** — `pen.userId`, an anonymous id generated once and
+  kept in `localStorage`, sent in every `/api/chat` body by `useDesignChat`.
+  It is what the backend scopes **memory** to. Not an account: another browser
+  or a cleared storage is a different identity with empty memory. Learned
+  **skills are global**, not scoped to it — a difference that surprises people.
+- **In-turn rows** (`MessageList.tsx` -> `MemoryActivityRow`, which replaced
+  `MemoryToolIndicator` / `SkillToolIndicator`). `memory` and `skill_manage`
+  are backend-executed, so they arrive as ordinary tool parts. **Neither ever
+  throws**: a refused write (over capacity, ambiguous match, circuit breaker, a
+  guard rejection) comes back as normal output carrying `ok: false`. So a row is
+  rendered *only* for a parsed, genuine success — anything else must fall
+  through to `ToolCallIndicator`, which shows the output and therefore the
+  error. Parse defensively; the output may be a JSON string, an object, or a
+  shape nobody anticipated. The row is English ("Memory updated", brain icon),
+  collapsed by default, with a chevron like `ToolCallIndicator`; expanded, it
+  lists WHAT changed. In-turn details come from the tool INPUT
+  (`memoryChangesFromInput`: `target` + `operations[{action, content, old_text}]`;
+  for `skill_manage`: action, name, description, old_string, new_string,
+  absorbed_into). All change shapes and their English line texts live in the
+  pure `src/lib/memoryActivity.ts` (`ChangeDetail`, `formatChange`), shared with
+  the background path. No details (older backend, or input we could not read)
+  means no chevron, just the label.
+- **`useAgentActivityNotes`** — the background review runs server-side *after*
+  the stream closes, so the model cannot mention it. This schedules two delayed
+  checks of `GET /api/memory/activity` per finished turn and records a note when
+  a `background_review` event of subsystem `memory` **or** `skill` was written
+  (FIR-71, which kept memory writes silent, is reversed: they are shown). Each
+  event may carry `detail` (`{kind:"memory", target, operations[]}` or
+  `{kind:"skill", action, name, ...}`); the note's `changes: ChangeDetail[]`
+  is built from them (`changesFromEventDetail`); memory detail may carry
+  `moreOperations` (operations beyond the backend's 10, cut), shown as a last
+  line "…and N more changes" for that event. A skill patch with an empty
+  `new_string` is a deletion ("removed <old>"), a new string alone is an
+  addition. An event without `detail` still triggers the row but adds no line.
+  A duplicate memory add (a backend no-op) is still listed. In-turn
+  "Forgot/Updated" lines show the model's `old_text` match string, not the full
+  stored entry. It reads by **event-id cursor**
+  kept in `localStorage`, never a timestamp — the endpoint filters on Postgres
+  `created_at`, so a browser clock a few minutes off would silently suppress or
+  repeat every note. A baseline against a server with no rows records a zero
+  cursor: "checked, saw nothing" has to be distinguishable from "never checked",
+  or the very first review is swallowed. The note (`ChatActivityNote`:
+  `{ id, changesByEvent?, afterMessageId | turnMessageId }`) is **UI-only**:
+  it lives in `chatStore.activityNotes[chatId]`
+  (in-memory, like the chats and their messages, so it does not survive a
+  reload), is **never added to the AI SDK `messages`** (that would reach the
+  backend and break the model's history and prompt caching), and `MessageList`
+  renders it as the same `MemoryActivityRow` inside the anchored assistant
+  message (nothing if that message was rolled back). `afterMessageId` is the
+  last assistant message when the turn finished (read once, when the checks are
+  scheduled) — not at detection time, or a message sent during the 20-60s wait
+  would carry the row, possibly the user's own bubble.
+  The note id is stable per turn/event and `addActivityNote` finds it across all
+  chats. A repeat of a known id **merges** instead of being dropped: new changes
+  are merged per EVENT: `changesByEvent` is keyed by `String(eventId)` (or
+  `noid:<its own content>` for an event without a numeric id), the merge is a
+  union by key and existing keys win. An event seen twice is listed once, but a
+  later event with identical text (add X, remove X, add X) is its own entry. The
+  row lists the values flattened (`noteChangeList`: numeric ids ascending, then
+  id-less ones). So the 20s and 60s checks, and several mounted chats, give one row
+  whose list is the union. Separate browser tabs have separate stores and can
+  each show it. **Anchoring:** newer
+  backends put `chatId` (the chat's id = `sessionId`) and `messageId` (the
+  USER message that started the reviewed turn) on each event. Events
+  are grouped per (chatId, messageId); one note `{ id, turnMessageId }` per
+  group goes to *that* chat's list (whichever chat scheduled the check). Its id
+  is the turn (`memory-activity-turn-["chatId","messageId"]`), so writes of one
+  turn seen by the 20s and the 60s checks still give one row. A chatId this tab
+  does not hold (closed, or open in another browser tab) is skipped: the shared
+  cursor still advances, so that row is lost rather than shown in the wrong
+  chat. `MessageList` renders it under the last
+  assistant message between that user message and the next one (nothing if the
+  message was rolled back or has no reply). So a late review stays under the
+  turn it reviewed. Events without both fields (older backend) fall back to
+  `{ id, afterMessageId }` in the scheduling chat, anchored at turn end as
+  above; `ChatActivityNote` has exactly one of the two anchors.
+
+### User-authored skills (the Skills page)
+
+Three kinds of skill now exist and they are easy to confuse. **Curated** skills
+are git-owned Markdown in the backend repo, read-only, listed by
+`GET /api/skills`. **Learned** skills are the ones the agent writes for itself
+(the section above) and have no frontend surface at all. **User** skills are the
+Figma-style custom ones the user writes, uploads as a `.md`, or has the agent
+draft — Postgres rows behind `/api/user-skills`, scoped to the same anonymous
+`pen.userId` as memory, and the only kind the editor can create or edit.
+
+- **`src/lib/userSkills.ts`** — the typed client, plus frontmatter parse and
+  serialize for upload/export. Every function returns an `ApiResult` union and
+  **never throws**, the same contract as `showcasePublish.ts`; the base URL
+  comes from `resolveApiUrl` (`apiBase.ts`), never a hardcoded `/api`.
+- **`src/store/userSkillStore.ts`** — modeled on `pluginStore.ts`: lazy
+  idempotent `ensureHydrated` with a shared in-flight promise, write-through
+  mutators, failures in `error` rather than exceptions. Two invariants worth
+  keeping: an `error` status must **not** short-circuit hydration (a single
+  failed request has to stay retryable — only success settles it), and
+  `pendingUpdates` gates a skill's row while a write is in flight, or a
+  double-clicked enable switch resolves out of order and leaves the toggle
+  lying about state.
+- **`available: false`** (the backend has no user-skills store configured) is
+  not an error — it renders as "the feature is off here", distinct from a
+  request that failed, which offers a Retry. Both live in `SkillsManager.tsx`,
+  rendered by `SkillsPage.tsx` (a page inside the chat panel: it replaces the
+  chat list / open-chat header while shown, not a modal) and by Settings →
+  Skills (`mode="embedded"`, mounted only once `useIdentityKey()` resolved).
+  Because Settings is another document, every successful write posts on
+  `BroadcastChannel("pen.userSkills")` and hydrated stores elsewhere run a
+  silent `refreshFromRemote()` (keeps state on failure, drops a result that a
+  local write overtook).
+- **`SlashCommandMenu.tsx`** merges the user's *enabled* skills under "Your
+  skills" alongside the hardcoded built-ins, so `/my-skill` is discoverable
+  where every other skill already was. Only user skills are slash-invocable;
+  the panel's built-in list is display-only.
+
+### File Format
+
+The editor reads/writes `.pen` files: JSON documents (`version` + `children` tree). The node types are declared in `src/types/scene.ts`.
+
+### Analytics
+
+Product analytics (PostHog) lives in `src/lib/analytics/` — `events.ts` (the
+`AnalyticsEventMap` typed catalog, one entry per event, showcase events
+included for the other agent instrumenting `src/components/showcase/**`),
+`index.ts` (public API: `initAnalytics()`, `track()`, `isAnalyticsEnabled()`,
+`capturePageview()`, `__resetAnalyticsForTests()`), `buckets.ts`
+(`bucketLength()`), `sessionTiming.ts` (the `first_prompt_sent` timer), and
+`RouteTracker.tsx` (mounted in `AppRouter.tsx`, fires `$pageview` on
+pathname change).
+
+- **No-op without a key.** `VITE_POSTHOG_KEY` unset (dev/test by default) ⇒
+  `track()` never touches the network and posthog-js is never imported.
+  `initAnalytics()` is called once, PROD-only, from `main.tsx`.
+- **Lazy-loaded.** `initAnalytics()` dynamically `import()`s posthog-js so
+  it's code-split out of the main bundle; events fired before that import
+  resolves are buffered (capped, oldest dropped) and flushed in order.
+- **NO PII EVER.** Event properties are enums, booleans, counts, or bucketed
+  numbers only (`bucketLength()`) — never prompt text, document content,
+  file names, node text, URLs of user assets, or any other user-typed
+  string. `track()` swallows all errors; a broken analytics call must never
+  break a user action.
+- Distinct id is the same anonymous id as `src/lib/userId.ts` (`pen.userId`,
+  also used for backend agent memory), passed via posthog-js's `bootstrap`
+  option so the frontend and backend agree on one identity — without
+  upgrading it to an "identified" (billed) profile (`person_profiles:
+  "identified_only"`, autocapture/pageview/session-recording all off;
+  explicit events only).
+- **New events must be added to `AnalyticsEventMap` in `events.ts` first** —
+  `track()` is typed against it, so an untyped event name is a compile
+  error.
+
+## Code Style
+
+### Naming
+
+- Components: **PascalCase** (`PixiCanvas.tsx`, `LayersPanel.tsx`)
+- Hooks: **camelCase** with `use` prefix (`useNodePlacement.ts`)
+- Stores: **camelCase** with `Store` suffix (`layoutStore.ts`)
+- Utils: **camelCase** (`colorUtils.ts`)
+
+### Imports
+
+Order: React → third-party → `@/` aliases → relative imports.
+
+### Styling
+
+- **Tailwind CSS v4** with `@tailwindcss/vite` plugin
+- `clsx()` for conditional classes, `tailwind-merge` for deduplication
+- Theme tokens defined in `src/index.css` (e.g., `bg-surface-panel`, `text-text-muted`)
+
+### TypeScript
+
+Strict mode, `noUnusedLocals`, `noUnusedParameters`. Target ES2022.
+
+## Key Directories
+
+```
+src/
+├── App.tsx                    # Root component
+├── main.tsx                   # Entry point
+├── index.css                  # Tailwind + theme tokens
+├── components/
+│   ├── canvas/                # Canvas-level UI hooks and overlays
+│   ├── chat/                  # AI chat panel components
+│   ├── properties/            # Property panel sections
+│   ├── ui/                    # Generic UI primitives
+│   ├── LayersPanel.tsx
+│   ├── LeftSidebar.tsx
+│   ├── PropertiesPanel.tsx
+│   ├── RightSidebar.tsx
+│   ├── Toolbar.tsx
+│   └── ...
+├── pixi/                      # PixiJS rendering backend
+│   ├── PixiCanvas.tsx         # Entry point
+│   ├── pixiSync.ts            # Zustand → PixiJS sync
+│   ├── pixiViewport.ts        # Viewport/pan/zoom
+│   ├── OverlayRenderer.ts
+│   ├── SelectionOverlay.ts
+│   ├── interaction/           # Input handling (drag, draw, transform, etc.)
+│   └── renderers/             # Per-node-type renderers
+├── store/                     # Zustand stores
+│   └── sceneStore/            # Scene graph store (split into modules)
+├── hooks/                     # Custom React hooks
+├── lib/                       # Tool registry, HTML→design conversion, h2d capture/paste, etc.
+├── types/                     # TypeScript types/interfaces
+├── utils/                     # Utility functions
+└── assets/                    # Static assets
+```

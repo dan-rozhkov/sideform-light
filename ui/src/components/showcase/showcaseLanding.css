@@ -1,0 +1,1336 @@
+/*
+ * Landing page styles: a 1:1 reproduction of the free Framer template "Signale"
+ * (https://try-signall.framer.website/, by Berci Hazman), with Sideform content.
+ * Everything is scoped to `.sf-landing`, which is dark-only and ignores the
+ * editor's light/dark tokens. Measurements come from the live template at
+ * 1440 / 810 / 390 px. Breakpoints match the template: desktop >= 1200,
+ * tablet 810-1199, mobile < 810.
+ */
+
+/* Inter (SIL OFL 1.1, see public/fonts/inter/OFL.txt). */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter/Inter-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter/Inter-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* The page is always dark, whatever theme the editor has stored. */
+:root.route-showcase,
+:root.route-showcase body,
+:root.route-showcase #root {
+  background-color: #020202;
+}
+
+:root.route-showcase {
+  scroll-behavior: smooth;
+  /* Portaled popups (selects, menus, toasts) inherit the dark tokens too. */
+  color-scheme: dark;
+}
+
+.sf-landing {
+  /* The one body text size (16px also keeps iOS Safari from zooming the composer on focus). */
+  /* Glass edge (Apple's Liquid Glass): bright at both ends, nearly clear in the middle. */
+  --sf-glass-stops: oklch(1 0 0 / 0.42), oklch(1 0 0 / 0.1) 22%, oklch(1 0 0 / 0.03) 50%,
+    oklch(1 0 0 / 0.1) 78%, oklch(1 0 0 / 0.3);
+  --sf-text: 16px;
+  --sf-text-leading: 1.6;
+  --sf-text-tracking: -0.02em;
+  /* The editor's primary button, white on this black page (dark mode's own --primary is grey). */
+  --primary: oklch(1 0 0);
+  --primary-foreground: oklch(0.145 0 0);
+  --sf-bg: #020202;
+  --sf-card: #050505;
+  --sf-button: #0a0a0a;
+  --sf-line: #141415;
+  /* Secondary text = the agent chat's tool-call rows (text-text-muted, dark theme). */
+  --sf-muted: var(--color-text-muted);
+  min-height: 100dvh;
+  background: var(--sf-bg);
+  color: #fff;
+  color-scheme: dark;
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: clip;
+}
+
+.sf-landing :where(h1, h2, h3, h4, h5, h6, p, ul, ol, dl, dd, hr) {
+  margin: 0;
+}
+
+.sf-landing :where(ul, ol) {
+  padding: 0;
+  list-style: none;
+}
+
+/* Buttons are the editor's own `Button` (data-slot="button"), coloured by its tokens. */
+.sf-landing a:not([data-slot="button"]) {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sf-landing :focus-visible:not([data-slot="button"]) {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ---------- Type scale ---------- */
+
+.sf-h2 {
+  font-size: 52px;
+  line-height: 1.1;
+  letter-spacing: -0.05em;
+  font-weight: 500;
+  /* Even lines: in a half-width column a long title otherwise leaves one word on the last line. */
+  text-wrap: balance;
+}
+
+.sf-h4 {
+  font-size: 32px;
+  line-height: 44.8px;
+  letter-spacing: -1.6px;
+  font-weight: 400;
+}
+
+.sf-h5 {
+  font-size: 24px;
+  line-height: 33.6px;
+  letter-spacing: -1.2px;
+  font-weight: 400;
+}
+
+.sf-h6 {
+  font-size: 20px;
+  line-height: 28px;
+  letter-spacing: -1px;
+  font-weight: 400;
+}
+
+/* Body text has ONE size on this page (--sf-text); only the uppercase meta labels are smaller. */
+.sf-body,
+.sf-sub,
+.sf-small {
+  font-size: var(--sf-text);
+  line-height: var(--sf-text-leading);
+  letter-spacing: var(--sf-text-tracking);
+  color: var(--sf-muted);
+}
+
+.sf-meta {
+  font-size: 12px;
+  line-height: 16.8px;
+  letter-spacing: -0.24px;
+  color: var(--sf-muted);
+}
+
+.sf-white {
+  color: #fff;
+}
+
+.sf-upper {
+  text-transform: uppercase;
+}
+
+/* Footer text: body size, sentence case, white; links dim a little on hover. */
+/* LegalLinks puts text-xs on its <nav>; the footer's body size wins. */
+.sf-landing .sf-footer-legal,
+.sf-landing .sf-footer-legal nav {
+  font-size: var(--sf-text);
+  line-height: var(--sf-text-leading);
+}
+
+.sf-landing .sf-footer-nav a,
+.sf-landing .sf-footer-legal a {
+  color: #fff;
+}
+
+.sf-landing .sf-footer-nav a:hover,
+.sf-landing .sf-footer-legal a:hover {
+  opacity: 0.65;
+}
+
+.sf-landing a:not([data-slot="button"]) {
+  transition: opacity 150ms ease-out;
+}
+
+/* ---------- Word / block reveal ---------- */
+
+.sf-reveal .sf-word {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(0.3em);
+}
+
+.sf-reveal.is-in .sf-word {
+  animation: sf-word-in 1s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
+}
+
+@keyframes sf-word-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.3em);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- Fixed nav ---------- */
+
+.sf-nav {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 50;
+}
+
+@keyframes sf-nav-in {
+  from {
+    opacity: 0;
+    transform: translateY(-72px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The entrance runs on the bar, not on .sf-nav: a transform animation on the header would make it a
+   backdrop root, and the blur layers below would have nothing to blur. */
+.sf-nav-inner {
+  position: relative;
+  animation: sf-nav-in 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.4s both;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 80px;
+  padding: 20px 20px 20px 40px;
+}
+
+/* Blur 12 / 6 / 3 / 1 px in bands of 100% / 6, then a page-colour wash 90% -> 70% -> 0. */
+.sf-nav-backdrop {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 112px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+
+.sf-nav.is-scrolled .sf-nav-backdrop {
+  opacity: 1;
+}
+
+.sf-nav-backdrop > div,
+.sf-nav-backdrop::after {
+  position: absolute;
+  inset: 0;
+}
+
+.sf-nav-backdrop > div:nth-child(1) {
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  mask-image: linear-gradient(to bottom, black 0%, black 16.667%, black 33.333%, transparent 50%);
+}
+
+.sf-nav-backdrop > div:nth-child(2) {
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  mask-image: linear-gradient(to bottom, transparent 16.667%, black 33.333%, black 50%, transparent 66.667%);
+}
+
+.sf-nav-backdrop > div:nth-child(3) {
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  mask-image: linear-gradient(to bottom, transparent 33.333%, black 50%, black 66.667%, transparent 83.333%);
+}
+
+.sf-nav-backdrop > div:nth-child(4) {
+  -webkit-backdrop-filter: blur(1px);
+  backdrop-filter: blur(1px);
+  mask-image: linear-gradient(to bottom, transparent 50%, black 66.667%, black 83.333%, transparent 100%);
+}
+
+.sf-nav-backdrop::after {
+  content: "";
+  background: linear-gradient(to bottom, rgb(2 2 2 / 0.9), rgb(2 2 2 / 0.7) 60%, transparent);
+}
+
+.sf-brand {
+  display: inline-flex;
+  align-items: center;
+}
+
+.sf-brand-logo {
+  display: block;
+  width: auto;
+  height: 22px;
+  color: #fff;
+}
+
+.sf-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.sf-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---------- Hero (sticky; the rest of the page scrolls over it) ---------- */
+
+.sf-hero {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  height: 100svh;
+  min-height: 560px;
+  overflow: hidden;
+  background: var(--sf-bg);
+}
+
+.sf-gradient {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.sf-hero-title,
+.sf-footer-title {
+  position: relative;
+  width: 720px;
+  max-width: 100%;
+  font-weight: 500;
+}
+
+.sf-line {
+  display: block;
+  white-space: nowrap;
+}
+
+.sf-line-start {
+  text-align: left;
+}
+
+.sf-line-end {
+  text-align: right;
+}
+
+.sf-line-center,
+.sf-hero-title .sf-line,
+.sf-footer-title .sf-line {
+  text-align: center;
+}
+
+/* The hero title is sized by its longest line, so the flex parent centers it. Its lines are
+   longer than the footer's, so it is set a step larger to read at the same scale. */
+.sf-hero-title {
+  width: auto;
+}
+
+/* The hero and footer titles share one size at every width. */
+.sf-hero-title,
+.sf-footer-title {
+  font-size: 88px;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+/* The editor window overlaps the bottom of the sticky hero; the title is lifted by
+   the same amount so it stays centered in the visible gradient. */
+.sf-landing {
+  --sf-window-overlap: 34svh;
+  --sf-window-fade: 24svh;
+}
+
+.sf-hero {
+  /* The top padding sets the title a little below the centre of the visible gradient. */
+  padding-top: 8svh;
+  padding-bottom: var(--sf-window-overlap);
+}
+
+.sf-hero-copy {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+
+/* Above the hero title: body size, white (grey would be lost on the gradient). */
+.sf-hero-eyebrow {
+  font-size: var(--sf-text);
+  line-height: var(--sf-text-leading);
+  letter-spacing: var(--sf-text-tracking);
+  font-weight: 500;
+  color: #fff;
+}
+
+.sf-hero-window {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  margin-top: calc(-1 * var(--sf-window-overlap));
+  padding: 0 40px;
+  /* The hero's gradient fades into the page colour behind the window, so its bottom edge never shows. */
+  background: linear-gradient(
+    to bottom,
+    transparent calc(var(--sf-window-overlap) - var(--sf-window-fade)),
+    var(--sf-bg) var(--sf-window-overlap)
+  );
+}
+
+.sf-hero-slides {
+  position: relative;
+  width: 100%;
+  max-width: 1200px;
+  aspect-ratio: 1440 / 900;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #1c1c1e;
+  outline: 1px solid oklch(1 0 0 / 0.1);
+  outline-offset: -1px;
+  box-shadow: 0 40px 120px -20px rgb(0 0 0 / 0.8);
+}
+
+.sf-hero-slide {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 1s ease-in-out;
+}
+
+.sf-hero-slide.is-active {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sf-hero-slide {
+    transition: none;
+  }
+}
+
+/* ---------- Sections ---------- */
+
+.sf-over {
+  position: relative;
+  z-index: 1;
+  background: var(--sf-bg);
+}
+
+.sf-section {
+  padding: 96px 40px;
+  background: var(--sf-bg);
+}
+
+.sf-container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.sf-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 72px;
+}
+
+.sf-head {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 80px;
+}
+
+.sf-head-wide {
+  grid-template-columns: 1fr;
+  /* Title and subtitle stack here, so the 80px column gap would become an empty row. */
+  gap: 24px;
+}
+
+.sf-sub {
+  text-align: right;
+}
+
+/* A one-column head has no title beside the subtitle, so right-aligning it only strands a long line. */
+.sf-head-wide .sf-sub {
+  max-width: 640px;
+  text-align: left;
+}
+
+/* About */
+
+.sf-about-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+  gap: 80px;
+}
+
+.sf-about-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.sf-lead {
+  font-size: var(--sf-text);
+  line-height: var(--sf-text-leading);
+  letter-spacing: var(--sf-text-tracking);
+}
+
+.sf-button-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Cards */
+
+/* Stacked cards: each sticks below the header, offset by its index, so the next one slides over it.
+   Concentric radii: card 20px with 16px padding, screenshot 4px. */
+.sf-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.sf-card {
+  position: sticky;
+  top: calc(96px + var(--i, 0) * 16px);
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 16px;
+  padding: 16px;
+  border-radius: 20px;
+  background: var(--sf-card);
+  box-shadow: 0 -24px 48px -16px rgb(0 0 0 / 0.9);
+}
+
+/* Glass edge (as in Apple's Liquid Glass): a 1px gradient stroke, bright at the top-left and
+   bottom-right corners like a specular highlight, nearly clear along the sides. */
+.sf-card::before,
+.sf-ticket::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--sf-glass-stops));
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  pointer-events: none;
+}
+
+.sf-card:not(:has(.sf-card-shot)) {
+  grid-template-columns: 1fr;
+}
+
+.sf-card-shot {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  outline: 1px solid oklch(1 0 0 / 0.1);
+  outline-offset: -1px;
+}
+
+/* Promo clip: the wrapper carries .sf-card-shot (the one-column rule); the button sits in its corner.
+   The clip is flush with the card's edges: the card drops its padding and clips the corners, the
+   text column keeps the old 32px inset, and the glass edge is lifted above the clip. */
+.sf-video {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  align-self: stretch;
+  border-radius: 0;
+  outline: none;
+  background: #1a1a1a;
+  overflow: hidden;
+}
+
+.sf-card:has(.sf-video) {
+  padding: 0;
+  overflow: hidden;
+}
+
+.sf-card:has(.sf-video)::before {
+  z-index: 1;
+}
+
+.sf-card:has(.sf-video) .sf-card-body {
+  padding: 32px 32px 32px 16px;
+}
+
+.sf-video-el {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #1a1a1a;
+}
+
+.sf-video-toggle {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: oklch(0 0 0 / 0.55);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+}
+
+.sf-card:hover .sf-video-toggle,
+.sf-video-toggle:focus-visible {
+  opacity: 1;
+}
+
+.sf-video-toggle:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+@media (hover: none) {
+  .sf-video-toggle {
+    opacity: 1;
+  }
+}
+
+/* Card and workflow titles share one size. */
+.sf-card-title {
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+/* Text inside cards is always white (secondary grey is for text on the page itself). */
+.sf-card :is(.sf-body, .sf-sub, .sf-small),
+.sf-ticket :is(.sf-body, .sf-sub, .sf-small) {
+  color: #fff;
+}
+
+.sf-card-body {
+  display: flex;
+  flex-direction: column;
+  /* Text right under the title: with space-between a tall card pushed it to the bottom, where the
+     next sticky card cut it off mid-line. */
+  justify-content: flex-start;
+  gap: 20px;
+  padding: 16px;
+}
+
+.sf-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 53px;
+}
+
+.sf-dots {
+  flex: none;
+}
+
+.sf-card-cta {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Workflows (the template's schedule columns) */
+
+.sf-days {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 64px;
+}
+
+.sf-day {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.sf-day-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Steps drawn as chat tool-call rows; each fades up when it starts (see RoleSteps). */
+.sf-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.sf-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sf-step {
+  opacity: 0;
+  transform: translateY(4px);
+  transition-property: opacity, transform;
+  transition-duration: 200ms;
+  transition-timing-function: ease-out;
+}
+
+.sf-step.is-in {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sf-step {
+    transition: none;
+  }
+}
+
+/* Gallery */
+
+.sf-subrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 32px;
+  margin-bottom: 16px;
+}
+
+/* The "Browse apps" row scrolls with the page (it used to stick under the header). */
+.sf-gallery > .sf-subrow {
+  padding-block: 12px 16px;
+}
+
+.sf-filters {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sf-gallery-note {
+  padding: 40px 24px;
+  background: var(--sf-card);
+  text-align: center;
+  font-size: var(--sf-text);
+  line-height: var(--sf-text-leading);
+  letter-spacing: var(--sf-text-tracking);
+}
+
+.sf-gallery-note-detail {
+  margin-top: 4px;
+  font-size: var(--sf-text);
+  color: var(--sf-muted);
+}
+
+/* Get started (the template's ticket cards) */
+
+/* A plain horizontal slider: native scroll with snapping, no arrows, no script. */
+.sf-tickets {
+  display: flex;
+  gap: 24px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  /* Full bleed: the scroller reaches both page edges; the first card and every snap stop sit at the
+     content edge (the page gutter, or the side of the centred 1200px container). No % here:
+     scroll-padding resolves % against the scroller itself, which put the snap at the screen edge. */
+  --sf-edge: max(var(--sf-pad-x, 40px), calc((100vw - 1200px) / 2));
+  margin-inline: calc(50% - 50vw);
+  padding-inline: var(--sf-edge);
+  scroll-padding-inline: var(--sf-edge);
+  /* Room for the glass edge, which a scroller would otherwise clip. */
+  padding-block: 2px;
+}
+
+.sf-tickets::-webkit-scrollbar {
+  display: none;
+}
+
+.sf-tickets > .sf-ticket {
+  flex: 0 0 min(420px, 85%);
+  scroll-snap-align: start;
+}
+
+/* Same surface as the app cards above: 20px radius, card fill, glass edge (shared ::before). */
+.sf-ticket {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 40px;
+  min-height: 568px;
+  padding: 28px;
+  border-radius: 20px;
+  background: var(--sf-card);
+}
+
+.sf-ticket-content {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.sf-bullets {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sf-bullets li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* Why: three reasons (icon, label, claim) in one row from 1000px, two columns below, one on phones. */
+
+.sf-reasons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 48px 40px;
+}
+
+.sf-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sf-reason-icon {
+  margin-bottom: 8px;
+  color: #fff;
+}
+
+/* FAQ */
+
+.sf-faq {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+  gap: 80px;
+}
+
+.sf-accordion details {
+  border-bottom: 1px solid var(--sf-line);
+}
+
+.sf-accordion summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 24px 0;
+  font-size: var(--sf-text);
+  line-height: var(--sf-text-leading);
+  letter-spacing: var(--sf-text-tracking);
+  cursor: pointer;
+  list-style: none;
+}
+
+.sf-accordion summary::-webkit-details-marker {
+  display: none;
+}
+
+.sf-accordion summary svg {
+  flex: none;
+  color: #fff;
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sf-accordion details[open] summary svg {
+  transform: rotate(45deg);
+}
+
+.sf-accordion details > p {
+  margin-top: -8px;
+  padding-bottom: 24px;
+  font-size: var(--sf-text);
+  line-height: var(--sf-text-leading);
+  letter-spacing: var(--sf-text-tracking);
+  color: var(--sf-muted);
+  animation: sf-answer-in 0.35s ease both;
+}
+
+.sf-accordion details > p a {
+  color: #fff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@keyframes sf-answer-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- Footer (the gradient again) ---------- */
+
+.sf-footer {
+  position: relative;
+  height: 640px;
+  overflow: hidden;
+  background: var(--sf-bg);
+  font-size: var(--sf-text);
+  line-height: var(--sf-text-leading);
+  letter-spacing: var(--sf-text-tracking);
+  color: #fff;
+}
+
+.sf-footer > :not(.sf-gradient) {
+  position: absolute;
+}
+
+.sf-footer-tag {
+  /* Hold the tag's one text line and the 32px button (size lg, h-8) on the same centre line. */
+  top: 40px;
+  left: 40px;
+}
+
+.sf-footer-cta {
+  top: calc(40px + (var(--sf-text) * var(--sf-text-leading) - 32px) / 2);
+  right: 40px;
+}
+
+/* Sized by its longest line and centred in the footer, lines centred like the hero title. */
+.sf-footer-title {
+  top: 44%;
+  left: 50%;
+  width: max-content;
+  max-width: calc(100% - 2 * var(--sf-pad-x, 40px));
+  color: #fff;
+  transform: translate(-50%, -50%);
+}
+
+.sf-footer-nav {
+  bottom: calc(40px + env(safe-area-inset-bottom));
+  left: 40px;
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.sf-footer-credits {
+  bottom: calc(40px + env(safe-area-inset-bottom));
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.sf-footer-credits a:hover {
+  text-decoration: underline;
+}
+
+.sf-footer-legal {
+  right: 40px;
+  bottom: calc(40px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.sf-landing .sf-footer-legal a {
+  text-decoration: none;
+}
+
+/* ---------- Desktop ---------- */
+
+@media (min-width: 1000px) {
+  .sf-reasons {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1200px) {
+  /* Use cases: the three columns share row tracks so head, prompt and answer line up across them. */
+  .sf-day {
+    display: grid;
+    grid-row: span 3;
+    grid-template-rows: subgrid;
+  }
+
+  /* The prompt box stretches to the shared row; its icon footer stays at the bottom. */
+  .sf-prompt {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sf-prompt > :last-child {
+    margin-top: auto;
+  }
+
+  /* Get started: all three cards fit, so the row is a plain grid in the content column, not the
+     full-bleed slider (its 100vw maths shifts the cards by half a classic scrollbar). */
+  .sf-tickets {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-inline: 0;
+    padding-inline: 0;
+    overflow: visible;
+    scroll-snap-type: none;
+  }
+
+  .sf-ticket {
+    min-height: 380px;
+  }
+}
+
+/* ---------- Tablet ---------- */
+
+@media (max-width: 1199px) {
+  .sf-nav-inner {
+    padding-left: 32px;
+  }
+
+  .sf-hero-title,
+  .sf-footer-title {
+    font-size: 76px;
+  }
+
+  .sf-hero-window {
+    padding: 0 32px;
+  }
+
+  .sf-section {
+    padding: 80px 32px;
+  }
+
+  .sf-stack {
+    gap: 64px;
+  }
+
+  .sf-head {
+    align-items: flex-start;
+  }
+
+  .sf-h2 {
+    font-size: 46px;
+  }
+
+  .sf-card {
+    grid-template-columns: 1fr;
+  }
+
+  .sf-card:has(.sf-video) .sf-card-body {
+    padding: 32px;
+  }
+
+  .sf-days {
+    gap: 48px;
+  }
+
+  .sf-faq {
+    gap: 60px;
+  }
+
+  .sf-footer {
+    height: 600px;
+  }
+
+  .sf-footer-nav,
+  .sf-footer-legal {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .sf-footer-legal {
+    align-items: flex-end;
+  }
+
+  .sf-footer-nav,
+  .sf-footer-credits,
+  .sf-footer-legal {
+    bottom: calc(32px + env(safe-area-inset-bottom));
+  }
+
+  .sf-footer-nav {
+    left: 32px;
+  }
+
+  .sf-footer-legal {
+    right: 32px;
+  }
+
+  .sf-footer-tag {
+    left: 32px;
+  }
+
+  .sf-footer-cta {
+    right: 32px;
+  }
+}
+
+/* ---------- Mobile ---------- */
+
+@media (max-width: 809px) {
+  .sf-nav-inner {
+    padding: 20px;
+  }
+
+  /* Only the buttons stay on phones (Download and the menu); the account menu goes. */
+  .sf-nav-actions > :not([data-slot="button"], [data-slot="dropdown-menu-trigger"]) {
+    display: none;
+  }
+
+  .sf-hero {
+    height: 600px;
+    min-height: 0;
+  }
+
+  .sf-hero-title,
+  .sf-footer-title {
+    font-size: min(76px, 12.5vw);
+  }
+
+  .sf-landing {
+    --sf-window-overlap: 150px;
+    --sf-window-fade: 110px;
+  }
+
+  .sf-hero-window {
+    padding: 0 16px;
+  }
+
+  .sf-hero-slides {
+    border-radius: 4px;
+  }
+
+  .sf-section {
+    padding: 60px 20px;
+  }
+
+  .sf-stack {
+    gap: 40px;
+  }
+
+  .sf-head {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .sf-sub {
+    text-align: left;
+  }
+
+  .sf-h2 {
+    font-size: 44px;
+  }
+
+  .sf-about-grid {
+    grid-template-columns: 1fr;
+    gap: 60px;
+  }
+
+  .sf-card {
+    top: calc(88px + var(--i, 0) * 12px);
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .sf-ticket {
+    border-radius: 16px;
+  }
+
+  .sf-card-body {
+    padding: 12px;
+  }
+
+  /* One column: the clip is on top, so the text gets the inset on every side. */
+  .sf-card:has(.sf-video) .sf-card-body {
+    padding: 24px;
+  }
+
+  .sf-card-title {
+    font-size: 28px;
+  }
+
+  .sf-reasons {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+
+  .sf-days {
+    grid-template-columns: 1fr;
+    gap: 80px;
+  }
+
+  /* Stacked roles: a hairline divider in the middle of each gap. */
+  .sf-day + .sf-day::before {
+    content: "";
+    position: absolute;
+    inset: -40px 0 auto;
+    height: 1px;
+    /* Brightest in the middle, fading to clear at both ends. */
+    background: linear-gradient(90deg, transparent, oklch(1 0 0 / 0.35) 50%, transparent);
+  }
+
+  .sf-ticket {
+    gap: 32px;
+    min-height: 0;
+    padding: 24px;
+  }
+
+  .sf-faq {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+
+  .sf-footer {
+    height: 600px;
+  }
+
+  .sf-footer-tag {
+    top: 20px;
+    left: 20px;
+  }
+
+  .sf-footer-cta {
+    top: 20px;
+    right: 20px;
+  }
+
+  .sf-footer-nav,
+  .sf-footer-credits,
+  .sf-footer-legal {
+    bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .sf-footer-nav {
+    left: 20px;
+  }
+
+  .sf-footer-legal {
+    right: 20px;
+  }
+
+  .sf-footer-credits {
+    flex-direction: column;
+    gap: 20px;
+    text-align: center;
+  }
+}
+
+/* ---------- Reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  :root.route-showcase {
+    scroll-behavior: auto;
+  }
+
+  .sf-nav-inner {
+    animation: none;
+  }
+
+  .sf-nav-backdrop,
+  .sf-accordion summary svg {
+    transition: none;
+  }
+
+  .sf-reveal .sf-word,
+  .sf-reveal.is-in .sf-word {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+
+  .sf-accordion details > p {
+    animation: none;
+  }
+}
+
+/* ---------- Safe areas (viewport-fit=cover) ---------- */
+
+.sf-nav-inner {
+  padding-top: calc(20px + env(safe-area-inset-top));
+  padding-right: max(20px, env(safe-area-inset-right));
+  min-height: 80px;
+  height: auto;
+}
+
+.sf-section {
+  padding-right: max(var(--sf-pad-x, 40px), env(safe-area-inset-right));
+  padding-left: max(var(--sf-pad-x, 40px), env(safe-area-inset-left));
+}
+
+.sf-landing {
+  --sf-pad-x: 40px;
+}
+
+@media (max-width: 1199px) {
+  .sf-landing {
+    --sf-pad-x: 32px;
+  }
+}
+
+@media (max-width: 809px) {
+  .sf-landing {
+    --sf-pad-x: 20px;
+  }
+}
+
+/* Phones: the template's About row fits "GET TICKETS / SEE SCHEDULE" in
+   350px; our two labels are longer, so the buttons tighten and may wrap, and
+   the four facts sit in a 2x2 grid instead of overflowing the viewport. A
+   plain `1fr` track would grow to the buttons' min-content width. */
+@media (max-width: 809px) {
+  .sf-about-grid,
+  .sf-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sf-button-row {
+    flex-wrap: wrap;
+  }
+}

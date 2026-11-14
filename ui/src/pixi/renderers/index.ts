@@ -1,0 +1,538 @@
+import { Container, Graphics } from "pixi.js";
+import type {
+  FlatSceneNode,
+  FlatFrameNode,
+  FlatGroupNode,
+  TextNode,
+  RectNode,
+  EllipseNode,
+  LineNode,
+  PolygonNode,
+  PathNode,
+  EmbedNode,
+  PerCornerRadius,
+} from "@/types/scene";
+import { getResolvedRenderableEffects } from "./colorHelpers";
+import { applyShadows } from "./shadowHelpers";
+import { applyLayerBlur } from "./blurHelpers";
+import {
+  applyMaterialSurface,
+  resizeMaterialSurface,
+  shouldUpdateMaterialSurface,
+} from "./liveBackdropHelpers";
+import { createRectContainer, updateRectContainer, drawRect } from "./rectRenderer";
+import { createEllipseContainer, updateEllipseContainer, drawEllipse } from "./ellipseRenderer";
+import { createTextContainer, updateTextContainer } from "./textRenderer";
+import { createLineContainer, updateLineContainer } from "./lineRenderer";
+import { createPolygonContainer, updatePolygonContainer } from "./polygonRenderer";
+import { createPathContainer, updatePathContainer } from "./pathRenderer";
+import { createFrameContainer, updateFrameContainer, drawFrameBackground } from "./frameRenderer";
+import { drawRoundedShape } from "./fillStrokeHelpers";
+import { drawLayoutGrids } from "./layoutGridRenderer";
+import { createGroupContainer } from "./groupRenderer";
+import { createEmbedContainer, updateEmbedContainer } from "./embedRenderer";
+import { createConnectorContainer, updateConnectorContainer } from "./connectorRenderer";
+import { applyShaderFill, shouldRebakeShader, resizeShaderFill, isSizeOnlyShaderChange } from "./shaderFillHelpers";
+import { applyNoiseEffects } from "./noiseEffectHelpers";
+import { applyVideoFills, applyVideoFillsEllipse } from "./videoFillHelpers";
+import { drawOutlineBBox, isOutlineRenderMode } from "./outlineHelpers";
+import type { ConnectorNode } from "@/types/scene";
+import type { ShadowShape } from "./shadowHelpers";
+
+function getNodeCornerRadius(node: FlatSceneNode): number | undefined {
+  if (node.type === "frame" || node.type === "rect") {
+    return node.cornerRadius;
+  }
+  return undefined;
+}
+
+function getNodeCornerRadiusPerCorner(node: FlatSceneNode): PerCornerRadius | undefined {
+  if (node.type === "frame" || node.type === "rect") {
+    return node.cornerRadiusPerCorner;
+  }
+  return undefined;
+}
+
+function getNodeCornerSmoothing(node: FlatSceneNode): number | undefined {
+  if (node.type === "frame" || node.type === "rect") {
+    return node.cornerSmoothing;
+  }
+  return undefined;
+}
+
+function getNodeShadowShape(node: FlatSceneNode): ShadowShape {
+  if (node.type === "ellipse") return "ellipse";
+  return "rect";
+}
+
+function getNodeShadowSize(node: FlatSceneNode, container: Container): { width: number; height: number } {
+  if (node.type === "frame") {
+    const effectiveWidth = (container as unknown as { _effectiveWidth?: number })._effectiveWidth;
+    const effectiveHeight = (container as unknown as { _effectiveHeight?: number })._effectiveHeight;
+    return {
+      width: effectiveWidth ?? node.width,
+      height: effectiveHeight ?? node.height,
+    };
+  }
+  return { width: node.width, height: node.height };
+}
+
+function getSnappedNodePosition(node: FlatSceneNode): { x: number; y: number } {
+  if (node.type !== "embed") return { x: node.x, y: node.y };
+  return { x: Math.round(node.x), y: Math.round(node.y) };
+}
+
+/**
+ * Create a PixiJS Container for a given flat scene node.
+ * This is the main dispatch function.
+ */
+export function createNodeContainer(
+  node: FlatSceneNode,
+  nodesById: Record<string, FlatSceneNode>,
+  childrenById: Record<string, string[]>,
+): Container {
+  let container: Container;
+
+  switch (node.type) {
+    case "frame":
+      container = createFrameContainer(
+        node as FlatFrameNode,
+        nodesById,
+        childrenById,
+      );
+      break;
+    case "group":
+      container = createGroupContainer(
+        node as FlatGroupNode,
+        nodesById,
+        childrenById,
+      );
+      break;
+    case "rect":
+      container = createRectContainer(node as RectNode);
+      break;
+    case "ellipse":
+      container = createEllipseContainer(node as EllipseNode);
+      break;
+    case "text":
+      container = createTextContainer(node as TextNode);
+      break;
+    case "line":
+      container = createLineContainer(node as LineNode);
+      break;
+    case "polygon":
+      container = createPolygonContainer(node as PolygonNode);
+      break;
+    case "path":
+      container = createPathContainer(node as PathNode);
+      break;
+    case "embed":
+      container = createEmbedContainer(node as EmbedNode);
+      break;
+    case "connector":
+      container = createConnectorContainer(node as ConnectorNode);
+      break;
+    default: {
+      container = new Container();
+      if (isOutlineRenderMode()) {
+        // The switch is exhaustive over `FlatSceneNode["type"]`, so `node`
+        // narrows to `never` here — fall back to the pre-switch reference,
+        // which every scene node carries `width`/`height` on regardless of
+        // type (this branch only exists as a safety net for a future node
+        // type added to the union without a case above).
+        const fallbackNode = node as FlatSceneNode;
+        const gfx = new Graphics();
+        gfx.label = "outline-bbox-fallback";
+        drawOutlineBBox(gfx, fallbackNode.width, fallbackNode.height);
+        container.addChild(gfx);
+      }
+    }
+  }
+
+  // Common properties
+  container.label = node.id;
+  // Position will be set by applyAutoLayoutPositions for auto-layout children
+  // For now, set it from node (will be overwritten if in auto-layout)
+  const initialPos = getSnappedNodePosition(node);
+  container.position.set(initialPos.x, initialPos.y);
+  container.alpha = node.opacity ?? 1;
+  container.visible = node.visible !== false && node.enabled !== false;
+
+  // Rotation (convert degrees to radians)
+  if (node.rotation) {
+    container.rotation = (node.rotation * Math.PI) / 180;
+  }
+
+  // Flip via scale
+  if (node.flipX || node.flipY) {
+    container.scale.set(node.flipX ? -1 : 1, node.flipY ? -1 : 1);
+    if (node.flipX) container.pivot.x = node.width;
+    if (node.flipY) container.pivot.y = node.height;
+  }
+
+  // Shadow/blur/background-blur/shader: skipped entirely in outline mode —
+  // a wireframe view shows only geometry strokes, per the outline renderers
+  // above. Left as no-ops here (rather than each individual helper checking
+  // the mode) so this is the single place that decides what's "chrome" vs.
+  // "shape" for the effect stack.
+  if (!isOutlineRenderMode()) {
+    // Shadow stack
+    const initialShadowSize = getNodeShadowSize(node, container);
+    applyShadows(
+      container,
+      getResolvedRenderableEffects(node),
+      initialShadowSize.width,
+      initialShadowSize.height,
+      getNodeCornerRadius(node),
+      getNodeShadowShape(node),
+      getNodeCornerRadiusPerCorner(node),
+      getNodeCornerSmoothing(node),
+    );
+
+    // Layer blur (container-level filter; first visible blur in the stack wins)
+    applyLayerBlur(container, getResolvedRenderableEffects(node));
+
+    // Noise/grain (up to two masked sprites, appended above fills and children)
+    applyNoiseEffects(
+      container,
+      node,
+      getResolvedRenderableEffects(node),
+      initialShadowSize.width,
+      initialShadowSize.height,
+    );
+
+    // Material surface (Glass / background blur): a live backdrop filter
+    // (`GlassBackdropFilter`) reading `activeBackTexture` every render, so —
+    // unlike the old baked snapshot — it has no dependency on the container
+    // already being mounted at its final position. Applied synchronously,
+    // no RAF deferral needed.
+    applyMaterialSurface(container, node, getResolvedRenderableEffects(node));
+
+    // Shader fill (baked texture in-scene, so it obeys z-order)
+    if (node.shader) applyShaderFill(container, node);
+  }
+
+  return container;
+}
+
+/**
+ * Update an existing container when the node changes.
+ */
+export function updateNodeContainer(
+  container: Container,
+  node: FlatSceneNode,
+  prev: FlatSceneNode,
+  nodesById: Record<string, FlatSceneNode>,
+  childrenById: Record<string, string[]>,
+  skipPosition?: boolean,
+): void {
+  // Position - skip for auto-layout children (handled by applyAutoLayoutPositions)
+  if (!skipPosition && (node.x !== prev.x || node.y !== prev.y)) {
+    const pos = getSnappedNodePosition(node);
+    container.position.set(pos.x, pos.y);
+  }
+
+  // Opacity
+  if (node.opacity !== prev.opacity) {
+    container.alpha = node.opacity ?? 1;
+  }
+
+  // Visibility
+  if (node.visible !== prev.visible || node.enabled !== prev.enabled) {
+    container.visible = node.visible !== false && node.enabled !== false;
+  }
+
+  // Rotation
+  if (node.rotation !== prev.rotation) {
+    container.rotation = ((node.rotation ?? 0) * Math.PI) / 180;
+  }
+
+  // Flip
+  if (node.flipX !== prev.flipX || node.flipY !== prev.flipY) {
+    container.scale.set(node.flipX ? -1 : 1, node.flipY ? -1 : 1);
+    container.pivot.x = node.flipX ? node.width : 0;
+    container.pivot.y = node.flipY ? node.height : 0;
+  }
+
+  // Type-specific updates
+  switch (node.type) {
+    case "frame":
+      updateFrameContainer(
+        container,
+        node as FlatFrameNode,
+        prev as FlatFrameNode,
+        nodesById,
+        childrenById,
+      );
+      break;
+    case "group":
+      // Group just needs position/visibility which is handled above
+      break;
+    case "rect":
+      updateRectContainer(container, node as RectNode, prev as RectNode);
+      break;
+    case "ellipse":
+      updateEllipseContainer(
+        container,
+        node as EllipseNode,
+        prev as EllipseNode,
+      );
+      break;
+    case "text":
+      updateTextContainer(container, node as TextNode, prev as TextNode);
+      break;
+    case "line":
+      updateLineContainer(container, node as LineNode, prev as LineNode);
+      break;
+    case "polygon":
+      updatePolygonContainer(
+        container,
+        node as PolygonNode,
+        prev as PolygonNode,
+      );
+      break;
+    case "path":
+      updatePathContainer(container, node as PathNode, prev as PathNode);
+      break;
+    case "embed":
+      updateEmbedContainer(container, node as EmbedNode, prev as EmbedNode);
+      break;
+    case "connector":
+      updateConnectorContainer(
+        container,
+        node as ConnectorNode,
+        prev as ConnectorNode,
+      );
+      break;
+  }
+
+  // Shadow/blur/background-blur/shader: skipped entirely in outline mode —
+  // see the matching guard in createNodeContainer above.
+  if (isOutlineRenderMode()) return;
+
+  // Shadow (after type-specific updates so frame effective size stays in sync)
+  if (
+    node.effect !== prev.effect ||
+    node.effects !== prev.effects ||
+    node.effectStyleId !== prev.effectStyleId ||
+    node.width !== prev.width ||
+    node.height !== prev.height ||
+    (node.type === "frame" && (node.sizing !== (prev as FlatFrameNode).sizing || node.layout !== (prev as FlatFrameNode).layout)) ||
+    (node.type === "frame" && (node.cornerRadius !== (prev as FlatFrameNode).cornerRadius || node.cornerRadiusPerCorner !== (prev as FlatFrameNode).cornerRadiusPerCorner || node.cornerSmoothing !== (prev as FlatFrameNode).cornerSmoothing)) ||
+    (node.type === "rect" && (node.cornerRadius !== (prev as RectNode).cornerRadius || node.cornerRadiusPerCorner !== (prev as RectNode).cornerRadiusPerCorner || node.cornerSmoothing !== (prev as RectNode).cornerSmoothing))
+  ) {
+    const shadowSize = getNodeShadowSize(node, container);
+    applyShadows(
+      container,
+      getResolvedRenderableEffects(node),
+      shadowSize.width,
+      shadowSize.height,
+      getNodeCornerRadius(node),
+      getNodeShadowShape(node),
+      getNodeCornerRadiusPerCorner(node),
+      getNodeCornerSmoothing(node),
+    );
+    applyLayerBlur(container, getResolvedRenderableEffects(node));
+    applyNoiseEffects(
+      container,
+      node,
+      getResolvedRenderableEffects(node),
+      shadowSize.width,
+      shadowSize.height,
+    );
+  }
+
+  // Material surface (Glass / background blur): a live filter, so every
+  // trigger — effect, size, or shape change, or hidden->visible — takes the
+  // same immediate path. No debounce: unlike the old baked snapshot, this
+  // just rewrites uniforms, no GPU readback.
+  if (shouldUpdateMaterialSurface(node, prev)) {
+    applyMaterialSurface(container, node, getResolvedRenderableEffects(node));
+  }
+
+  // Shader fill: config change / became-visible → immediate re-bake; size-only
+  // change (interactive resize) → cheap stretch + debounced re-bake, mirroring
+  // the auto-layout path in applyLayoutSize. Direct re-bake at RAF rate spawns
+  // parallel offscreen WebGL contexts and can exhaust the browser's limit.
+  if (shouldRebakeShader(node, prev)) {
+    if (isSizeOnlyShaderChange(node, prev)) {
+      resizeShaderFill(container, node, node.width, node.height);
+    } else {
+      applyShaderFill(container, node);
+    }
+  }
+}
+
+/**
+ * Apply layout-computed size to a container's graphics.
+ * Used for fill_container children in auto-layout frames.
+ */
+export function applyLayoutSize(
+  container: Container,
+  node: FlatSceneNode,
+  layoutWidth: number,
+  layoutHeight: number,
+): void {
+  // Skip if size hasn't changed — but compare against the size the container was
+  // ACTUALLY last drawn at, not the stored node.width/height. For fit_content
+  // frames the rendered size is layout-driven and diverges from the stored node
+  // size: the frame container tracks its drawn size in `_effectiveWidth`/
+  // `_effectiveHeight` (maintained by frameRenderer + below). Comparing against
+  // the stale node.width made fit frames skip a needed redraw whenever the
+  // computed size returned to a value equal to the stored width — e.g. after
+  // undoing a text edit, or inserting then removing a child — leaving the frame
+  // stuck at its previously-rendered size. Non-frame nodes don't maintain a
+  // drawn-size field, so they keep comparing against node.width as before.
+  const sizedFrame = container as Container & {
+    _effectiveWidth?: number;
+    _effectiveHeight?: number;
+  };
+  const isFrame = node.type === "frame";
+  const drawnWidth = isFrame ? sizedFrame._effectiveWidth ?? node.width : node.width;
+  const drawnHeight = isFrame ? sizedFrame._effectiveHeight ?? node.height : node.height;
+  if (drawnWidth === layoutWidth && drawnHeight === layoutHeight) return;
+  if (isFrame) {
+    sizedFrame._effectiveWidth = layoutWidth;
+    sizedFrame._effectiveHeight = layoutHeight;
+  }
+
+  switch (node.type) {
+    case "rect": {
+      const gfx = container.getChildByLabel("rect-bg") as Graphics;
+      if (gfx) {
+        gfx.clear();
+        drawRect(gfx, { ...node, width: layoutWidth, height: layoutHeight } as RectNode);
+      }
+      if (!isOutlineRenderMode()) {
+        applyVideoFills(
+          container,
+          node,
+          layoutWidth,
+          layoutHeight,
+          (node as RectNode).cornerRadius,
+          (node as RectNode).cornerRadiusPerCorner,
+          (node as RectNode).cornerSmoothing,
+        );
+        const shadowRectNode = { ...node, width: layoutWidth, height: layoutHeight } as RectNode;
+        // Shadows are redrawn at the new size; layer blur is a size-independent container
+        // filter and needs no re-apply here.
+        applyShadows(
+          container,
+          getResolvedRenderableEffects(shadowRectNode),
+          layoutWidth,
+          layoutHeight,
+          shadowRectNode.cornerRadius,
+          "rect",
+          shadowRectNode.cornerRadiusPerCorner,
+          shadowRectNode.cornerSmoothing,
+        );
+      }
+      break;
+    }
+    case "ellipse": {
+      const gfx = container.getChildByLabel("ellipse-bg") as Graphics;
+      if (gfx) {
+        gfx.clear();
+        drawEllipse(gfx, { ...node, width: layoutWidth, height: layoutHeight } as EllipseNode);
+      }
+      if (!isOutlineRenderMode()) {
+        applyVideoFillsEllipse(container, node, layoutWidth, layoutHeight);
+        const shadowEllipseNode = { ...node, width: layoutWidth, height: layoutHeight } as EllipseNode;
+        applyShadows(
+          container,
+          getResolvedRenderableEffects(shadowEllipseNode),
+          layoutWidth,
+          layoutHeight,
+          undefined,
+          "ellipse",
+        );
+      }
+      break;
+    }
+    case "frame": {
+      const frameNode = node as FlatFrameNode;
+      const bg = container.getChildByLabel("frame-bg") as Graphics;
+      if (bg) {
+        bg.clear();
+        drawFrameBackground(bg, frameNode, layoutWidth, layoutHeight);
+      }
+      // Update mask if present
+      const mask = container.getChildByLabel("frame-mask") as Graphics;
+      if (mask && frameNode.clip) {
+        mask.clear();
+        drawRoundedShape(
+          mask,
+          layoutWidth,
+          layoutHeight,
+          frameNode.cornerRadius,
+          frameNode.cornerRadiusPerCorner,
+          frameNode.cornerSmoothing,
+        );
+        mask.fill(0xffffff);
+      }
+      // Update layout grid overlay
+      const gridGfx = container.getChildByLabel("frame-layout-grid") as Graphics;
+      if (gridGfx && frameNode.layoutGrids?.length) {
+        gridGfx.clear();
+        drawLayoutGrids(gridGfx, frameNode.layoutGrids, layoutWidth, layoutHeight);
+      }
+      if (!isOutlineRenderMode()) {
+        applyVideoFills(
+          container,
+          frameNode,
+          layoutWidth,
+          layoutHeight,
+          frameNode.cornerRadius,
+          frameNode.cornerRadiusPerCorner,
+          frameNode.cornerSmoothing,
+        );
+        applyShadows(
+          container,
+          getResolvedRenderableEffects(frameNode),
+          layoutWidth,
+          layoutHeight,
+          frameNode.cornerRadius,
+          "rect",
+          frameNode.cornerRadiusPerCorner,
+          frameNode.cornerSmoothing,
+        );
+      }
+      break;
+    }
+    case "embed": {
+      // Embed HTML content is intentionally not scaled during interactive resize.
+      // It is re-rendered at the target size after resize settles. In outline
+      // mode the bbox stroke (embedRenderer.ts) tracks the layout size too.
+      if (isOutlineRenderMode()) {
+        const gfx = container.getChildByLabel("embed-outline-bg") as Graphics;
+        if (gfx) {
+          gfx.clear();
+          drawOutlineBBox(gfx, layoutWidth, layoutHeight);
+        }
+      }
+      break;
+    }
+    // Text and other types don't need size updates for layout
+  }
+
+  // Shader fill: the layout-driven size change bypasses node.width/height (and
+  // thus shouldRebakeShader), so resize the baked sprite here and debounce-rebake.
+  if (node.shader && !isOutlineRenderMode()) resizeShaderFill(container, node, layoutWidth, layoutHeight);
+
+  // Material surface (Glass / background blur): same layout-driven-size
+  // bypass as the shader fill above — resize the surface geometry + uniforms
+  // here. No-op when the node has no active material surface.
+  if (!isOutlineRenderMode()) resizeMaterialSurface(container, node, layoutWidth, layoutHeight);
+
+  // Noise/grain: the layout-driven size change bypasses node.width/height (and
+  // thus the effects re-apply gate in updateNodeContainer), so re-apply here.
+  // No debounce needed: applyNoiseEffects itself is cheap on a same-key resize
+  // (unchanged effects/shape) — it restretches the existing sprites and rebuilds
+  // their masks at the new size without regenerating noise textures, only doing
+  // the full regenerate when the effect stack or shape actually changed. The
+  // presence check below skips the resolve+apply call entirely for nodes with
+  // no effect stack and no bound effect style.
+  if (!isOutlineRenderMode() && (node.effects?.length || node.effectStyleId)) {
+    applyNoiseEffects(container, node, getResolvedRenderableEffects(node), layoutWidth, layoutHeight);
+  }
+}

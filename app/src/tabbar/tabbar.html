@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'"
+    />
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="tabbar.css" />
+  </head>
+  <body>
+    <div id="tab-row" class="tab-row">
+      <button id="toggle-panel" class="sidebar-toggle" type="button" aria-label="Hide agent panel" title="Hide agent panel (Cmd/Ctrl+Alt+B)" aria-pressed="true"></button>
+      <div id="tabs"></div>
+      <button id="new-tab" title="New Tab" aria-label="New tab" aria-haspopup="menu"></button>
+    </div>
+    <div id="chrome-row" class="chrome-row" hidden>
+      <button id="nav-back" class="nav-btn" aria-label="Back" title="Back"></button>
+      <button id="nav-forward" class="nav-btn" aria-label="Forward" title="Forward"></button>
+      <button id="nav-reload" class="nav-btn" aria-label="Reload" title="Reload"></button>
+      <form id="url-form" class="url-form">
+        <input id="url-input" class="url-input" type="text" aria-label="Address" placeholder="Search or enter address" />
+      </form>
+      <button id="browser-tools" class="nav-btn browser-tools-btn" aria-label="Browser tools" title="Browser tools" aria-haspopup="menu"></button>
+    </div>
+    <script src="glyphs.js"></script>
+    <script src="urlNormalization.js"></script>
+    <script src="omnibox.js"></script>
+    <script src="renderer.js"></script>
+  </body>
+</html>

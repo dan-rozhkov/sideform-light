@@ -1,0 +1,456 @@
+/* Scoped typography for the /doc editor, Notion-like. Theme tokens for text and surfaces; code keeps
+   Notion's neutral translucent greys and red (with a .dark variant). */
+.doc-prose {
+  color: var(--color-text-primary);
+  font-size: 1rem;
+  line-height: 1.5;
+  outline: none;
+  min-height: 60dvh;
+  tab-size: 2;
+}
+/* Notion block rhythm: every block is padded 3px 2px with 1px margins, i.e. ~2px between blocks. */
+.doc-prose > * + * { margin-top: 2px; }
+/* Content paragraphs only: node views (mermaid errors, hints) keep their own spacing. */
+.doc-prose > p,
+.doc-prose li > p,
+.doc-prose blockquote > p,
+.doc-prose [data-type="detailsContent"] > p { margin: 0; padding: 3px 2px; min-height: 1.5em; }
+.doc-prose h1, .doc-prose h2, .doc-prose h3 { padding: 3px 2px; font-weight: 600; line-height: 1.3; }
+.doc-prose h1 { font-size: 1.875em; margin-top: 2em; margin-bottom: 4px; }
+.doc-prose h2 { font-size: 1.5em; margin-top: 1.4em; margin-bottom: 1px; }
+.doc-prose h3 { font-size: 1.25em; margin-top: 1em; margin-bottom: 1px; }
+.doc-prose > :first-child { margin-top: 0; }
+.doc-prose ul, .doc-prose ol { padding-left: 1.7em; }
+.doc-prose ul { list-style: disc; }
+.doc-prose ul ul { list-style: circle; }
+.doc-prose ul ul ul { list-style: square; }
+.doc-prose ul ul ul ul { list-style: disc; }
+.doc-prose ol { list-style: decimal; }
+.doc-prose li + li { margin-top: 2px; }
+.doc-prose li > ul, .doc-prose li > ol { margin-top: 2px; }
+.doc-prose blockquote {
+  border-left: 3px solid currentColor;
+  padding: 0 14px;
+  margin: 4px 0;
+}
+.doc-prose code {
+  font-family: "SFMono-Regular", Menlo, Consolas, "PT Mono", "Liberation Mono", Courier, monospace;
+  font-size: 85%;
+  background: rgba(135, 131, 120, 0.15);
+  color: #eb5757;
+  border-radius: 4px;
+  padding: 0.2em 0.4em;
+}
+.dark .doc-prose :not(pre) > code { color: #ff7369; }
+.doc-prose pre {
+  background: rgba(135, 131, 120, 0.08);
+  border-radius: 4px;
+  padding: 24px 16px 24px 24px;
+  margin-top: 4px;
+  overflow-x: auto;
+  font-size: 85%;
+  line-height: 1.5;
+  tab-size: 2;
+}
+.doc-prose pre code { background: none; color: inherit; padding: 0; border-radius: 0; font-size: inherit; }
+.doc-prose hr { border: 0; border-top: 1px solid var(--color-border-default); margin: 24px 0; }
+/* Equal space above and below: a heading's own margin-top would collapse into the hr's and win. */
+.doc-prose hr + * { margin-top: 0; }
+.doc-prose a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 2px;
+}
+.doc-prose a.internal-link { text-decoration: none; }
+.doc-prose .is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--color-text-muted);
+  opacity: 0.6;
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+/* Notion shows the hint on the focused empty line only. */
+.doc-prose:not(.ProseMirror-focused) .is-empty::before { display: none; }
+
+/* Tables (GFM constructs the agent writes). The wrapper scrolls sideways; the page never does. Its padding is
+   room reserved for the hover controls (column grip on top, "+" bars right and below), so they never cover
+   cell text or the next block. */
+.doc-prose .tableWrapper { overflow-x: auto; max-width: 100%; }
+/* The controls are `hidden sm:block` (Tailwind sm = 40rem), so the room is reserved only where they show. */
+@media (min-width: 40rem) {
+  .doc-prose .tableWrapper { padding: 8px 20px 20px 0; }
+}
+/* Separate borders (not collapsed): the table box owns its outer lines, so the wrapper's overflow clip and
+   scrollbar logic never see a half-pixel of collapsed border sticking out. Same 1px grid as before. */
+.doc-prose table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border-top: 1px solid var(--color-border-default);
+  border-left: 1px solid var(--color-border-default);
+  width: 100%;
+  table-layout: auto;
+}
+.doc-prose th, .doc-prose td {
+  border-right: 1px solid var(--color-border-default);
+  border-bottom: 1px solid var(--color-border-default);
+  padding: 7px 8px;
+  min-width: 120px;
+  vertical-align: top;
+  text-align: left;
+  position: relative;
+}
+.doc-prose th { background: var(--color-surface-elevated); font-weight: 600; }
+/* Column filters are view-only (table/tableFilter.ts): matching rows stay, the rest are hidden by a decoration. */
+.doc-prose tr.doc-row-filtered { display: none; }
+/* Room for the header menu button (20px + 4px inset) at the right edge of a header cell. */
+@media (min-width: 40rem) {
+  .doc-prose th { padding-right: 28px; }
+}
+.doc-prose td > p, .doc-prose th > p { margin: 0; padding: 0; }
+/* prosemirror-tables marks the cells of a CellSelection: a translucent blue wash, no native text selection. */
+.doc-prose .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--color-accent-primary) 16%, transparent);
+  pointer-events: none;
+}
+.doc-prose .selectedCell *::selection, .doc-prose .selectedCell::selection { background: transparent; }
+
+/* Task lists, images. */
+.doc-prose ul[data-type="taskList"] { list-style: none; padding-left: 2px; }
+.doc-prose ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 0.5em; }
+.doc-prose ul[data-type="taskList"] li > label { flex: none; padding-top: 0.35em; user-select: none; }
+.doc-prose ul[data-type="taskList"] input[type="checkbox"] { accent-color: var(--color-text-primary); }
+.doc-prose ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
+.doc-prose ul[data-type="taskList"] li[data-checked="true"] > div { color: var(--color-text-muted); text-decoration: line-through; }
+.doc-prose img { max-width: 100%; height: auto; border-radius: 6px; }
+.doc-prose img.ProseMirror-selectednode { outline: 2px solid var(--color-border-light); }
+
+/* ===== Extensions block: toggle, colour, mermaid (owned by docExtensions; keep below other rules) ===== */
+
+/* Notion-like muted shades. Names match docPalette.ts; the document stores names, never hex. */
+.doc-prose, .doc-palette {
+  --doc-text-gray: #787774; --doc-text-brown: #9f6b53; --doc-text-orange: #d9730d;
+  --doc-text-yellow: #cb912f; --doc-text-green: #448361; --doc-text-blue: #337ea9;
+  --doc-text-purple: #9065b0; --doc-text-pink: #c14c8a; --doc-text-red: #d44c47;
+  --doc-bg-gray: #f1f1ef; --doc-bg-brown: #f4eeee; --doc-bg-orange: #fbecdd;
+  --doc-bg-yellow: #fbf3db; --doc-bg-green: #edf3ec; --doc-bg-blue: #e7f3f8;
+  --doc-bg-purple: #f6f3f9; --doc-bg-pink: #faf1f5; --doc-bg-red: #fdebec;
+}
+.dark .doc-prose, .dark .doc-palette {
+  --doc-text-gray: #9b9b9b; --doc-text-brown: #bf7e71; --doc-text-orange: #ffa344;
+  --doc-text-yellow: #ffdc49; --doc-text-green: #4dab9a; --doc-text-blue: #5e87c9;
+  --doc-text-purple: #9d68d3; --doc-text-pink: #d15796; --doc-text-red: #df5452;
+  --doc-bg-gray: #454b4e; --doc-bg-brown: #434040; --doc-bg-orange: #594a3a;
+  --doc-bg-yellow: #59563b; --doc-bg-green: #354c4b; --doc-bg-blue: #364954;
+  --doc-bg-purple: #443f57; --doc-bg-pink: #533b4c; --doc-bg-red: #594141;
+}
+.doc-prose span[data-color="gray"] { color: var(--doc-text-gray); }
+.doc-prose span[data-color="brown"] { color: var(--doc-text-brown); }
+.doc-prose span[data-color="orange"] { color: var(--doc-text-orange); }
+.doc-prose span[data-color="yellow"] { color: var(--doc-text-yellow); }
+.doc-prose span[data-color="green"] { color: var(--doc-text-green); }
+.doc-prose span[data-color="blue"] { color: var(--doc-text-blue); }
+.doc-prose span[data-color="purple"] { color: var(--doc-text-purple); }
+.doc-prose span[data-color="pink"] { color: var(--doc-text-pink); }
+.doc-prose span[data-color="red"] { color: var(--doc-text-red); }
+.doc-prose span[data-bg], .doc-palette span[data-bg] { border-radius: 3px; padding: 0.05em 0.15em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.doc-prose span[data-bg="gray"], .doc-palette span[data-bg="gray"] { background-color: var(--doc-bg-gray); }
+.doc-prose span[data-bg="brown"], .doc-palette span[data-bg="brown"] { background-color: var(--doc-bg-brown); }
+.doc-prose span[data-bg="orange"], .doc-palette span[data-bg="orange"] { background-color: var(--doc-bg-orange); }
+.doc-prose span[data-bg="yellow"], .doc-palette span[data-bg="yellow"] { background-color: var(--doc-bg-yellow); }
+.doc-prose span[data-bg="green"], .doc-palette span[data-bg="green"] { background-color: var(--doc-bg-green); }
+.doc-prose span[data-bg="blue"], .doc-palette span[data-bg="blue"] { background-color: var(--doc-bg-blue); }
+.doc-prose span[data-bg="purple"], .doc-palette span[data-bg="purple"] { background-color: var(--doc-bg-purple); }
+.doc-prose span[data-bg="pink"], .doc-palette span[data-bg="pink"] { background-color: var(--doc-bg-pink); }
+.doc-prose span[data-bg="red"], .doc-palette span[data-bg="red"] { background-color: var(--doc-bg-red); }
+
+/* Toggle (details): node view is div.doc-details > button + div > summary + div[data-type=detailsContent]. */
+.doc-prose .doc-details { display: flex; align-items: flex-start; gap: 0.25em; }
+.doc-prose .doc-details > button {
+  flex: none;
+  width: 1.5em;
+  height: 1.7em;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+.doc-prose .doc-details > button:hover { background: var(--color-surface-hover); }
+.doc-prose .doc-details > button::before {
+  content: "";
+  border: solid transparent;
+  border-width: 0.3em 0 0.3em 0.45em;
+  border-left-color: currentColor;
+  transition: transform 120ms ease;
+}
+.doc-prose .doc-details.is-open > button::before { transform: rotate(90deg); }
+.doc-prose .doc-details > div { flex: 1; min-width: 0; }
+.doc-prose .doc-details summary { list-style: none; font-weight: 500; padding: 3px 2px; }
+.doc-prose .doc-details summary::-webkit-details-marker { display: none; }
+.doc-prose .doc-details summary:has(> br.ProseMirror-trailingBreak:only-child)::before {
+  content: "Toggle";
+  color: var(--color-text-muted);
+  opacity: 0.6;
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+.doc-prose .doc-details [data-type="detailsContent"] { padding-left: 0.25em; }
+.doc-prose .doc-details [data-type="detailsContent"] > * + * { margin-top: 2px; }
+
+/* Callout (GitHub alert): soft tinted box, icon button + body. Tint comes from the doc palette, so both themes are covered. */
+.doc-prose .doc-callout {
+  --callout-bg: var(--doc-bg-blue); --callout-fg: var(--doc-text-blue);
+  display: flex; align-items: flex-start; gap: 0.5em;
+  margin: 0.5em 0; padding: 0.75em 0.9em;
+  border-radius: 8px; background: var(--callout-bg);
+}
+.doc-prose .doc-callout[data-kind="tip"] { --callout-bg: var(--doc-bg-green); --callout-fg: var(--doc-text-green); }
+.doc-prose .doc-callout[data-kind="important"] { --callout-bg: var(--doc-bg-purple); --callout-fg: var(--doc-text-purple); }
+.doc-prose .doc-callout[data-kind="warning"] { --callout-bg: var(--doc-bg-yellow); --callout-fg: var(--doc-text-yellow); }
+.doc-prose .doc-callout[data-kind="caution"] { --callout-bg: var(--doc-bg-red); --callout-fg: var(--doc-text-red); }
+.doc-prose .doc-callout-side { position: relative; flex: none; }
+.doc-prose .doc-callout-icon {
+  display: grid; place-items: center; width: 1.75rem; height: 1.75rem;
+  border-radius: 4px; color: var(--callout-fg); cursor: pointer;
+}
+.doc-prose .doc-callout-icon:hover:not(:disabled) { background: color-mix(in srgb, var(--callout-fg) 15%, transparent); }
+.doc-prose .doc-callout-icon:disabled { cursor: default; }
+.doc-palette .doc-callout-option[data-kind="note"] svg { color: var(--doc-text-blue); }
+.doc-palette .doc-callout-option[data-kind="tip"] svg { color: var(--doc-text-green); }
+.doc-palette .doc-callout-option[data-kind="important"] svg { color: var(--doc-text-purple); }
+.doc-palette .doc-callout-option[data-kind="warning"] svg { color: var(--doc-text-yellow); }
+.doc-palette .doc-callout-option[data-kind="caution"] svg { color: var(--doc-text-red); }
+.doc-prose .doc-callout-body { flex: 1; min-width: 0; padding-top: 2px; }
+.doc-prose .doc-callout-body > * + * { margin-top: 2px; }
+
+/* Mermaid: preview when idle, source above the preview while editing. */
+.doc-prose .doc-mermaid {
+  border-radius: 8px;
+  background: var(--color-surface-elevated);
+  padding: 0.5em 0.75em;
+}
+.doc-prose .doc-mermaid-source { padding: 0.5em 0; border-radius: 0; background: none; }
+.doc-prose .doc-mermaid[data-editing="true"] .doc-mermaid-source { border-bottom: 1px solid var(--color-border-default); }
+.doc-prose .doc-mermaid-body { --pele-bg: transparent; --pele-fg: var(--color-text-primary); --pele-muted: var(--color-text-muted); --pele-line: var(--color-text-secondary); --pele-surface: var(--color-surface-panel); --pele-surface-alt: var(--color-surface-hover); --pele-border: var(--color-border-light); --pele-accent: var(--color-accent-primary); --pele-font: var(--font-sans); }
+.doc-prose .doc-mermaid-preview { display: flex; justify-content: center; overflow-x: auto; padding: 0.5em 0; cursor: pointer; }
+.doc-prose .doc-mermaid[data-editing="true"] .doc-mermaid-preview { cursor: default; }
+.doc-prose .doc-mermaid-preview[data-empty="true"] { display: none; }
+.doc-prose .doc-mermaid-body[data-pending="true"] { min-height: 8rem; }
+.doc-prose .doc-mermaid-preview svg { max-width: 100%; height: auto; }
+.doc-prose .doc-mermaid-error, .doc-prose .doc-mermaid-hint { margin: 0.4em 0 0; font-size: 0.8rem; line-height: 1.4; color: var(--color-text-muted); }
+.doc-prose .doc-mermaid-hint[role="button"] { cursor: pointer; }
+
+/* Property list (Notion page properties): rows of muted key + value, no borders. The row icon is a node view
+   span (inferred from the value, not stored); chips are the ordinary data-bg highlight. */
+.doc-prose .doc-property-list { margin: 4px 0; }
+.doc-prose .doc-property-rows { display: flex; flex-direction: column; gap: 3px; }
+.doc-prose .doc-property-row { position: relative; display: flex; align-items: flex-start; min-height: 34px; }
+.doc-prose .doc-property-cells { display: contents; }
+/* React node views put the real contentDOM in an inner div; it must not break the flex layout above. */
+.doc-prose .doc-property-rows > [data-node-view-content-react],
+.doc-prose .doc-property-cells > [data-node-view-content-react] { display: contents; }
+.doc-prose .doc-property-icon {
+  position: absolute;
+  left: 2px;
+  top: 9px;
+  display: inline-flex;
+  color: var(--color-text-muted);
+  pointer-events: none;
+  user-select: none;
+}
+.doc-prose [data-type="property-key"] {
+  flex: 0 0 172px;
+  box-sizing: border-box;
+  padding: 5px 12px 5px 28px;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.doc-prose [data-type="property-value"] {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 5px 8px;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.doc-prose [data-type="property-value"]:has(> br.ProseMirror-trailingBreak:only-child)::before {
+  content: "Empty";
+  float: left;
+  height: 0;
+  color: var(--color-text-muted);
+  opacity: 0.6;
+  pointer-events: none;
+}
+.doc-prose [data-type="property-value"] span[data-bg] { padding: 1px 6px; margin-right: 6px; border-radius: 4px; font-weight: inherit; }
+/* Property values: an external link gets the page icon; an internal chip (.internal-link) brings its own icon and spacing. */
+.doc-prose [data-type="property-value"] a:not(.internal-link) { margin-right: 6px; }
+.doc-prose [data-type="property-value"] a:not(.internal-link)::before {
+  content: "";
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
+  vertical-align: -2px;
+  background-color: var(--color-text-muted);
+  -webkit-mask: var(--doc-page-icon) center / contain no-repeat;
+  mask: var(--doc-page-icon) center / contain no-repeat;
+}
+.doc-prose .doc-property-list {
+  --doc-page-icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><path d='M213.66 82.34l-56-56A8 8 0 0 0 152 24H56a16 16 0 0 0-16 16v176a16 16 0 0 0 16 16h144a16 16 0 0 0 16-16V88a8 8 0 0 0-2.34-5.66ZM160 51.31 188.69 80H160ZM200 216H56V40h88v48a8 8 0 0 0 8 8h48Zm-32-80a8 8 0 0 1-8 8H96a8 8 0 0 1 0-16h64a8 8 0 0 1 8 8Zm0 32a8 8 0 0 1-8 8H96a8 8 0 0 1 0-16h64a8 8 0 0 1 8 8Z'/></svg>");
+}
+/* Laid out like a row: "+" in the icon column, the label in the key column; hover matches the ghost icon buttons. */
+.doc-prose .doc-property-add {
+  position: relative;
+  display: block;
+  min-height: 34px;
+  /* Wider left inset for the hover box; the negative margin keeps "+" and the label where the rows have them. */
+  margin-left: -6px;
+  padding: 5px 12px 5px 34px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.doc-prose .doc-property-add > .doc-property-icon { left: 8px; }
+.doc-prose .doc-property-add:hover { background: var(--color-secondary); }
+.dark .doc-prose .doc-property-add:hover { background: var(--color-surface-hover); }
+.doc-prose .doc-property-add:focus-visible { outline: 2px solid var(--color-accent-primary, currentColor); outline-offset: 1px; }
+/* View-only editor: no way to add a row. */
+.doc-prose[contenteditable="false"] .doc-property-add { display: none; }
+@media (max-width: 480px) {
+  .doc-prose [data-type="property-key"] { flex-basis: 120px; }
+}
+
+/* Links to another document, canvas frame or trace: the icon + pill live in src/index.css (.internal-link). */
+
+/* Saved-login chip (@ mention): a quiet pill in the text flow. */
+.doc-prose .doc-login {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  font-size: 0.92em;
+  line-height: 1.5;
+  vertical-align: baseline;
+  cursor: default;
+  user-select: none;
+}
+.doc-prose .doc-login-icon { flex: none; border-radius: 3px; color: var(--color-text-muted); }
+.doc-prose .doc-login-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-prose .doc-login.ProseMirror-selectednode { outline: 2px solid var(--color-accent-primary); outline-offset: 1px; }
+
+/* ===== Print / "Download as .pdf" =====
+   Both the desktop shell (printToPDF) and window.print() render the live page with print media.
+   The page is h-dvh with an inner scrolling <main>, so the viewport chain is unrolled here, the chrome is
+   hidden and the app theme is forced to its light values. DOM: div.doc-page > header.doc-page-header +
+   main.doc-page-scroll > div.doc-page-content > (DocTitle textarea + .doc-prose). */
+/* Named page: only html.route-doc uses it, so the lazily loaded stylesheet cannot leak page rules to other routes. */
+@page doc { size: A4; margin: 18mm 16mm; }
+/* Screen: the print-only title is hidden. */
+.doc-print-title { display: none; }
+@media print {
+  html.route-doc body { page: doc; }
+  /* Light theme tokens, whatever the app theme is. Specificity beats `.dark` (html.route-doc.dark). */
+  html.route-doc, html.route-doc.dark {
+    color-scheme: light;
+    --color-surface-base: #f5f5f5; --color-surface-panel: #ffffff; --color-surface-elevated: #f0f0f0;
+    --color-surface-hover: #e5e5e5; --color-surface-active: #d9d9d9;
+    --color-border-default: #e0e0e0; --color-border-light: #d0d0d0; --color-border-hover: #b0b0b0;
+    --color-text-primary: #111111; --color-text-secondary: #333333; --color-text-muted: #666666; --color-text-disabled: #999999;
+    --background: oklch(1 0 0); --foreground: oklch(0.145 0 0);
+    --color-code-keyword: #7c3aed; --color-code-string: #15803d; --color-code-comment: #6e7781;
+    --color-code-number: #c2410c; --color-code-property: #1d4ed8; --color-code-tag: #b91c1c;
+  }
+  html.route-doc.dark .doc-prose {
+    --doc-text-gray: #787774; --doc-text-brown: #9f6b53; --doc-text-orange: #d9730d;
+    --doc-text-yellow: #cb912f; --doc-text-green: #448361; --doc-text-blue: #337ea9;
+    --doc-text-purple: #9065b0; --doc-text-pink: #c14c8a; --doc-text-red: #d44c47;
+    --doc-bg-gray: #f1f1ef; --doc-bg-brown: #f4eeee; --doc-bg-orange: #fbecdd;
+    --doc-bg-yellow: #fbf3db; --doc-bg-green: #edf3ec; --doc-bg-blue: #e7f3f8;
+    --doc-bg-purple: #f6f3f9; --doc-bg-pink: #faf1f5; --doc-bg-red: #fdebec;
+  }
+  html.route-doc.dark .doc-prose :not(pre) > code { color: #eb5757; }
+
+  /* Unroll the viewport chain so the whole document paginates, not just the visible part. */
+  html.route-doc, html.route-doc body, html.route-doc #root, html.route-doc .doc-page {
+    height: auto !important; min-height: 0 !important; overflow: visible !important; background: #fff !important;
+  }
+  html.route-doc .doc-page { display: block !important; color: #111; }
+  html.route-doc .doc-page-scroll { display: block !important; overflow: visible !important; height: auto !important; flex: none !important; padding: 0 !important; }
+  html.route-doc .doc-page-content { max-width: none !important; width: 100% !important; margin: 0 !important; }
+  html.route-doc .doc-prose { min-height: 0; }
+
+  /* Chrome and editing affordances: header row, block handle, bubble toolbar, table controls,
+     template starter, placeholders, toasts, tooltips, popups. */
+  html.route-doc .doc-page-header,
+  html.route-doc [data-testid="block-handle"],
+  html.route-doc [role="toolbar"],
+  html.route-doc [role="group"][aria-label="Start from a template"],
+  html.route-doc [data-sonner-toaster],
+  html.route-doc [data-slot="tooltip-content"],
+  html.route-doc [role="tooltip"],
+  html.route-doc [data-slot="dropdown-menu-content"],
+  html.route-doc [data-slot="popover-content"],
+  html.route-doc [role="menu"],
+  html.route-doc [role="dialog"],
+  html.route-doc .doc-prose .tableWrapper button,
+  html.route-doc .doc-prose .doc-details > button,
+  html.route-doc .doc-prose .doc-mermaid-hint,
+  html.route-doc .doc-prose .doc-property-add,
+  html.route-doc .doc-prose .is-empty::before { display: none !important; }
+  /* The table controls and block handle are siblings positioned absolutely around the content. */
+  html.route-doc .doc-prose .tableWrapper { padding: 0; overflow: visible; }
+
+  /* The title textarea keeps its screen-width pixel height, so print a real H1 instead. */
+  html.route-doc .doc-page-content > textarea { display: none !important; }
+  html.route-doc .doc-print-title {
+    display: block; margin: 0 0 8px; padding: 3px 2px; color: #111; font-size: 2.5rem; line-height: 1.2;
+    font-weight: 700; overflow-wrap: anywhere; break-after: avoid;
+  }
+
+  /* Collapsed toggles print expanded; the arrow button is hidden above. */
+  html.route-doc .doc-prose [data-type="detailsContent"],
+  html.route-doc .doc-prose [data-type="detailsContent"][hidden] { display: block !important; }
+  /* The callout icon stays as the kind marker but is not a control. */
+  html.route-doc .doc-prose .doc-callout-icon { pointer-events: none; background: none !important; }
+  /* Editor selection leftovers. */
+  html.route-doc .doc-prose .ProseMirror-selectednode { outline: none !important; box-shadow: none !important; }
+
+  html.route-doc .doc-prose { color: #111; font-size: 11pt; }
+  html.route-doc .doc-prose a:not(.internal-link) { color: inherit; text-decoration: underline; text-decoration-color: currentColor; }
+  /* A chip prints as on screen: the pill is a faint tint of the text colour (kept by print-color-adjust below)
+     and the icon is a currentColor mask, so if a printer drops the tint the icon and text still read. */
+  html.route-doc .doc-prose a.internal-link { color: inherit; text-decoration: none; }
+  html.route-doc .doc-prose img { max-width: 100%; height: auto; }
+  html.route-doc .doc-prose pre { white-space: pre-wrap; overflow: visible; border: 1px solid var(--color-border-default); }
+  html.route-doc .doc-prose code { border: 0; }
+  html.route-doc .doc-prose table, html.route-doc .doc-prose th, html.route-doc .doc-prose td { border-color: var(--color-border-default); }
+
+  /* Keep heavy blocks whole; keep headings with what follows. */
+  html.route-doc .doc-prose img,
+  html.route-doc .doc-prose tr,
+  html.route-doc .doc-prose pre,
+  html.route-doc .doc-prose blockquote,
+  html.route-doc .doc-prose .doc-callout,
+  html.route-doc .doc-prose .doc-mermaid,
+  html.route-doc .doc-prose .doc-property-list { break-inside: avoid; }
+  html.route-doc .doc-prose h1, html.route-doc .doc-prose h2, html.route-doc .doc-prose h3 { break-after: avoid; }
+
+  /* Tinted backgrounds (callouts, table headers, highlights) survive printing. */
+  html.route-doc * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

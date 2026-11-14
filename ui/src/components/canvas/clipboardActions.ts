@@ -1,0 +1,361 @@
+import {
+  type SceneNode,
+  type HistorySnapshot,
+} from "@/types/scene";
+import { useClipboardStore } from "@/store/clipboardStore";
+import { useSceneStore, createSnapshot } from "@/store/sceneStore";
+import { useSelectionStore } from "@/store/selectionStore";
+import { useVariableStore } from "@/store/variableStore";
+import { cloneNodeWithNewId } from "@/utils/cloneNode";
+import { parseSvgToNodes } from "@/utils/svgUtils";
+import { convertFigmaClipboardHtml, isFigmaClipboardHtml } from "@/lib/figmaPaste";
+import { convertH2dClipboardHtml, isH2dClipboardHtml } from "@/lib/h2dPaste";
+import { convertPixsoClipboardHtml, isPixsoClipboardHtml } from "@/lib/pixsoPaste";
+import { applyExternalPasteNodes } from "./externalPasteImport";
+import {
+  applyImageImportPlans,
+  createImageImportPlan,
+  readBlobAsDataURL,
+  type ImageImportPlan,
+  setImportedSelection,
+} from "./imageImport";
+import { toast } from "sonner";
+import {
+  INTERNAL_CLIPBOARD_PRIORITY_MS,
+  getViewportCenter,
+  isTypingTarget,
+  resolveNodesToCopy,
+  resolvePasteTargetContainerId,
+} from "./keyboardShortcutUtils";
+
+/**
+ * Dependencies the clipboard actions need from the host hook. These mirror the
+ * store-mutating callbacks supplied to {@link useCanvasKeyboardShortcuts}.
+ */
+export interface ClipboardActionDeps {
+  dimensions: { width: number; height: number };
+  addNode: (node: SceneNode) => void;
+  addChildToFrame: (frameId: string, child: SceneNode) => void;
+  deleteNode: (id: string) => void;
+  saveHistory: (snapshot: HistorySnapshot) => void;
+  startBatch: () => void;
+  endBatch: () => void;
+  clearSelection: () => void;
+  copyNodes: (nodes: SceneNode[]) => void;
+}
+
+/**
+ * Clipboard command handlers (copy / cut / paste) used by the canvas keyboard
+ * shortcuts hook. Returned as plain functions closed over the supplied deps —
+ * no React hooks are used here.
+ */
+export function createClipboardActions(deps: ClipboardActionDeps) {
+  const {
+    dimensions,
+    addNode,
+    addChildToFrame,
+    deleteNode,
+    saveHistory,
+    startBatch,
+    endBatch,
+    clearSelection,
+    copyNodes,
+  } = deps;
+
+  const pasteInternalNodes = (sourceNodes: SceneNode[]): void => {
+    const selectionState = useSelectionStore.getState();
+
+    const clonedNodes = sourceNodes.map((node) => cloneNodeWithNewId(node));
+    const nodes = useSceneStore.getState().getNodes();
+    const targetContainerId = resolvePasteTargetContainerId(nodes, selectionState);
+
+    saveHistory(createSnapshot(useSceneStore.getState()));
+    startBatch();
+    try {
+      for (const clonedNode of clonedNodes) {
+        if (targetContainerId) {
+          clonedNode.x = 20;
+          clonedNode.y = 20;
+          addChildToFrame(targetContainerId, clonedNode);
+        } else {
+          addNode(clonedNode);
+        }
+      }
+    } finally {
+      endBatch();
+    }
+
+    setImportedSelection(clonedNodes.map((node) => node.id));
+  };
+
+  const copySelection = (): void => {
+    const nodes = useSceneStore.getState().getNodes();
+    const selState = useSelectionStore.getState();
+    const nodesToCopy = resolveNodesToCopy(selState, nodes);
+    if (nodesToCopy.length > 0) {
+      copyNodes(nodesToCopy);
+    }
+  };
+
+  const pasteFromInternalClipboard = (): void => {
+    const { copiedNodes: sourceNodes } = useClipboardStore.getState();
+    if (sourceNodes.length > 0) {
+      pasteInternalNodes(sourceNodes);
+    }
+  };
+
+  const cutSelection = (): void => {
+    const nodes = useSceneStore.getState().getNodes();
+    const selState = useSelectionStore.getState();
+    const nodesToCut = resolveNodesToCopy(selState, nodes);
+    if (nodesToCut.length > 0) {
+      copyNodes(nodesToCut);
+      saveHistory(createSnapshot(useSceneStore.getState()));
+      for (const id of selState.selectedIds) {
+        deleteNode(id);
+      }
+      clearSelection();
+    }
+  };
+
+  const handlePaste = async (e: ClipboardEvent) => {
+    const isTyping = isTypingTarget(e);
+    if (isTyping) return;
+
+    const clipboardState = useClipboardStore.getState();
+    const syncText = e.clipboardData?.getData("text/plain")?.trim() ?? "";
+    const htmlText = e.clipboardData?.getData("text/html") ?? "";
+    const imageItems =
+      e.clipboardData?.items == null
+        ? []
+        : Array.from(e.clipboardData.items).filter((item) =>
+            item.type.startsWith("image/"),
+          );
+    // Extract the first raster File synchronously: the paste event's
+    // DataTransfer is only valid during synchronous dispatch, so getAsFile()
+    // must be called before any `await` (the Figma branch awaits a dynamic
+    // import). A File captured here stays readable afterwards.
+    const firstImageFile = imageItems[0]?.getAsFile() ?? null;
+    const shouldPreferInternalClipboard =
+      clipboardState.copiedNodes.length > 0 &&
+      Date.now() - clipboardState.lastCopiedAt <= INTERNAL_CLIPBOARD_PRIORITY_MS;
+
+    if (shouldPreferInternalClipboard) {
+      e.preventDefault();
+      pasteInternalNodes(clipboardState.copiedNodes);
+      return;
+    }
+
+    // Figma/h2d clipboard payloads are decoded to native nodes, 1:1. A decode
+    // failure or an empty result doesn't return early: `preventDefault` has
+    // already run (so the browser won't insert raw HTML), but execution falls
+    // through to the raw-image / SVG / internal-clipboard fallbacks below —
+    // otherwise a corrupt payload sitting alongside a valid image clipboard
+    // item would silently paste nothing.
+    let externalPasteHandled = false;
+
+    // Figma clipboard (Ctrl+C in Figma) — decode to native nodes, 1:1
+    if (isFigmaClipboardHtml(htmlText)) {
+      e.preventDefault();
+      try {
+        const result = await convertFigmaClipboardHtml(htmlText);
+        if (result && result.nodes.length > 0) {
+          // Figma's cross-document clipboard references image fills by hash only —
+          // the pixels are NOT in the buffer, so those fills come back as a gray
+          // placeholder. When the clipboard ALSO carries a flattened `image/png`
+          // raster (desktop Figma, "Copy as PNG") and the paste is a single node,
+          // use that raster as the fill instead of the placeholder.
+          let recoveredImage = false;
+          if (
+            result.unresolvedImageCount > 0 &&
+            firstImageFile &&
+            result.nodes.length === 1 &&
+            result.nodes[0].fill === "#cccccc"
+          ) {
+            try {
+              const url = await readBlobAsDataURL(firstImageFile);
+              const node = result.nodes[0];
+              node.imageFill = { url, mode: "fill" };
+              delete node.fill;
+              recoveredImage = true;
+            } catch {
+              // keep the gray placeholder if the raster can't be read
+            }
+          }
+          applyExternalPasteNodes({
+            nodes: result.nodes,
+            viewportCenter: getViewportCenter(dimensions),
+            addNode,
+            saveHistory,
+            startBatch,
+            endBatch,
+          });
+          externalPasteHandled = true;
+          // No raster to recover from — tell the user why image fills are missing
+          // instead of leaving a silent gray box.
+          if (result.unresolvedImageCount > 0 && !recoveredImage) {
+            toast(
+              "Some image fills couldn't be transferred — Figma doesn't put image pixels in the clipboard on a normal copy. Use “Copy as PNG” in Figma, or paste the image directly.",
+            );
+          }
+          if (result.warnings.length > 0) {
+            console.warn("[figma-paste] imported with warnings:", result.warnings);
+          }
+        } else if (result) {
+          console.warn("[figma-paste] decoded clipboard produced no nodes");
+        }
+      } catch (error) {
+        console.warn("[figma-paste] failed to decode Figma clipboard data:", error);
+      }
+    } else if (isPixsoClipboardHtml(htmlText)) {
+      // Pixso clipboard (Cmd+C in Pixso) — decode to native nodes, 1:1
+      e.preventDefault();
+      try {
+        const result = await convertPixsoClipboardHtml(htmlText);
+        if (result && result.nodes.length > 0) {
+          applyExternalPasteNodes({
+            nodes: result.nodes,
+            viewportCenter: getViewportCenter(dimensions),
+            addNode,
+            saveHistory,
+            startBatch,
+            endBatch,
+          });
+          externalPasteHandled = true;
+          if (result.unresolvedImageCount > 0) {
+            toast(
+              "Some image fills couldn't be transferred — Pixso doesn't put image pixels in the clipboard on a normal copy.",
+            );
+          }
+          if (result.warnings.length > 0) {
+            console.warn("[pixso-paste] imported with warnings:", result.warnings);
+          }
+        } else if (result) {
+          console.warn("[pixso-paste] decoded clipboard produced no nodes");
+        }
+      } catch (error) {
+        console.warn("[pixso-paste] failed to decode Pixso clipboard data:", error);
+      }
+    } else if (isH2dClipboardHtml(htmlText)) {
+      // h2d clipboard (html.to.design / Figma-capture) — decode to native nodes, 1:1
+      e.preventDefault();
+      try {
+        const variableStore = useVariableStore.getState();
+        const result = await convertH2dClipboardHtml(htmlText, {
+          existingVariables: variableStore.variables,
+        });
+        if (result) {
+          // Log warnings regardless of whether any nodes came out — an
+          // empty result is exactly when the warnings are most useful.
+          if (result.warnings.length > 0) {
+            console.warn("[h2d-paste] imported with warnings:", result.warnings);
+          }
+          if (result.nodes.length > 0) {
+            // Register the color Variables the capture's CSS custom properties
+            // resolved to (deduped by name against the store) BEFORE the nodes
+            // render, so their fill/stroke bindings resolve immediately. Bulk
+            // merge keeps it a single store update; bindings gracefully fall
+            // back to the resolved hex if a variable is ever missing.
+            if (result.variables.length > 0) {
+              useVariableStore
+                .getState()
+                .setVariables([...variableStore.variables, ...result.variables]);
+            }
+            applyExternalPasteNodes({
+              nodes: result.nodes,
+              viewportCenter: getViewportCenter(dimensions),
+              addNode,
+              saveHistory,
+              startBatch,
+              endBatch,
+            });
+            externalPasteHandled = true;
+            if (result.warnings.some((w) => /image/i.test(w))) {
+              toast("Pasted, but some images couldn't be transferred and were kept as external links.");
+            }
+          } else {
+            toast("Couldn't find any pasteable content in that page capture.");
+          }
+        }
+      } catch (error) {
+        console.warn("[h2d-paste] failed to decode h2d clipboard data:", error);
+        toast("Couldn't paste that content — the clipboard data looks corrupted.");
+      }
+    }
+
+    if (externalPasteHandled) return;
+
+    if (imageItems.length > 0) {
+      e.preventDefault();
+      const viewportCenter = getViewportCenter(dimensions);
+      const selectionState = useSelectionStore.getState();
+      const currentNodes = useSceneStore.getState().getNodes();
+      const imagePlans: ImageImportPlan[] = [];
+
+      for (let i = 0; i < imageItems.length; i++) {
+        const file = imageItems[i]?.getAsFile();
+        if (!file) continue;
+        try {
+          const plan = await createImageImportPlan({
+            blob: file,
+            name: file.name,
+            anchorWorld: {
+              x: viewportCenter.x + i * 20,
+              y: viewportCenter.y + i * 20,
+            },
+            canvasSize: {
+              width: dimensions.width,
+              height: dimensions.height,
+            },
+            nodes: currentNodes,
+            selectedIds: selectionState.selectedIds,
+            enteredContainerId: selectionState.enteredContainerId,
+            fallbackName: imageItems.length > 1 ? `Pasted Image ${i + 1}` : "Pasted Image",
+          });
+          imagePlans.push(plan);
+        } catch {
+          // skip failed clipboard image
+        }
+      }
+
+      applyImageImportPlans({
+        plans: imagePlans,
+        addNode,
+        addChildToFrame,
+        saveHistory,
+        startBatch,
+        endBatch,
+      });
+      return;
+    }
+
+    // 1. Try SVG from text/plain
+    if (syncText && syncText.includes("<svg") && syncText.includes("</svg>")) {
+      e.preventDefault();
+      const result = parseSvgToNodes(syncText);
+      if (result) {
+        const viewportCenter = getViewportCenter(dimensions);
+        result.node.x = viewportCenter.x - result.node.width / 2;
+        result.node.y = viewportCenter.y - result.node.height / 2;
+
+        addNode(result.node);
+        useSelectionStore.getState().select(result.node.id);
+        return;
+      }
+    }
+
+    // 2. Internal clipboard (copiedNodes) — fallback when no external data matched
+    if (clipboardState.copiedNodes.length > 0) {
+      e.preventDefault();
+      pasteInternalNodes(clipboardState.copiedNodes);
+    }
+  };
+
+  return {
+    pasteInternalNodes,
+    copySelection,
+    pasteFromInternalClipboard,
+    cutSelection,
+    handlePaste,
+  };
+}

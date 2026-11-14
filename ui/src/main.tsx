@@ -1,0 +1,187 @@
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+
+import { RootErrorBoundary } from '@/components/RootErrorBoundary'
+import { initAnalytics } from '@/lib/analytics'
+import { startBridges } from '@/lib/bridgeBootstrap'
+import { installModelContextForEditorRoute } from '@/lib/webmcp/earlyInstall'
+import { loadModels } from '@/lib/chatModels'
+import { isAgentRoutePath, isDocRoutePath, isTraceRoutePath, isWorkflowRoutePath } from '@/lib/agentPanel'
+import { startDesktopDocMirror } from '@/lib/docs/desktopDocMirror'
+import { startDesktopWorkflowMirror } from '@/lib/workflows/desktopWorkflowMirror'
+import { applyStoredUITheme, installUIThemeBroadcastSync, installUIThemeStorageSync } from '@/lib/uiTheme'
+import { MOBBIN_OAUTH_CALLBACK_PATH } from '@/lib/mobbinAuth'
+import { isWorkspaceFrame } from '@/lib/workspace/frame'
+import { createWorkspacePanelApi } from '@/lib/workspace/frameBridges'
+
+import './index.css'
+import { AppRouter } from './AppRouter'
+
+// The browser shell (/workspace) hosts the agent chat as a frame of /agent and routes its canvas
+// link itself. Install the panel API before anything reads `window.penAgentPanel`
+// (isAgentPanelHost). A public top-level /agent has no such frame and keeps redirecting.
+if (isWorkspaceFrame() && isAgentRoutePath(window.location.pathname)) {
+  window.penAgentPanel = createWorkspacePanelApi()
+}
+
+// Both routes share the editor's persisted UI preference. Applying the tiny,
+// dependency-free theme bootstrap here keeps the showcase out of the editor
+// store graph while still preventing a light flash on a direct dark visit.
+applyStoredUITheme()
+// Follow theme switches made in other same-origin documents (desktop shell:
+// canvas tab vs. the /agent panel).
+installUIThemeStorageSync()
+installUIThemeBroadcastSync()
+
+// Install the WebMCP model context before the editor's lazy chunk is even
+// requested. The tools still register later, from App.tsx, but an agent that
+// checks the page as soon as it loads now finds an empty tool list — a state
+// worth polling — rather than a missing API, which reads as "this page does
+// not support WebMCP at all". See earlyInstall.ts for the measurements.
+// Route-gated, and deliberately not on the showcase at "/".
+installModelContextForEditorRoute()
+
+// PROD-only — dev/test must never emit. initAnalytics() is already a
+// complete no-op without VITE_POSTHOG_KEY, so this gate is
+// belt-and-suspenders: it guarantees a dev build never even attempts the
+// dynamic posthog-js import.
+//
+// Also never on the Mobbin OAuth callback popup: that page's whole job is to
+// hand a one-time `code`/`state` back to its opener and call `window.close()`
+// (MobbinCallback.tsx), which scrubs those params from the URL as its very
+// first act — but PostHog's `capture_pageleave: true` fires on close and
+// records `location.href` verbatim, so this is a second, independent guard
+// against ever wiring analytics into that page at all, not just against it
+// seeing a dirty URL.
+function isMobbinOAuthCallbackRoute(): boolean {
+  const base = import.meta.env.BASE_URL || '/'
+  const normalizedBase = base.endsWith('/') ? base.slice(0, -1) : base
+  return window.location.pathname === `${normalizedBase}${MOBBIN_OAUTH_CALLBACK_PATH}`
+}
+
+if (import.meta.env.PROD && !isMobbinOAuthCallbackRoute()) {
+  initAnalytics()
+}
+
+// See bridgeBootstrap.ts for the desktop/websocket MCP bridge startup
+// ordering and its failure-falls-back-not-silently-disables contract.
+startBridges()
+
+// Desktop shell: mirror markdown documents to disk and reconcile with it. No-op on the web.
+// Only the pages that read or write documents: /agent, /doc, /trace/<id>.
+{
+  const path = window.location.pathname
+  if (isAgentRoutePath(path) || isDocRoutePath(path) || isTraceRoutePath(path)) void startDesktopDocMirror()
+  // Same for workflows: /agent (tools) and /workflow (the tab).
+  if (isAgentRoutePath(path) || isWorkflowRoutePath(path)) void startDesktopWorkflowMirror()
+}
+
+// Start fetching the chat model list here, before the first render, rather
+// than only from App's effect. A chat session's queued-payload effect holds
+// its send while this request is in flight (see useDesignChat), and effects
+// run child-first — App's own effect fires *after* the chat panel's, so a
+// showcase handoff (which auto-sends on mount) would already be gone before
+// the load ever started. App still calls loadModels() for its
+// `.then(reconcileModels)`; the promise is shared, so this is not a second
+// request.
+void loadModels()
+
+// Dev-only: expose internals for E2E testing
+if (import.meta.env.DEV) {
+  import('@/lib/toolRegistry').then(({ toolHandlers }) => {
+    (window as unknown as Record<string, unknown>).__toolHandlers = toolHandlers;
+  });
+  import('@/store/sceneStore').then(({ useSceneStore }) => {
+    (window as unknown as Record<string, unknown>).__sceneStore = useSceneStore;
+  });
+  import('@/store/historyStore').then(({ useHistoryStore }) => {
+    (window as unknown as Record<string, unknown>).__historyStore = useHistoryStore;
+  });
+  import('@/store/themeStore').then(({ useThemeStore }) => {
+    (window as unknown as Record<string, unknown>).__themeStore = useThemeStore;
+  });
+  import('@/store/variableStore').then(({ useVariableStore }) => {
+    (window as unknown as Record<string, unknown>).__variableStore = useVariableStore;
+  });
+  import('@/store/selectionStore').then(({ useSelectionStore }) => {
+    (window as unknown as Record<string, unknown>).__selectionStore = useSelectionStore;
+  });
+  import('@/store/viewportStore').then(({ useViewportStore }) => {
+    (window as unknown as Record<string, unknown>).__viewportStore = useViewportStore;
+  });
+  import('@/store/editorModeStore').then(({ useEditorModeStore }) => {
+    (window as unknown as Record<string, unknown>).__editorModeStore = useEditorModeStore;
+  });
+  // Exposed for the same reason as the others, plus one specific to WebMCP:
+  // this flag decides whether the read tools narrow their results to what a
+  // shared viewer can see (src/lib/webmcp/sharedViewRedaction.ts), and that
+  // branch is otherwise only reachable by holding a real /c/:shareId link.
+  import('@/store/sharedViewStore').then(({ useSharedViewStore }) => {
+    (window as unknown as Record<string, unknown>).__sharedViewStore = useSharedViewStore;
+  });
+  import('@/store/canvasRefStore').then(({ useCanvasRefStore }) => {
+    (window as unknown as Record<string, unknown>).__canvasRefStore = useCanvasRefStore;
+  });
+  // Raster-cache correctness e2e (Task 13) samples pixels via
+  // `renderer.extract.pixels({ frame })`, which requires a real `Rectangle`
+  // instance (a duck-typed {x,y,width,height} object lacks `copyTo`).
+  import('pixi.js').then(({ Rectangle }) => {
+    (window as unknown as Record<string, unknown>).__PixiRectangle = Rectangle;
+  });
+  // Plugin runtime e2e (plg-01): run/stop a plugin in a real sandboxed iframe.
+  import('@/lib/plugins/pluginHost').then(({ runPlugin, stopPlugin }) => {
+    (window as unknown as Record<string, unknown>).__pluginHost = { runPlugin, stopPlugin };
+  });
+  // AI plugin generation e2e (plg-03): inspect installed plugins and the
+  // command palette entries create_plugin/update_plugin produce.
+  import('@/store/pluginStore').then(({ usePluginStore }) => {
+    (window as unknown as Record<string, unknown>).__pluginStore = usePluginStore;
+  });
+  import('@/lib/commands/registry').then(({ getCommands }) => {
+    (window as unknown as Record<string, unknown>).__getCommands = getCommands;
+  });
+  // Streaming AI vector drawing e2e (Task 8): assert the transient preview
+  // draft (points/geometry/phase) exists BEFORE the tool's final input lands.
+  import('@/store/aiVectorPreviewStore').then(({ useAiVectorPreviewStore }) => {
+    (window as unknown as Record<string, unknown>).__aiVectorPreviewStore = useAiVectorPreviewStore;
+  });
+  // Image-fill CORS-retry e2e (convertEmbed.spec.ts): the retry chain
+  // (Assets.load → <img crossOrigin> → /api/image-proxy) doesn't always reach
+  // every step — the browser may resolve/reject earlier attempts differently
+  // than a mocked unit test — so no single network request reliably marks
+  // "done". `waitForPendingImageFills` is the mechanism-agnostic signal
+  // already used internally by get_screenshot/captureNodeScreenshot: it
+  // resolves once every in-flight image-fill texture load (of any outcome)
+  // has settled.
+  import('@/pixi/renderers/pendingImageLoads').then(({ waitForPendingImageFills }) => {
+    (window as unknown as Record<string, unknown>).__waitForPendingImageFills = waitForPendingImageFills;
+  });
+  // Canvas-interaction e2e (embed-dom-layer.spec.ts): a node is in the scene
+  // store the instant `addNode` returns, and its DOM overlay renders on
+  // React's next commit — but a click is resolved by `findCanvasHitTargetAtPoint`,
+  // which prunes root subtrees against the culling index, and pixiSync only
+  // refreshes that index on its rAF-deferred flush (see the prune comment in
+  // hitTesting.ts). So "the overlay is visible" is NOT evidence that a click
+  // at that node would hit it: measured, the index is still empty for the
+  // first frame(s) after the store write, and a spec that clicks once in
+  // that window silently does nothing. Expose the same hit test the pointer
+  // handlers use, in canvas-relative screen coordinates, so a spec can wait
+  // for the click to be resolvable instead of racing the flush.
+  import('@/pixi/interaction/hitTesting').then(({ findNodeAtPoint, screenToWorld }) => {
+    (window as unknown as Record<string, unknown>).__hitTestScreenPoint = (
+      screenX: number,
+      screenY: number,
+    ): string | null => {
+      const world = screenToWorld(screenX, screenY);
+      return findNodeAtPoint(world.x, world.y);
+    };
+  });
+}
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <RootErrorBoundary>
+      <AppRouter />
+    </RootErrorBoundary>
+  </StrictMode>,
+)
