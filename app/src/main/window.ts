@@ -1,3 +1,5 @@
+import { createIsolatedEvaluator } from "./isolatedEval";
+import { pickScriptRoute, STUCK_SCRIPT_TIMEOUT_MS, withScriptTimeout } from "./scriptRoute";
 import { captureWithRetry } from "./captureRetry";
 import { normalizePageColor, PAGE_BG_FALLBACK, SAMPLE_PAGE_BG_SCRIPT } from "./pageBackground";
 import path from "node:path";
@@ -211,17 +213,32 @@ export function isLiveTabbar(senderId: number): boolean {
   return liveTabbarIds.has(senderId);
 }
 
+/**
+ * Runs a page script in the main frame, in the page's own world, with a timeout: the route of a
+ * "stuck" tab only (scriptRoute.ts). `WebFrameMain.executeJavaScript` is not gated on the load
+ * ending. A tab with no live main frame rejects at once with the error callers expect.
+ */
+function runInMainFrame(wc: Electron.WebContents, code: string): Promise<unknown> {
+  try {
+    if (wc.isDestroyed()) return Promise.reject(new Error("Frame no longer exists."));
+    const frame = wc.mainFrame as Electron.WebFrameMain | null;
+    if (!frame || frame.isDestroyed()) return Promise.reject(new Error("Frame no longer exists."));
+    return withScriptTimeout(frame.executeJavaScript(code), STUCK_SCRIPT_TIMEOUT_MS);
+  } catch (err) {
+    return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
 /** Isolated JS world id for executeJavaScriptIsolated (arbitrary, fixed). */
 const ISOLATED_WORLD_ID = 1999;
+/** Name of the isolated world of the CDP route (stuck tabs only; scriptRoute.ts). */
+const ISOLATED_WORLD_NAME = "sideform-isolated";
 
-/** Wave 3 reliability, item 2: electron/electron#5183 — `executeJavaScript`
- * (main-frame or a child frame's own) only resolves once the frame stops
- * loading, so a frame that never finishes loading (a slow/broken ad iframe,
- * say) must not hang a whole `snapshot`/`read`/`findImages` call. Every
- * per-frame script call is raced against this short, frame-scoped timeout —
- * see `FRAME_SCRIPT_TIMEOUT_MS` in @sideform/browser-agent/controller, which this mirrors
- * for the call sites that live in this file (frame discovery itself doesn't
- * run a script, but executeJavaScriptInFrame below does). */
+/** A child frame's own `executeJavaScript` is not gated on the page's load ending, but a frame that
+ * never answers (a slow/broken ad iframe, a swapped RenderFrameHost) must not hang a whole
+ * `snapshot`/`read`/`findImages` call: every per-frame script call is raced against this short,
+ * frame-scoped timeout — see `FRAME_SCRIPT_TIMEOUT_MS` in @sideform/browser-agent/controller,
+ * which this mirrors. */
 function withFrameTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Frame script timed out after ${ms}ms.`)), ms);
@@ -844,6 +861,20 @@ export function createMainWindow(
         await ensureDocument(gateTimeoutMs);
         return view.webContents.debugger.sendCommand(method, params);
       };
+      // Page-script routing (scriptRoute.ts): the default is webContents.executeJavaScript; a tab
+      // whose main-frame navigation finished but whose load never ends goes through the frame.
+      let loadingCb: ((loading: boolean) => void) | null = null;
+      const loadFeed = createTabLoading((l) => loadingCb?.(l));
+      const scriptRoute = () =>
+        pickScriptRoute({
+          isBrowserTab: kind === "browser",
+          placeholderShown: kind === "browser" && commitGate.isPlaceholderShown(),
+          navigationPending: loadFeed.loading(),
+          chromiumLoading: !view.webContents.isDestroyed() && view.webContents.isLoading(),
+        });
+      const runPageScript = (code: string): Promise<unknown> =>
+        scriptRoute() === "frame" ? runInMainFrame(view.webContents, code) : view.webContents.executeJavaScript(code);
+      const isolatedEval = createIsolatedEvaluator((m, p) => view.webContents.debugger.sendCommand(m, p), ISOLATED_WORLD_NAME);
       // The Browser tools menu runs in the tab's serial queue: an uncommitted tab must
       // fail fast there, not wedge the queue for the gate's full 10 s.
       const MENU_GATE_TIMEOUT_MS = 2_000;
@@ -893,6 +924,29 @@ export function createMainWindow(
         const placeholderTimer = setTimeout(() => commitGate.startPlaceholderIfIdle(), 100);
         wc.once("destroyed", () => clearTimeout(placeholderTimer));
       }
+      const loadWc = view.webContents;
+      // Tab-strip loading fill and the script route's "navigation pending" (tabLoading.ts).
+      // The decision lives there; this only feeds it events. Registered after the commit
+      // gate's own listeners above, so `isPlaceholderNavigation()` already knows whether a
+      // start is its placeholder's.
+      loadWc.on("did-start-navigation", (details) =>
+        loadFeed({
+          type: "navigation-start",
+          url: details.url,
+          isMainFrame: details.isMainFrame,
+          isSameDocument: details.isSameDocument,
+          placeholder: kind === "browser" && commitGate.isPlaceholderNavigation(),
+        }),
+      );
+      loadWc.on("did-redirect-navigation", (details) => loadFeed({ type: "redirect", url: details.url, isMainFrame: details.isMainFrame }));
+      loadWc.on("did-navigate", () => loadFeed({ type: "navigated" }));
+      loadWc.on("dom-ready", () => loadFeed({ type: "dom-ready" }));
+      // A stopped load that a newer one superseded (the placeholder) reports its stop late:
+      // only an idle view is done loading.
+      loadWc.on("did-stop-loading", () => loadFeed({ type: "stop", idle: !loadWc.isLoading() }));
+      loadWc.on("did-fail-load", (_e, errorCode, _desc, validatedURL, isMainFrame) => loadFeed({ type: "fail-load", isMainFrame, errorCode, url: validatedURL }));
+      // A crash mid-load may never send did-stop-loading.
+      loadWc.on("render-process-gone", () => loadFeed({ type: "render-process-gone" }));
       // Subscribers to this tab's CDP events (FetchRouter) — one listener on
       // the debugger, fanned out here, so applies never leak listeners.
       const cdpEventListeners = new Set<(method: string, params: unknown) => void>();
@@ -1035,6 +1089,7 @@ export function createMainWindow(
               captureLogin();
               return;
             }
+            isolatedEval.onCdpEvent(method, params);
             for (const l of [...cdpEventListeners]) l(method, params);
             if (method === "Page.frameNavigated" || method === "Page.navigatedWithinDocument") {
               captureLogin();
@@ -1305,7 +1360,7 @@ export function createMainWindow(
         const sampleTail = async () => {
           try {
             if (wc.isDestroyed() || browserTabBlank || isPlaceholderShown()) return;
-            const raw: unknown = await wc.executeJavaScript(SAMPLE_PAGE_BG_SCRIPT);
+            const raw: unknown = await runPageScript(SAMPLE_PAGE_BG_SCRIPT);
             if (wc.isDestroyed()) return;
             tailColors.set(viewId, normalizePageColor(raw));
           } catch {
@@ -1442,29 +1497,8 @@ export function createMainWindow(
         // Tab-strip loading fill. The hidden about:blank placeholder (browser tabs) is not
         // something the person waits for.
         onLoadingChanged: (cb) => {
-          // The decision lives in tabLoading.ts; this only feeds it events.
-          const feed = createTabLoading(cb);
-          const wc = view.webContents;
-          // The commit gate's own listeners (registered at view creation) run first, so
-          // `isPlaceholderNavigation()` already knows whether this start is its placeholder's.
-          wc.on("did-start-navigation", (details) =>
-            feed({
-              type: "navigation-start",
-              url: details.url,
-              isMainFrame: details.isMainFrame,
-              isSameDocument: details.isSameDocument,
-              placeholder: kind === "browser" && commitGate.isPlaceholderNavigation(),
-            }),
-          );
-          wc.on("did-redirect-navigation", (details) => feed({ type: "redirect", url: details.url, isMainFrame: details.isMainFrame }));
-          wc.on("did-navigate", () => feed({ type: "navigated" }));
-          wc.on("dom-ready", () => feed({ type: "dom-ready" }));
-          // A stopped load that a newer one superseded (the placeholder) reports its stop late:
-          // only an idle view is done loading.
-          wc.on("did-stop-loading", () => feed({ type: "stop", idle: !wc.isLoading() }));
-          wc.on("did-fail-load", (_e, errorCode, _desc, validatedURL, isMainFrame) => feed({ type: "fail-load", isMainFrame, errorCode, url: validatedURL }));
-          // A crash mid-load may never send did-stop-loading.
-          wc.on("render-process-gone", () => feed({ type: "render-process-gone" }));
+          loadingCb = cb;
+          if (loadFeed.loading()) cb(true);
         },
         onNavigationStateChanged: (cb) => {
           navListener = cb;
@@ -1477,11 +1511,15 @@ export function createMainWindow(
         reload: () => view.webContents.reload(),
         canGoBack: () => view.webContents.navigationHistory.canGoBack(),
         canGoForward: () => view.webContents.navigationHistory.canGoForward(),
-        executeJavaScript: (code) => view.webContents.executeJavaScript(code),
+        executeJavaScript: (code) => runPageScript(code),
         // Own JS world (fixed id): the page's scripts cannot patch its globals
         // or read the cross-origin pixels it decodes. Used by mark compose.
+        // Stuck tab (scriptRoute.ts): CDP, with this tab's debugger session directly (not
+        // sendGated: the document is committed by definition, a gate wait could only hurt).
         executeJavaScriptIsolated: (code) =>
-          view.webContents.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }]),
+          debuggerAttached && scriptRoute() === "frame"
+            ? withScriptTimeout(isolatedEval.evaluate(code), STUCK_SCRIPT_TIMEOUT_MS)
+            : view.webContents.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }]),
         // browse_capture v2: the controller reads cross-origin stylesheets
         // itself (the page's CORS blocks a script from reading them). Goes
         // through this tab's own session, so the browser partition's cookies
@@ -1643,7 +1681,7 @@ export function createMainWindow(
             // executeJavaScript on a tab with no document never answers until
             // the tab's first load: commit the placeholder first (new empty tab).
             await ensureDocument(MENU_GATE_TIMEOUT_MS);
-            const r: unknown = await view.webContents.executeJavaScript(
+            const r: unknown = await runPageScript(
               "navigator.userAgentData ? navigator.userAgentData.brands.map(b => ({ brand: b.brand, version: b.version })) : null",
             );
             return Array.isArray(r) ? (r as { brand: string; version: string }[]) : null;

@@ -410,15 +410,39 @@ that settles after `open` has already returned can never surface as an
 unhandled rejection — it's simply too late to change the `loaded` value
 already reported.
 
-One real limitation this fix does **not** paper over: Electron's own
-`webContents.executeJavaScript` defers running until the page *stops*
-loading (documented Electron behavior, not something under this repo's
-control — see electron/electron#5183) — so `snapshot`/`read`/`act`/`perform`
-against a `loaded: false` page will themselves block until whatever
-subresource is still pending finally settles (or the tab's own
-`BROWSER_COMMAND_TIMEOUT_MS` is hit, if it never does). `open`'s early
-return only means the *navigation* command itself doesn't block on that —
-it does not make the tab's DOM scriptable ahead of Electron's own gate.
+Page scripts and a load that never ends. Electron's own
+`webContents.executeJavaScript` (and `executeJavaScriptInIsolatedWorld`) defer
+running until the page *stops* loading (electron/electron#5183): normally a
+feature (no script runs on the outgoing or the not yet committed document while
+a navigation is pending, and the result serialization is the one every command
+was built on), but on a page with one subresource that never completes (seen on
+avito.ru behind its anti-bot check) every `snapshot`/`read`/`act` would time out.
+So the default route stays `webContents.executeJavaScript`, and only a "stuck"
+tab takes another one. The decision is the pure `src/main/scriptRoute.ts`
+(`pickScriptRoute`): a browser tab showing a real document (not the placeholder),
+whose main-frame navigation is finished (`tabLoading.ts` idle: committed AND
+dom-ready, or failed/stopped), while `webContents.isLoading()` is still true.
+`window.ts` only wires it (`runPageScript`; the handle's `executeJavaScript`, the
+tail-colour sample and `getUaBrands` go through it):
+- stuck: `webContents.mainFrame.executeJavaScript` (no gate) raced against
+  `STUCK_SCRIPT_TIMEOUT_MS` (10 s, "Frame script timed out after ..."); no live
+  frame rejects with "Frame no longer exists.".
+- isolated world, stuck: CDP (`isolatedEval.ts`: `Page.createIsolatedWorld` +
+  `Runtime.evaluate` with that context id, no `Runtime.enable`, the `CdpSend` type of
+  `loginCapture.ts`), frame id and context id cached per main-frame document and
+  dropped on a main-frame `Page.frameNavigated`. It sends on the tab's debugger
+  directly, not through `sendGated`: the document is committed by definition there.
+- everything else: unchanged Electron calls. The agent panel's own flush script
+  (`pagePort`) keeps `webContents.executeJavaScript` too.
+
+Accepted trade-off of the stuck route: `WebFrameMain.executeJavaScript`
+serializes differently from `webContents.executeJavaScript` (an `undefined`-valued
+key, `NaN` and `Infinity` are dropped, `Date` arrives as a number, a typed array
+as `{}`, `undefined` inside an array becomes `null`). The controller's scripts
+return plain JSON, so this is the price of not timing out after 20 s on every
+command. `e2e/browser-hanging-load.spec.ts` pins it (`<img src="/hang">`: open,
+snapshot, read, perform by index, annotated screenshot all answer in well under
+5 s while `isLoading()` is still true).
 The address row (a second, 32px-tall row inside the *existing* tab-bar
 `WebContentsView` — no new view, no new preload) is shown only while the
 active tab is a browser tab; `window.ts`'s `layout()` re-runs on every
@@ -604,8 +628,9 @@ that `Input.insertText` fires a real `beforeinput` (React's own signal that
 a change came from a real input event, not a scripted one). Those three —
 plus a real inner-scroll container — are e2e-only, against a real DOM served
 by `e2e/browser-tab.spec.ts`'s own stub HTTP server (`/wave2` fixture).
-`electron/electron#5183` (`executeJavaScript` defers until the page stops
-loading) means a child frame that never finishes loading must not hang a
+A child frame's own `executeJavaScript` is not gated on the load ending (the
+gate of electron/electron#5183 is on `webContents`, see "Built-in browser tab"),
+but a frame that never answers must not hang a
 whole `snapshot`/`read`/`findImages` call — every per-frame script call
 (`executeScriptInFrame`) is raced against `FRAME_SCRIPT_TIMEOUT_MS` (1.5s,
 enforced both in `window.ts`'s own `executeJavaScriptInFrame` and again in

@@ -131,3 +131,15 @@ describe("pushed on change only", () => {
     expect(run([start(A), start(B), start(B), stop(true), stop(true), domReady])).toEqual([true, false]);
   });
 });
+
+describe("createTabLoading().loading()", () => {
+  it("reads the current flag (the script route's 'navigation pending')", () => {
+    const feed = createTabLoading(() => {});
+    expect(feed.loading()).toBe(false);
+    feed(start(A));
+    expect(feed.loading()).toBe(true);
+    feed({ type: "navigated" });
+    feed({ type: "dom-ready" });
+    expect(feed.loading()).toBe(false);
+  });
+});

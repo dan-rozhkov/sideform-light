@@ -76,13 +76,15 @@ export function nextTabLoading(state: TabLoadingState, event: TabLoadingEvent): 
 /**
  * Feeds events into `nextTabLoading`. THE place that owns "pushed on change only": `onChange`
  * runs when the flag flips, never for an unchanged value (TabManager relies on this).
+ * `loading()` reads the current flag (a main-frame navigation owns the fill).
  */
-export function createTabLoading(onChange: (loading: boolean) => void): (event: TabLoadingEvent) => void {
+export function createTabLoading(onChange: (loading: boolean) => void): ((event: TabLoadingEvent) => void) & { loading(): boolean } {
   let state = IDLE_TAB_LOADING;
-  return (event) => {
+  const feed = (event: TabLoadingEvent) => {
     const next = nextTabLoading(state, event);
     const changed = next.loading !== state.loading;
     state = next;
     if (changed) onChange(state.loading);
   };
+  return Object.assign(feed, { loading: () => state.loading });
 }
