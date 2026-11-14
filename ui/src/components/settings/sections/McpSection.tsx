@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckIcon, CopyIcon, EyeIcon, EyeSlashIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/IconButton";
+import { IconSwap } from "@/components/ui/IconSwap";
 import { Switch } from "@/components/ui/switch";
 import type { McpSettingsView } from "@/lib/desktopBridge";
 import { claudeCodeSnippet, hermesSnippet } from "@/lib/mcpSnippets";
@@ -26,7 +27,7 @@ function statusText(view: McpSettingsView): string {
   }
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+function CopyButton({ text, label, size = "icon" }: { text: string; label: string; size?: "icon" | "icon-sm" }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -41,8 +42,8 @@ function CopyButton({ text, label }: { text: string; label: string }) {
     );
   };
   return (
-    <IconButton type="button" variant="ghost" size="icon-sm" tooltip={copied ? "Copied" : label} aria-label={label} onClick={copy}>
-      {copied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
+    <IconButton type="button" variant="ghost" size={size} tooltip={copied ? "Copied" : label} aria-label={label} onClick={copy}>
+      <IconSwap active={copied} activeIcon={<CheckIcon size={16} aria-hidden />} inactiveIcon={<CopyIcon size={16} aria-hidden />} />
     </IconButton>
   );
 }
@@ -52,7 +53,7 @@ function Snippet({ title, text, shown }: { title: string; text: string; shown: s
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
         <h4 className="text-xs font-medium text-text-primary">{title}</h4>
-        <CopyButton text={text} label={`Copy ${title} snippet`} />
+        <CopyButton text={text} label={`Copy ${title} snippet`} size="icon-sm" />
       </div>
       <pre className="overflow-x-auto rounded-control-lg bg-secondary px-3 py-2 text-xs/relaxed text-secondary-foreground">
         <code>{shown}</code>
@@ -157,7 +158,7 @@ function McpControls({ api }: { api: NonNullable<NonNullable<typeof window.penDe
           {view ? statusText(view) : error ? "Unknown" : "Loading…"}
         </p>
         {error && (
-          <p role="alert" className="text-xs text-red-500">
+          <p role="alert" className="text-xs text-destructive">
             {error}
           </p>
         )}
@@ -167,7 +168,7 @@ function McpControls({ api }: { api: NonNullable<NonNullable<typeof window.penDe
         <>
           <SettingsGroup title="Address">
             <div className="flex items-center gap-1">
-              <code data-testid="mcp-url" className="min-w-0 flex-1 truncate rounded-control-lg bg-secondary px-3 py-1.5 text-xs">
+              <code data-testid="mcp-url" className="block h-7 min-w-0 flex-1 truncate rounded-control bg-secondary px-3 text-xs leading-7">
                 {url}
               </code>
               <CopyButton text={url} label="Copy address" />
@@ -176,19 +177,19 @@ function McpControls({ api }: { api: NonNullable<NonNullable<typeof window.penDe
 
           <SettingsGroup title="Token" description="Clients send it with every request. Keep it private.">
             <div className="flex items-center gap-1">
-              <code data-testid="mcp-token" className="min-w-0 flex-1 truncate rounded-control-lg bg-secondary px-3 py-1.5 text-xs">
+              <code data-testid="mcp-token" className="block h-7 min-w-0 flex-1 truncate rounded-control bg-secondary px-3 text-xs leading-7">
                 {shownToken}
               </code>
               <IconButton
                 type="button"
                 variant="ghost"
-                size="icon-sm"
+                size="icon"
                 tooltip={reveal ? "Hide token" : "Show token"}
                 aria-label={reveal ? "Hide token" : "Show token"}
                 aria-pressed={reveal}
                 onClick={() => setReveal((r) => !r)}
               >
-                {reveal ? <EyeSlashIcon aria-hidden /> : <EyeIcon aria-hidden />}
+                <IconSwap active={reveal} activeIcon={<EyeSlashIcon size={16} aria-hidden />} inactiveIcon={<EyeIcon size={16} aria-hidden />} />
               </IconButton>
               <CopyButton text={token} label="Copy token" />
             </div>

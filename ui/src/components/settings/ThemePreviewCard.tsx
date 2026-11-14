@@ -24,7 +24,7 @@ export function ThemePreviewCard({ theme, label }: { theme: UITheme; label: stri
       className="group flex w-full max-w-56 cursor-default flex-col gap-2 text-left outline-none"
     >
       <span
-        className="relative block aspect-[16/10] overflow-hidden rounded-lg border group-data-checked:border-transparent group-data-checked:ring-2 group-data-checked:ring-accent-primary group-focus-visible:ring-2 group-focus-visible:ring-accent-primary"
+        className="relative block aspect-[16/10] overflow-hidden rounded-xl border group-data-checked:border-transparent group-data-checked:ring-2 group-data-checked:ring-accent-primary group-focus-visible:ring-2 group-focus-visible:ring-accent-primary"
         style={{ backgroundColor: c.base, borderColor: c.border }}
         aria-hidden
       >
@@ -39,7 +39,7 @@ export function ThemePreviewCard({ theme, label }: { theme: UITheme; label: stri
           <Line width="70%" color={c.line} />
         </span>
         <span
-          className="absolute top-5 right-2 bottom-2 left-[28%] flex flex-col gap-1.5 rounded-md p-2"
+          className="absolute top-5 right-2 bottom-2 left-[28%] flex flex-col gap-1.5 rounded-[3px] p-2"
           style={{ backgroundColor: c.panel, border: `1px solid ${c.border}` }}
         >
           <Line width="45%" color={c.muted} />
@@ -47,7 +47,7 @@ export function ThemePreviewCard({ theme, label }: { theme: UITheme; label: stri
           <Line width="75%" color={c.line} />
           <Line width="60%" color={c.line} />
         </span>
-        <Radio.Indicator className="absolute right-1.5 bottom-1.5 flex size-4 items-center justify-center rounded-full bg-accent-primary text-white">
+        <Radio.Indicator className="absolute right-0.75 bottom-0.75 flex size-4 items-center justify-center rounded-full bg-accent-primary text-white">
           <CheckIcon className="size-2.5" />
         </Radio.Indicator>
       </span>
