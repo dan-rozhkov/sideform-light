@@ -79,7 +79,7 @@ test("passwords tab: add, list, detail, search, edit, delete; light and dark", a
   });
   const pageErrors: string[] = [];
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     await app.evaluate(({ safeStorage }) => {

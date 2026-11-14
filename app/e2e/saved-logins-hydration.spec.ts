@@ -54,7 +54,7 @@ for (const mode of ["keep", "reset"] as const) {
       env: { ...process.env, SIDEFORM_LIGHT_UI_URL: fixture.baseUrl, SIDEFORM_LIGHT_USER_DATA_DIR: userData },
     });
     try {
-      await expect(app.canvasPage.locator("#ready")).toHaveText("stub-editor");
+      await expect(app.agentPage.locator("#ready")).toHaveText("stub-editor");
       await app.evaluate(({ safeStorage }) => {
         const s = safeStorage as unknown as Record<string, unknown>;
         s.isEncryptionAvailable = () => true;
@@ -62,9 +62,9 @@ for (const mode of ["keep", "reset"] as const) {
         s.encryptString = (p: string) => Buffer.from(`x${p}`);
       });
 
-      const filled = await app.canvasPage.evaluate(async (url) => {
-        const b = (window as unknown as { penDesktop: { browser: Record<string, (a?: unknown) => Promise<unknown>> } })
-          .penDesktop.browser;
+      const filled = await app.agentPage.evaluate(async (url) => {
+        const b = (window as unknown as { penAgentPanel: { browser: Record<string, (a?: unknown) => Promise<unknown>> } })
+          .penAgentPanel.browser;
         await b.open({ url });
         return await b.fillLogin({ submit: true });
       }, `${fixture.baseUrl}/login?hydrateMs=1500&mode=${mode}`);

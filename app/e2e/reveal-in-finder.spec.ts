@@ -1,40 +1,32 @@
 import { test, expect, _electron as electron, type Page } from "@playwright/test";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { revealMenuLabel } from "../src/main/revealMenuLabel";
+import { startStubUi } from "./stubUi";
 
-// Reveal in Finder in a real Electron window: the File item follows the active tab (also after the
-// frontend names a new canvas with history.replaceState), the click reveals the stored file, and a
-// right-click on a tab does not activate it. Native popups cannot be clicked from Playwright, so the
-// tab and Recent context menus themselves are covered by unit tests only.
-let server: http.Server;
-let baseUrl: string;
+// Reveal in Finder in a real Electron window: the File item follows the active tab (enabled for a trace tab,
+// which has a folder on disk; off for a browser tab), the click reveals the stored trace, and a right-click on
+// a tab does not activate it. Native popups cannot be clicked from Playwright, so the tab context menu itself
+// is covered by unit tests only.
+let stub: Awaited<ReturnType<typeof startStubUi>>;
 
 test.beforeAll(async () => {
-  server = http.createServer((req, res) => {
-    res.setHeader("content-type", "text/html");
-    const isAgent = (req.url ?? "").startsWith("/agent");
-    res.end(
-      isAgent
-        ? `<!doctype html><title>Agent</title><h1 id="ready">stub-agent</h1>`
-        : `<!doctype html><title>My Canvas</title><h1 id="ready">stub-editor</h1>
-<script>const h = window.penDesktop && window.penDesktop.canvasHost; if (h) h.register();
-// Like the real editor: name a new canvas later with history.replaceState.
-setTimeout(() => { const u = new URL(location.href); if (!u.searchParams.get("canvas")) { u.searchParams.set("canvas", "cv_reveal"); history.replaceState(null, "", u); } }, 800);</script>`,
-    );
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  stub = await startStubUi();
 });
-test.afterAll(() => new Promise<void>((r) => server.close(() => r())));
+test.afterAll(() => stub.close());
 
-test("reveal item: disabled without a file tab, enabled after replaceState, click reveals the stored file", async () => {
-  const app = await electron.launch({ args: ["."], env: { ...process.env, SIDEFORM_LIGHT_UI_URL: `${baseUrl}/app` } });
+test("reveal item: disabled without a trace tab, enabled for one, click reveals the stored trace", async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "reveal-e2e-"));
+  // The trace folder exists (a saved trace has one); its trace.json does not, so the folder itself is opened.
+  const traceDir = path.join(userData, "browse-traces", "tr_reveal");
+  fs.mkdirSync(traceDir, { recursive: true });
+  const app = await electron.launch({ args: ["."], env: { ...process.env, SIDEFORM_LIGHT_UI_URL: stub.url, SIDEFORM_LIGHT_USER_DATA_DIR: userData } });
   try {
     const find = async (pred: (u: string) => boolean): Promise<Page> =>
       app.windows().find((p) => pred(p.url())) ?? (await app.waitForEvent("window", { predicate: (p) => pred(p.url()) }));
     const tabbar = await find((u) => u.endsWith("/tabbar/tabbar.html"));
-    const empty = await find((u) => u.endsWith("/tabbar/empty.html"));
+    const agent = await find((u) => u.startsWith(`${stub.url}/agent`));
     const itemState = () =>
       app.evaluate(({ Menu }) => {
         const i = Menu.getApplicationMenu()?.getMenuItemById("reveal-active-tab");
@@ -51,25 +43,17 @@ test("reveal item: disabled without a file tab, enabled after replaceState, clic
       (shell as unknown as { openPath: (p: string) => Promise<string> }).openPath = async (p) => (g.revealed.push("open:" + p), "");
     });
 
-    await empty.locator("#new-canvas").click();
-    const canvas = await find((u) => u.startsWith(`${baseUrl}/app`) && u.includes("chat=off"));
-    await expect(canvas.locator("#ready")).toHaveText("stub-editor");
-    await expect.poll(() => canvas.url()).toContain("canvas=cv_reveal");
+    // The panel opens a trace tab (traces:open).
+    const opened = await agent.evaluate(() => (window as unknown as { penAgentPanel: { traces: { open(id: string): Promise<unknown> } } }).penAgentPanel.traces.open("tr_reveal"));
+    expect(opened).toEqual({ ok: true });
+    await expect(tabbar.locator(".tab")).toHaveCount(1);
     await expect.poll(async () => (await itemState())?.enabled).toBe(true);
-
-    // Save first so the file exists (a missing file falls back to the folder; unit-tested).
-    const saved = await canvas.evaluate(() =>
-      (window as unknown as { penDesktop: { canvases: { save(c: unknown): Promise<unknown> } } }).penDesktop.canvases.save({
-        id: "cv_reveal", title: "My Canvas", updatedAt: Date.now(), rev: 1, document: "{}",
-      }),
-    );
-    expect(saved).toMatchObject({ ok: true });
     await app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById("reveal-active-tab")!.click());
-    await expect
-      .poll(() => app.evaluate(() => (globalThis as unknown as { revealed: string[] }).revealed))
-      .toEqual([expect.stringMatching(/^show:.*canvases-dev[\\/]cv_reveal\.pen\.json$/)]);
+    const revealed = () => app.evaluate(() => (globalThis as unknown as { revealed: string[] }).revealed);
+    await expect.poll(async () => (await revealed()).length).toBe(1);
+    expect((await revealed())[0]).toMatch(/^open:.*tr_reveal$/);
 
-    // A browser tab has no file: the item turns off; a right-click on the canvas tab does not activate it.
+    // A browser tab has no file: the item turns off; a right-click on the trace tab does not activate it.
     await app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.items.find((m) => m.label === "File")!.submenu!.items.find((i) => i.label === "New Browser Tab")!.click());
     await expect(tabbar.locator(".tab")).toHaveCount(2);
     await expect.poll(async () => (await itemState())?.enabled).toBe(false);
@@ -77,8 +61,8 @@ test("reveal item: disabled without a file tab, enabled after replaceState, clic
     await tabbar.waitForTimeout(300);
     await expect(tabbar.locator(".tab").nth(1)).toHaveClass(/active/);
     expect((await itemState())?.enabled).toBe(false);
-
   } finally {
     await app.close();
+    fs.rmSync(userData, { recursive: true, force: true });
   }
 });

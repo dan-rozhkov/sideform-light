@@ -2,25 +2,25 @@ import { _electron as electron, type ElectronApplication, type Page } from "@pla
 
 type LaunchOptions = NonNullable<Parameters<typeof electron.launch>[0]>;
 
-/** The app plus the first canvas tab's page (see `launchShell`). */
-export type Shell = ElectronApplication & { canvasPage: Page };
+/** The app plus the agent panel's page (see `launchShell`). */
+export type Shell = ElectronApplication & { agentPage: Page };
 
 /**
- * True for the page of a CANVAS tab of the editor at `base` (the editor URL the
- * shell was launched with): same origin, not the agent panel (`/agent...`) and
- * chatless (`chat=off`, what `resolveCanvasTabUrl` adds). Browser tabs at the
- * same origin (no `chat=off`) and the panel are not canvas pages.
+ * True for the page of the AGENT PANEL of the ui served at `base` (the SIDEFORM_LIGHT_UI_URL the shell was
+ * launched with): same origin, path `/agent` or below. Browser tabs at the same origin and the trace/settings
+ * pages are not the panel.
  */
-export function isCanvasPage(url: string, base: string): boolean {
+export function isAgentPage(url: string, base: string): boolean {
   let u: URL;
+  let b: URL;
   try {
     u = new URL(url);
+    b = new URL(base);
   } catch {
     return false;
   }
-  if (u.origin !== new URL(base).origin) return false;
-  if (u.pathname === "/agent" || u.pathname.startsWith("/agent/")) return false;
-  return u.searchParams.get("chat") === "off";
+  if (u.origin !== b.origin) return false;
+  return u.pathname === "/agent" || u.pathname.startsWith("/agent/");
 }
 
 const CRASH_SIGNALS = new Set(["SIGSEGV", "SIGABRT", "SIGBUS", "SIGILL", "SIGFPE", "SIGTRAP"]);
@@ -55,29 +55,25 @@ export async function waitForShellViews(app: ElectronApplication): Promise<Page>
 }
 
 /**
- * Launches the shell. The desktop has ONE layout (agent panel + tabs) and the
- * window starts with ZERO tabs, so a spec that needs an editor page has to
- * open a canvas tab first. This helper does that by default: it waits for the
- * tab bar view, asks for a new canvas tab exactly as the tab bar's "+" does
- * (`penTabbar.newTab()` in the tab bar page, which sends `tabbar:new`), and
- * returns once that tab's page exists. It is exposed as
- * `shell.canvasPage` (the listener is registered BEFORE the tab is requested,
- * so there is no race with the window event).
- *
- * Pass `{ canvasTab: false }` for specs that test the empty start itself (or
- * that open their own tabs); `canvasPage` is then undefined. Such specs may also
- * call `electron.launch` directly.
+ * Launches the shell against a stub ui: `options.env.SIDEFORM_LIGHT_UI_URL` (or the process env) points at the
+ * suite's own http server, which stands in for the bundled ui (no ui/dist needed). The window starts with ZERO
+ * tabs and the agent panel loads `/agent` from that server; this helper waits for the shell views and for the
+ * panel page, and returns it as `shell.agentPage` — the page whose `window.penAgentPanel.browser` bridge
+ * drives the browser (every browser spec goes through it).
  */
-export async function launchShell(options: LaunchOptions, { canvasTab = true }: { canvasTab?: boolean } = {}): Promise<Shell> {
+export async function launchShell(options: LaunchOptions): Promise<Shell> {
+  const base = String(options.env?.SIDEFORM_LIGHT_UI_URL ?? process.env.SIDEFORM_LIGHT_UI_URL ?? "");
   const app = (await electron.launch(options)) as Shell;
   reportCrashes(app);
-  const tabbar = await waitForShellViews(app);
-  if (!canvasTab) return app;
-  const base = String(options.env?.SIDEFORM_LIGHT_UI_URL ?? process.env.SIDEFORM_LIGHT_UI_URL ?? "");
-  const waiting = app.waitForEvent("window", { predicate: (p) => isCanvasPage(p.url(), base), timeout: 60_000 });
-  waiting.catch(() => undefined);
-  // The tab bar's own "+" path (renderer → `tabbar:new`), so no main-process code runs here.
-  await tabbar.evaluate(() => (window as unknown as { penTabbar: { newTab(): void } }).penTabbar.newTab());
-  app.canvasPage = await waiting;
+  // Listener first: the panel may load while the shell views are still being waited for.
+  const waiting = app.windows().find((p) => isAgentPage(p.url(), base)) ?? app.waitForEvent("window", { predicate: (p) => isAgentPage(p.url(), base), timeout: 60_000 });
+  Promise.resolve(waiting).catch(() => undefined);
+  await waitForShellViews(app);
+  app.agentPage = await waiting;
   return app;
+}
+
+/** Opens a browser tab the way the tab bar's "+" does (renderer -> `tabbar:new-browser`), so no main-process code runs. */
+export async function newBrowserTabViaTabbar(tabbar: Page): Promise<void> {
+  await tabbar.evaluate(() => (window as unknown as { penTabbar: { newTab(): void } }).penTabbar.newTab());
 }

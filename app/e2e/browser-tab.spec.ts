@@ -1,6 +1,6 @@
 // End-to-end proof of the built-in browser tab (design doc
 // `2026-09-18-builtin-browser-design.md`): the editor tab's preload calls
-// window.penDesktop.browser.{open,act,findImages}, which go over real IPC
+// window.penAgentPanel.browser.{open,act,findImages}, which go over real IPC
 // into main's BrowserController driving a real WebContentsView against a
 // real DOM served by this suite's own stub HTTP server — the same
 // stub-server/Electron-launch machinery e2e/mcp.spec.ts and e2e/smoke.spec.ts
@@ -454,27 +454,6 @@ read as filled. -->
 <img id="img-natural" src="${sizedPixelUrl(800, 600, "teal")}" alt="Natural" style="display:block;width:150px;height:100px" />
 <img id="img-srcset" src="${pixelUrl("gray")}" srcset="${pixelUrl("gray")} 200w, ${sizedPixelUrl(900, 900, "magenta")} 900w" alt="Srcset" style="display:block;width:120px;height:120px" />
 <img id="img-comma" src="${pixelUrl("gray")}" srcset="${pixelUrl("gray")}&x=w_100,h_100 200w, ${pixelUrl("teal")}&x=w_800,h_600 800w" alt="Comma" style="display:block;width:120px;height:120px" />`);
-      return;
-    }
-    // browse_capture v2: linked CSS is fetched by the controller and inlined.
-    if (req.url === "/capture-css/main.css") {
-      res.setHeader("content-type", "text/css");
-      res.end(`@import "sub.css";
-html.themed .box { color: rgb(1, 2, 3); }
-html.other .box { color: rgb(9, 9, 9); }
-.unused-xyz { color: red; }
-.box { padding: 4px; background: url(img.png); }`);
-      return;
-    }
-    if (req.url === "/capture-css/sub.css") {
-      res.setHeader("content-type", "text/css");
-      res.end(".box { margin: 3px; }");
-      return;
-    }
-    if (req.url === "/capture-css") {
-      res.end(`<!doctype html>
-<html class="themed"><head><title>Capture CSS</title><link rel="stylesheet" href="/capture-css/main.css"></head>
-<body><h1 id="ready">capture-css-ready</h1><div class="box">box</div></body></html>`);
       return;
     }
     if (req.url && req.url.startsWith("/read")) {
@@ -1712,12 +1691,7 @@ html.other .box { color: rgb(9, 9, 9); }
     }
     // Default: stub editor page, same shape as e2e/smoke.spec.ts's.
     res.end(`<!doctype html><title>Stub Editor</title>
-      <h1 id="ready">stub-editor</h1>
-      <script>
-        if (window.penDesktop) {
-          window.penDesktop.setDocumentTitle('Stub');
-        }
-      </script>`);
+      <h1 id="ready">stub-editor</h1>`);
   });
   // Wave 3 reliability item 2: the cross-origin/OOPIF fixture server, on a
   // different port AND a different host ("localhost" vs the main server's
@@ -1808,7 +1782,6 @@ type BrowserBridge = {
   read(args?: Record<string, unknown>): Promise<unknown>;
   screenshot(args?: Record<string, unknown>): Promise<unknown>;
   tabs(args: Record<string, unknown>): Promise<unknown>;
-  capture(args?: Record<string, unknown>): Promise<unknown>;
 };
 
 /** "Addendum 2, 2026-09-19" §1 — merged into act/perform results alongside
@@ -1828,7 +1801,7 @@ function callBrowser<K extends keyof BrowserBridge>(
 ): Promise<unknown> {
   return page.evaluate(
     ({ method, args }) =>
-      (window as unknown as { penDesktop: { browser: BrowserBridge } }).penDesktop.browser[
+      (window as unknown as { penAgentPanel: { browser: BrowserBridge } }).penAgentPanel.browser[
         method as keyof BrowserBridge
       ](args as never),
     { method, args },
@@ -1915,7 +1888,7 @@ test("built-in browser tab: open, findImages, act (click/type/scroll/back/forwar
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
     const tabbarPage =
       app.windows().find((page) => page.url().endsWith("/tabbar/tabbar.html")) ??
@@ -2098,7 +2071,7 @@ test("human cursor overlay: real, non-blocking, and follows the acted-on element
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
     const tabbarPage =
       app.windows().find((page) => page.url().endsWith("/tabbar/tabbar.html")) ??
@@ -2328,7 +2301,7 @@ test("File ▸ New Browser Tab focuses the address bar, and typing+submitting na
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
     const tabbarPage =
       app.windows().find((page) => page.url().endsWith("/tabbar/tabbar.html")) ??
@@ -2380,7 +2353,7 @@ test("built-in browser tab: browse_act back errors cleanly when there is no hist
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     await callBrowser(editorPage, "open", { url: galleryUrl });
@@ -2400,7 +2373,7 @@ test("built-in browser tab: browse_act reports an error when no browser tab has 
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const result = (await callBrowser(editorPage, "findImages", {})) as { error?: string };
@@ -2419,7 +2392,7 @@ test("browser snapshot: visibility filtering, labels, ops, and password values a
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [snapshotPage] = await Promise.all([
@@ -2586,7 +2559,7 @@ test("browser act click: a bare word matching both a real element tag and a butt
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [clickPage] = await Promise.all([
@@ -2621,7 +2594,7 @@ async function openReachFixture(url: string, readyText: string) {
     args: ["."],
     env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
-  const editorPage = app.canvasPage;
+  const editorPage = app.agentPage;
   await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
   const [page] = await Promise.all([
     app.waitForEvent("window", { predicate: (p) => p.url() === url }),
@@ -2874,7 +2847,7 @@ test("browser snapshot: hard-caps at 120 elements even when more are visible", a
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     await Promise.all([
@@ -2900,7 +2873,7 @@ test("code review finding 7: scroll containers never push the top document's ele
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -2941,7 +2914,7 @@ test("browser perform: acts by index, and rejects a snapshotId superseded by a n
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [snapshotPage] = await Promise.all([
@@ -3018,7 +2991,7 @@ test("second-pass review: a scroll container that is ALSO an interactive element
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [snapshotPage] = await Promise.all([
@@ -3075,7 +3048,7 @@ test("evidence of effect ('Addendum 2, 2026-09-19' §1): a no-op click reports c
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [evidencePage] = await Promise.all([
@@ -3122,7 +3095,7 @@ test("browse-speed contract (2026-09-24): a click that updates a separate status
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [sideEffectPage] = await Promise.all([
@@ -3158,7 +3131,7 @@ test("browse-speed contract fix (2026-09-24): a no-op click on a page with a liv
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [tickerPage] = await Promise.all([
@@ -3192,7 +3165,7 @@ test("browse-speed contract fix (2026-09-24): removing an element reports pageCh
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [removalPage] = await Promise.all([
@@ -3224,7 +3197,7 @@ test("evidence of effect: perform CLICK by index also carries changed evidence",
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     await Promise.all([
@@ -3258,7 +3231,7 @@ test("browse_read: headings/text/links against a real DOM, with caps applied and
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [readPage] = await Promise.all([
@@ -3355,92 +3328,7 @@ test("browse_read: headings/text/links against a real DOM, with caps applied and
   }
 });
 
-test("browse_capture: the read fixture comes back as one self-contained HTML document, and a bad element index is a clean error", async () => {
-  const app = await launchShell({
-    args: ["."],
-    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
-  });
 
-  try {
-    const editorPage = app.canvasPage;
-    await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
-
-    const [readPage] = await Promise.all([
-      app.waitForEvent("window", { predicate: (p) => p.url() === readUrl }),
-      callBrowser(editorPage, "open", { url: readUrl }),
-    ]);
-    await expect(readPage.locator("#ready")).toHaveText("read-ready");
-
-    const shot = (await callBrowser(editorPage, "capture", {})) as {
-      html?: string;
-      width?: number;
-      height?: number;
-      url?: string;
-      title?: string;
-      error?: string;
-    };
-    expect(shot.error).toBeUndefined();
-    expect(shot.url).toBe(readUrl);
-    expect(shot.title).toBe("Read Page");
-    expect(shot.width).toBeGreaterThan(0);
-    expect(shot.height).toBeGreaterThan(0);
-    expect(shot.html).toMatch(/^<!doctype html>/);
-    expect(shot.html).toContain("read-ready");
-    // The page's own <style> survives; its <script> does not.
-    expect(shot.html).toContain("color:red");
-    expect(shot.html).not.toContain("<script");
-    expect(shot.html).not.toContain("should not appear in text");
-    // Relative links come back absolute.
-    expect(shot.html).toContain(`href="${baseUrl}/nav-link"`);
-    // A capture is read-only: the live page is untouched.
-    await expect(readPage.locator("#ready")).toHaveText("read-ready");
-
-    const bad = (await callBrowser(editorPage, "capture", { index: 3 })) as { error?: string };
-    expect(bad.error).toBeTruthy();
-
-    await app.close();
-  } finally {
-    await app.close().catch(() => {});
-  }
-});
-
-test("browse_capture v2: a linked stylesheet is fetched, its @import inlined, html rules rewritten, unused rules pruned", async () => {
-  const app = await launchShell({
-    args: ["."],
-    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
-  });
-
-  try {
-    const editorPage = app.canvasPage;
-    await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
-
-    const cssUrl = `${baseUrl}/capture-css`;
-    const [cssPage] = await Promise.all([
-      app.waitForEvent("window", { predicate: (p) => p.url() === cssUrl }),
-      callBrowser(editorPage, "open", { url: cssUrl }),
-    ]);
-    await expect(cssPage.locator("#ready")).toHaveText("capture-css-ready");
-
-    const shot = (await callBrowser(editorPage, "capture", {})) as { html?: string; error?: string };
-    expect(shot.error).toBeUndefined();
-    const html = shot.html ?? "";
-    // Inlined, not linked.
-    expect(html).not.toContain("@import");
-    expect(html).toContain("margin: 3px");
-    // html.themed matched the live <html>: rewritten so it works in a shadow mount.
-    expect(html).toContain(":where(:root,:host)");
-    expect(html).toContain("rgb(1, 2, 3)");
-    // html.other did not match: dropped. .unused-xyz matches nothing: pruned.
-    expect(html).not.toContain("rgb(9, 9, 9)");
-    expect(html).not.toContain("unused-xyz");
-    // url() made absolute against the stylesheet's own URL.
-    expect(html).toContain(`${baseUrl}/capture-css/img.png`);
-
-    await app.close();
-  } finally {
-    await app.close().catch(() => {});
-  }
-});
 
 test("BROWSE-01: an <img srcset> yields the largest declared candidate, and naturalWidth/naturalHeight are reported alongside rendered size", async () => {
   const app = await launchShell({
@@ -3449,7 +3337,7 @@ test("BROWSE-01: an <img srcset> yields the largest declared candidate, and natu
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [metaPage] = await Promise.all([
@@ -3507,7 +3395,7 @@ test("BROWSE-02: labels resolve through a descendant's aria-label and through an
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [snapshotPage] = await Promise.all([
@@ -3583,7 +3471,7 @@ test("browse_open: DOM-ready fix — returns well within the command timeout wit
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const start = Date.now();
@@ -3641,7 +3529,7 @@ test("addendum 3 §2 (upstream PR #58): a click on a control that disables itsel
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -3689,7 +3577,7 @@ test("browse_screenshot hides the agent cursor overlay during capture and restor
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
     const [fixturePage] = await Promise.all([
       app.waitForEvent("window", { predicate: (p) => p.url() === snapshotUrl }),
@@ -3729,7 +3617,7 @@ test("browse_screenshot: returns a non-empty image, and annotate marks never lea
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     // The /snapshot fixture (not /gallery — its interactive elements are
@@ -3811,7 +3699,7 @@ test("browse_screenshot: annotate with the loop's snapshotId reuses it, keeps pe
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
     const [fixturePage] = await Promise.all([
       app.waitForEvent("window", { predicate: (p) => p.url() === snapshotUrl }),
@@ -3939,7 +3827,7 @@ test("browse_act: press Enter submits a form, hover triggers :hover/mouseover, a
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4011,7 +3899,7 @@ test("browse_tabs: list/switch/close, and a target=_blank popup reports openedTa
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4073,7 +3961,7 @@ test("dialogs: alert() is auto-accepted and reported, without hanging the next c
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4132,7 +4020,7 @@ test("dialogs (finding 3): an alert() the page raises on its own, outside any ag
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4194,7 +4082,7 @@ test("browse_act: press Ctrl+A selects a field's whole contents via CDP's native
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4254,7 +4142,7 @@ test("dialogs (finding 1): a dialog raised between commands is resolved and repo
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4312,7 +4200,7 @@ test("browse_act hover: on a smooth-scroll page, the reported coordinates land o
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4354,7 +4242,7 @@ test("Wave 2 reliability: trusted click fires event.isTrusted and a pointerdown-
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4398,7 +4286,7 @@ test("Wave 2 reliability: trusted typing selects existing content, fires beforei
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4441,7 +4329,7 @@ test("Wave 2 reliability: act scroll / perform SCROLL scroll an inner container 
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4503,7 +4391,7 @@ test("code review finding 5: a hidden text match no longer short-circuits the se
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4554,7 +4442,7 @@ test("Wave 3 reliability: open shadow root — click a shadow button by index an
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4592,7 +4480,7 @@ test("Wave 3 reliability: same-origin iframe — click a frame button by index",
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4629,7 +4517,7 @@ test("Wave 3 reliability: cross-origin (OOPIF) iframe — click a frame button b
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4669,7 +4557,7 @@ test("Wave 3 reliability: a console error from a throwing click handler is surfa
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage] = await Promise.all([
@@ -4720,7 +4608,7 @@ test("Wave 3 reliability: botCheck is true on a page that looks like a challenge
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     const [fixturePage, openResult] = await Promise.all([

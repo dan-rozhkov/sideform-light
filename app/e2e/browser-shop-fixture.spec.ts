@@ -6,7 +6,7 @@
 //
 // Drives the flow exactly the way e2e/browser-tab.spec.ts does: a stub editor
 // page (its own tiny local server, distinct from the shop) loaded as
-// SIDEFORM_LIGHT_UI_URL, then window.penDesktop.browser.{open,act,snapshot,read}
+// SIDEFORM_LIGHT_UI_URL, then window.penAgentPanel.browser.{open,act,snapshot,read}
 // over real IPC into a real WebContentsView pointed at the shop server — no
 // LLM, no chat, no network beyond localhost.
 
@@ -24,10 +24,7 @@ test.beforeAll(async () => {
   editorServer = http.createServer((_req, res) => {
     res.setHeader("content-type", "text/html");
     res.end(`<!doctype html><title>Stub Editor</title>
-      <h1 id="ready">stub-editor</h1>
-      <script>
-        if (window.penDesktop) { window.penDesktop.setDocumentTitle('Stub'); }
-      </script>`);
+      <h1 id="ready">stub-editor</h1>`);
   });
   await new Promise<void>((resolve) => editorServer.listen(0, "127.0.0.1", resolve));
   editorBaseUrl = `http://127.0.0.1:${(editorServer.address() as AddressInfo).port}`;
@@ -53,7 +50,7 @@ function callBrowser<K extends keyof BrowserBridge>(
 ): Promise<Awaited<ReturnType<BrowserBridge[K]>>> {
   return page.evaluate(
     ({ method, args }) =>
-      (window as unknown as { penDesktop: { browser: BrowserBridge } }).penDesktop.browser[
+      (window as unknown as { penAgentPanel: { browser: BrowserBridge } }).penAgentPanel.browser[
         method as keyof BrowserBridge
       ](args as never),
     { method, args },
@@ -67,7 +64,7 @@ test("bench-shop fixture: consent gate, search, hover menu, filters, checkout va
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     // --- open: lands on the home page with the consent banner still up ---

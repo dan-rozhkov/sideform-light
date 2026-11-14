@@ -41,7 +41,7 @@ test("browser history: omnibox suggestions, filter, pick, History tab list and r
   });
   const pageErrors: string[] = [];
   try {
-    await expect(app.canvasPage.locator("#ready")).toHaveText("Stub Editor");
+    await expect(app.agentPage.locator("#ready")).toHaveText("Stub Editor");
     const tabbar =
       app.windows().find((p) => p.url().endsWith("/tabbar/tabbar.html")) ??
       (await app.waitForEvent("window", { predicate: (p) => p.url().endsWith("/tabbar/tabbar.html") }));
@@ -126,7 +126,7 @@ test("browser history: removing a row with the popover x keeps the popover open 
     env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl, SIDEFORM_LIGHT_USER_DATA_DIR: mkdtempSync(path.join(tmpdir(), "pen-desktop-history-e2e-x-")) },
   });
   try {
-    await expect(app.canvasPage.locator("#ready")).toHaveText("Stub Editor");
+    await expect(app.agentPage.locator("#ready")).toHaveText("Stub Editor");
     const tabbar =
       app.windows().find((p) => p.url().endsWith("/tabbar/tabbar.html")) ??
       (await app.waitForEvent("window", { predicate: (p) => p.url().endsWith("/tabbar/tabbar.html") }));

@@ -1,28 +1,22 @@
 import { test, expect, _electron as electron, type Page } from "@playwright/test";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
+import { startStubUi } from "./stubUi";
 
 // Drag-to-reorder in the tab strip: pointer drag moves a tab, a tiny move is a click, Escape cancels.
 
-let server: http.Server;
+let stub: Awaited<ReturnType<typeof startStubUi>>;
 let baseUrl: string;
 
 test.beforeAll(async () => {
-  server = http.createServer((req, res) => {
-    res.setHeader("content-type", "text/html");
-    const isAgent = (req.url ?? "").startsWith("/agent");
-    res.end(`<!doctype html><title>${isAgent ? "Stub Agent" : "Stub Editor"}</title><h1 id="ready">stub</h1>`);
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  stub = await startStubUi();
+  baseUrl = stub.url;
 });
 
-test.afterAll(() => new Promise<void>((r) => server.close(() => r())));
+test.afterAll(() => stub.close());
 
 test("tabs can be dragged to a new position; a tiny move is a click; an inactive tab can be dragged", async () => {
   const app = await electron.launch({
     args: ["."],
-    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: `${baseUrl}/app`, SIDEFORM_LIGHT_NO_ANIMATIONS: "1" },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl, SIDEFORM_LIGHT_NO_ANIMATIONS: "1" },
   });
   try {
     const tabbar: Page =

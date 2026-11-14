@@ -64,7 +64,7 @@ test("saved logins: fillLogin error path and the save prompt via the isolated-wo
   });
 
   try {
-    const editorPage = app.canvasPage;
+    const editorPage = app.agentPage;
     await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
 
     // Record (and answer "Not Now" to) every native dialog.
@@ -86,8 +86,8 @@ test("saved logins: fillLogin error path and the save prompt via the isolated-wo
 
     const bridge = (page: typeof editorPage) =>
       page.evaluate(async (url) => {
-        const b = (window as unknown as { penDesktop: { browser: Record<string, (a?: unknown) => Promise<unknown>> } })
-          .penDesktop.browser;
+        const b = (window as unknown as { penAgentPanel: { browser: Record<string, (a?: unknown) => Promise<unknown>> } })
+          .penAgentPanel.browser;
         const opened = await b.open({ url });
         const filled = await b.fillLogin({ submit: true });
         return { opened, filled };

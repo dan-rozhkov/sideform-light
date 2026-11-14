@@ -1,10 +1,10 @@
 // Isolated browser sessions (docs/superpowers/specs/2026-10-17-isolated-parallel-browse-design.md),
-// end to end over real IPC: window.penDesktop.browser.isolated(id) -> main ->
+// end to end over real IPC: window.penAgentPanel.browser.isolated(id) -> main ->
 // a private partition + its own BrowserController. Stub servers on localhost
 // only, no backend, no LLM.
 
 import { test, expect, type ElectronApplication, type Page } from "@playwright/test";
-import { isCanvasPage, launchShell } from "./launch";
+import { launchShell } from "./launch";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -17,8 +17,7 @@ test.beforeAll(async () => {
   editorServer = http.createServer((_req, res) => {
     res.setHeader("content-type", "text/html");
     res.end(`<!doctype html><title>Stub Editor</title>
-      <h1 id="ready">stub-editor</h1>
-      <script>if (window.penDesktop) { window.penDesktop.setDocumentTitle('Stub'); }</script>`);
+      <h1 id="ready">stub-editor</h1>`);
   });
   await new Promise<void>((resolve) => editorServer.listen(0, "127.0.0.1", resolve));
   editorBaseUrl = `http://127.0.0.1:${(editorServer.address() as AddressInfo).port}`;
@@ -57,12 +56,12 @@ test.afterAll(async () => {
 
 type Res = Record<string, unknown> & { error?: string; ok?: boolean; text?: string; tabs?: { tabId: number; url: string }[] };
 
-/** Runs `penDesktop.browser[.isolated(session)].method(...args)` in the editor page. */
+/** Runs `penAgentPanel.browser[.isolated(session)].method(...args)` in the agent panel page. */
 function call(page: Page, session: string | null, method: string, ...args: unknown[]): Promise<Res> {
   return page.evaluate(
     ({ session, method, args }) => {
-      const b = (window as unknown as { penDesktop: { browser: Record<string, unknown> & { isolated(id: string): Record<string, unknown> } } })
-        .penDesktop.browser;
+      const b = (window as unknown as { penAgentPanel: { browser: Record<string, unknown> & { isolated(id: string): Record<string, unknown> } } })
+        .penAgentPanel.browser;
       const target = session === null ? b : b.isolated(session);
       return (target[method] as (...a: unknown[]) => Promise<unknown>)(...args);
     },
@@ -71,14 +70,14 @@ function call(page: Page, session: string | null, method: string, ...args: unkno
 }
 
 const closeSession = (page: Page, id: string): Promise<Res> =>
-  page.evaluate((id) => (window as unknown as { penDesktop: { browser: { closeSession(id: string): Promise<unknown> } } }).penDesktop.browser.closeSession(id), id) as Promise<Res>;
+  page.evaluate((id) => (window as unknown as { penAgentPanel: { browser: { closeSession(id: string): Promise<unknown> } } }).penAgentPanel.browser.closeSession(id), id) as Promise<Res>;
 
 const livePages = (app: ElectronApplication) => app.windows().filter((p) => !p.isClosed());
 const pagesAt = (app: ElectronApplication, prefix: string) => livePages(app).filter((p) => p.url().startsWith(prefix));
 
 async function launch(env: Record<string, string> = {}): Promise<{ app: ElectronApplication; editor: Page }> {
   const app = await launchShell({ args: ["."], env: { ...process.env, SIDEFORM_LIGHT_UI_URL: editorBaseUrl, ...env } });
-  const editor = app.canvasPage;
+  const editor = app.agentPage;
   await expect(editor.locator("#ready")).toHaveText("stub-editor");
   return { app, editor };
 }
@@ -109,11 +108,11 @@ test("two parallel isolated sessions keep separate cookies, network mocks and ta
     expect(setA.error).toBeUndefined();
     expect(setB.error).toBeUndefined();
 
-    // --- session tabs open in the background: the canvas tab stays the view on top ---
-    // (a session tab the agent drives is awake: visible, but UNDER the active tab)
+    // --- session tabs open in the background: the empty start stays the view on top ---
+    // (a session tab the agent drives is awake: visible, but UNDER the active view)
     const views = await tabViewsBottomToTop(app);
-    const onTop = views.filter((v) => v.visible && (v.url.startsWith(site) || isCanvasPage(v.url, editorBaseUrl))).at(-1);
-    expect(onTop && isCanvasPage(onTop.url, editorBaseUrl)).toBe(true);
+    const onTop = views.filter((v) => v.visible && (v.url.startsWith(site) || v.url.endsWith("/tabbar/empty.html"))).at(-1);
+    expect(onTop?.url.endsWith("/tabbar/empty.html")).toBe(true);
     expect(views.filter((v) => v.url.startsWith(`${site}/set`))).toHaveLength(2);
 
     const [meA, meB] = await Promise.all([
@@ -226,9 +225,9 @@ test("a popup of a session tab stays in that session", async () => {
     expect(act.error).toBeUndefined();
     await expect.poll(async () => ((await call(editor, "P", "tabs", { action: "list" })).tabs ?? []).length).toBe(2);
     expect(((await call(editor, null, "tabs", { action: "list" })).tabs ?? []).length).toBe(1);
-    // The popup LOADED in its own tab: the editor and the shared tab are untouched.
+    // The popup LOADED in its own tab: the agent panel and the shared tab are untouched.
     await expect.poll(() => pagesAt(app, `${site}/me`).length).toBe(1);
-    expect(isCanvasPage(editor.url(), editorBaseUrl)).toBe(true);
+    expect(new URL(editor.url()).pathname).toBe("/agent");
     expect(pagesAt(app, `${site}/pop`).length).toBe(2);
     const sharedUrls = ((await call(editor, null, "tabs", { action: "list" })).tabs ?? []).map((t) => t.url);
     expect(sharedUrls).toEqual([`${site}/pop`]);
@@ -238,7 +237,7 @@ test("a popup of a session tab stays in that session", async () => {
     const other = list.find((t) => !t.current)!;
     expect((await call(editor, "P", "tabs", { action: "switch", tabId: other.tabId })).error).toBeUndefined();
     const views = await tabViewsBottomToTop(app);
-    // The shared tab (it activated when opened) is the view on top: the editor lost
+    // The shared tab (it activated when opened) is the view on top: the empty start lost
     // the foreground to it, never to a session tab (an awake session tab sits under it).
     const onTop = views.filter((v) => v.visible && v.url.startsWith(site)).at(-1);
     expect(onTop?.shared).toBe(true);
@@ -256,7 +255,7 @@ test("invalid session ids are rejected; the pool has 6 slots: a 7th command wait
     expect(await closeSession(editor, "a.b")).toEqual({ error: "invalid session id" });
     // An absent id must not fall back to the shared browser.
     const undef = await editor.evaluate(() =>
-      (window as unknown as { penDesktop: { browser: { isolated(id: unknown): { snapshot(): Promise<unknown> } } } }).penDesktop.browser.isolated(undefined).snapshot(),
+      (window as unknown as { penAgentPanel: { browser: { isolated(id: unknown): { snapshot(): Promise<unknown> } } } }).penAgentPanel.browser.isolated(undefined).snapshot(),
     );
     expect(undef).toEqual({ error: "invalid session id" });
 

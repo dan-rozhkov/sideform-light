@@ -62,7 +62,7 @@ async function launch(): Promise<Env> {
   const app = await launchShell({ args: ["."], env: { ...process.env, SIDEFORM_LIGHT_UI_URL: editorBaseUrl } });
   const exits: string[] = [];
   app.process().on("exit", (code, signal) => exits.push(`${code} ${signal}`));
-  const editor = app.canvasPage;
+  const editor = app.agentPage;
   await expect(editor.locator("#ready")).toHaveText("stub-editor");
   return { app, editor, exits };
 }
@@ -71,7 +71,7 @@ async function launch(): Promise<Env> {
 function cmd(editor: Page, session: string | null, method: string, ...args: unknown[]): Promise<Record<string, any>> {
   return editor.evaluate(
     async ({ session, method, args }) => {
-      const b = (window as any).penDesktop.browser;
+      const b = (window as any).penAgentPanel.browser;
       const t = session === null ? b : b.isolated(session);
       return await t[method](...args);
     },

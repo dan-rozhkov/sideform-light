@@ -1,71 +1,37 @@
 import { test, expect } from "@playwright/test";
 import { launchShell } from "./launch";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
+import { startStubUi } from "./stubUi";
 
-let server: http.Server;
-let baseUrl: string;
+let stub: Awaited<ReturnType<typeof startStubUi>>;
 
 test.beforeAll(async () => {
-  server = http.createServer((_req, res) => {
-    res.setHeader("content-type", "text/html");
-    res.end(`<!doctype html><title>Stub Editor</title>
-      <h1 id="ready">stub-editor</h1>
-      <script>
-        window.__commands = [];
-        if (window.penDesktop) {
-          window.penDesktop.onMenuCommand((id) => window.__commands.push(id));
-          window.penDesktop.setDocumentTitle('Launch Deck');
-        }
-      </script>`);
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  stub = await startStubUi();
 });
 
-test.afterAll(() => new Promise<void>((r) => server.close(() => r())));
+test.afterAll(() => stub.close());
 
-test("launches, opens a canvas tab with the editor, exposes the menu bridge", async () => {
+test("launches Sideform Light: the agent panel loads from the ui origin with only its own bridge", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: stub.url },
   });
-  expect(await app.evaluate(({ app: electronApp }) => electronApp.getName())).toBe("Sideform Desktop");
+  expect(await app.evaluate(({ app: electronApp }) => electronApp.getName())).toBe("Sideform Light");
 
-  // Windows: the tab bar view and the first tab view each surface as a page.
-  const editorPage = app.canvasPage;
-  const tabbarPage =
-    app.windows().find((page) => page.url().endsWith("/tabbar/tabbar.html")) ??
-    (await app.waitForEvent("window", {
-      predicate: (page) => page.url().endsWith("/tabbar/tabbar.html"),
-    }));
-  await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
-  // Canvas tab: the chatless editor URL, and the agentLayout marker from the preload.
-  expect(new URL(editorPage.url()).searchParams.get("chat")).toBe("off");
-  expect(await editorPage.evaluate(() => (window as never as { penDesktop?: { agentLayout?: boolean } }).penDesktop?.agentLayout)).toBe(true);
+  const agent = app.agentPage;
+  await expect(agent.locator("#ready")).toHaveText("stub-agent");
+  expect(new URL(agent.url()).pathname).toBe("/agent");
+  // The panel's bridge: version 3, browser + chats + traces + settings. No tab bridge in the panel.
+  expect(await agent.evaluate(() => (window as never as { penAgentPanel?: { version: number } }).penAgentPanel?.version)).toBe(3);
+  expect(await agent.evaluate(() => typeof (window as never as { penDesktop?: unknown }).penDesktop)).toBe("undefined");
 
-  // The preload bridge is present in the editor page.
-  expect(await editorPage.evaluate(() => typeof (window as never as { penDesktop?: unknown }).penDesktop)).toBe(
-    "object",
-  );
-  await expect
-    .poll(() => tabbarPage.locator(".tab.active .title").textContent())
-    .toBe("Launch Deck");
+  // The window starts empty: no tab, the start screen shows.
+  const tabbar = app.windows().find((p) => p.url().endsWith("/tabbar/tabbar.html"))!;
+  await expect(tabbar.locator(".tab")).toHaveCount(0);
 
-  // Forward a menu command from the main process to the active tab and see it arrive.
-  await app.evaluate(({ webContents }, url) => {
-    const target = webContents.getAllWebContents().find((wc) => wc.getURL().startsWith(url));
-    target?.send("menu:command", "file-open");
-  }, baseUrl);
-  await expect
-    .poll(() => editorPage.evaluate(() => (window as never as { __commands: string[] }).__commands))
-    .toContain("file-open");
-
-  // Desktop chrome follows the active editor's UI theme.
-  await editorPage.evaluate(() => document.documentElement.classList.add("dark"));
-  await expect
-    .poll(() => tabbarPage.evaluate(() => document.documentElement.dataset.theme))
-    .toBe("dark");
+  // The "+" button opens a browser tab.
+  await tabbar.evaluate(() => (window as unknown as { penTabbar: { newTab(): void } }).penTabbar.newTab());
+  await expect(tabbar.locator(".tab")).toHaveCount(1);
+  await expect(tabbar.locator('.tab .tab-icon[data-icon="browser"]')).toHaveCount(1);
 
   await app.close();
 });

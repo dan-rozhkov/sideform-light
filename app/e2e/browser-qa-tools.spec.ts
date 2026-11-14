@@ -27,8 +27,7 @@ const INFO_SCRIPT = `
 test.beforeAll(async () => {
   editorServer = http.createServer((_req, res) => {
     res.setHeader("content-type", "text/html");
-    res.end(`<!doctype html><title>Stub Editor</title><h1 id="ready">stub-editor</h1>
-      <script>if (window.penDesktop) { window.penDesktop.setDocumentTitle('Stub'); }</script>`);
+    res.end(`<!doctype html><title>Stub Editor</title><h1 id="ready">stub-editor</h1>`);
   });
   await new Promise<void>((r) => editorServer.listen(0, "127.0.0.1", r));
   editorBaseUrl = `http://127.0.0.1:${(editorServer.address() as AddressInfo).port}`;
@@ -85,7 +84,7 @@ type Res = Record<string, any> & { error?: string };
 function cmd(editor: Page, method: string, ...args: unknown[]): Promise<Res> {
   return editor.evaluate(
     ({ method, args }) =>
-      ((window as any).penDesktop.browser[method] as (...a: unknown[]) => Promise<unknown>)(...args),
+      ((window as any).penAgentPanel.browser[method] as (...a: unknown[]) => Promise<unknown>)(...args),
     { method, args },
   ) as Promise<Res>;
 }
@@ -94,7 +93,7 @@ interface Env { app: ElectronApplication; editor: Page; tabbar: Page; site: Page
 
 async function launch(): Promise<Env> {
   const app = await launchShell({ args: ["."], env: { ...process.env, SIDEFORM_LIGHT_UI_URL: editorBaseUrl } });
-  const editor = app.canvasPage;
+  const editor = app.agentPage;
   await expect(editor.locator("#ready")).toHaveText("stub-editor");
   const tabbar =
     app.windows().find((p) => p.url().endsWith("/tabbar/tabbar.html")) ??
@@ -474,7 +473,7 @@ test("act viewport in an isolated session: emulate, clearActEmulation, and a mis
     const iso = (method: string, ...args: unknown[]) =>
       env.editor.evaluate(
         ({ method, args }) =>
-          (((window as any).penDesktop.browser.isolated("qa-act") as Record<string, (...a: unknown[]) => Promise<unknown>>)[method])(...args),
+          (((window as any).penAgentPanel.browser.isolated("qa-act") as Record<string, (...a: unknown[]) => Promise<unknown>>)[method])(...args),
         { method, args },
       ) as Promise<Res>;
     const info = async () => {
@@ -494,7 +493,7 @@ test("act viewport in an isolated session: emulate, clearActEmulation, and a mis
     await iso("open", { url: `${site}/info?k=iso3` });
     await expect.poll(async () => (await info()).ua).toBe(base.ua);
     expect((await info()).w).toBe(base.w);
-    await env.editor.evaluate(() => (window as any).penDesktop.browser.closeSession("qa-act"));
+    await env.editor.evaluate(() => (window as any).penAgentPanel.browser.closeSession("qa-act"));
   } finally {
     await env.app.close();
   }
