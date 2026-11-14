@@ -15,7 +15,10 @@ const desktop = (name) => {
 
 let browser;
 for (let i = 0; i < 60 && !browser; i++) {
-  browser = await chromium.connectOverCDP("http://127.0.0.1:9333").catch(() => null);
+  browser = await chromium.connectOverCDP("http://127.0.0.1:9333", { timeout: 15000 }).catch((e) => {
+    console.log("connect attempt", i, String(e.message).split("\n")[0]);
+    return null;
+  });
   if (!browser) await sleep(1000);
 }
 if (!browser) throw new Error("app did not open CDP port 9333");
