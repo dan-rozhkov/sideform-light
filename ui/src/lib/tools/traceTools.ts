@@ -2,11 +2,9 @@ import { parseBrowseTrace, type BrowseTrace, type BrowseTraceRequest, type Brows
 import type { ToolHandler } from "../toolRegistry";
 import { getAgentPanelTraceTabsBridge } from "../agentPanel";
 import { readTraceFrame } from "@/lib/trace/traceFrame";
-import { placeImageRect } from "./browser/placeOnCanvas";
 import { batchProgress, droppedRequests, requestFailed, stepActions, traceRequests } from "@/lib/trace/traceData";
 
-// Panel-local (canvasLink/canvasTools.ts, prefix "trace_"): the agent reads the browse-run traces the
-// desktop shell has open in trace tabs. Advertised by the backend only when
+// The agent reads the browse-run traces the desktop shell has open in trace tabs. Advertised by the backend only when
 // clientCapabilities.traceTabs is true. Output: JSON string, `{"error": "..."}` on failure.
 // trace_read returns a bounded TEXT summary: never screenshots, data URLs or asset paths. Its `frames` index
 // ({total, shown: [{frameId, step, kind}]}) names the frames trace_frame can fetch as an image.
@@ -280,24 +278,6 @@ export const traceList: ToolHandler = async () => {
   }
 };
 
-export const traceOpen: ToolHandler = async (args) => {
-  const traceId = typeof args?.traceId === "string" ? args.traceId.trim() : "";
-  if (!traceId) return err("traceId is required. Use `trace.id` from the browse_agent result, or call trace_list to see the open trace tabs.");
-  const bridge = getAgentPanelTraceTabsBridge();
-  if (!bridge || typeof bridge.open !== "function") return err("Trace tabs are not available here (desktop app only).");
-  try {
-    // Check first, so the agent does not open a tab for a trace that is not stored.
-    const found: unknown = await bridge.read(traceId, { frames: false });
-    if (isObj(found) && typeof found.error === "string" && found.error) return err(clip(found.error));
-    if (!isObj(found) || !found.trace) return err(`No trace with this id is stored: ${clip(traceId, 100)}`);
-    const result: unknown = await bridge.open(traceId);
-    if (isObj(result) && result.ok === true) return JSON.stringify({ traceId, opened: true });
-    return err(isObj(result) && typeof result.error === "string" && result.error ? clip(result.error) : "The trace tab could not be opened.");
-  } catch (e) {
-    return err(clip(e instanceof Error ? e.message : "The trace tab could not be opened.", 500));
-  }
-};
-
 export const traceRead: ToolHandler = async (args) => {
   const traceId = typeof args?.traceId === "string" ? args.traceId.trim() : "";
   if (!traceId) return err("traceId is required. Use `trace.id` from the browse_agent result, or call trace_list to see the open trace tabs.");
@@ -332,10 +312,10 @@ function parseFrameId(raw: unknown): number | undefined {
 
 /**
  * trace_frame: one frame of a trace as an image, in browse_screenshot's result shape (`imageData` data URL, which the
- * backend's toModelOutput turns into an image part). `placeOnCanvas` also puts it on the canvas (`placedNodeId`).
+ * backend's toModelOutput turns into an image part).
  * Cost: the shell loads ALL frame images of the trace for this one read.
  */
-export const traceFrame: ToolHandler = async (args, context) => {
+export const traceFrame: ToolHandler = async (args) => {
   const traceId = typeof args?.traceId === "string" ? args.traceId.trim() : "";
   if (!traceId) return err("traceId is required. Use `trace.id` from the browse_agent result, or call trace_list to see the open trace tabs.");
   const frameId = parseFrameId(args?.frameId);
@@ -355,13 +335,5 @@ export const traceFrame: ToolHandler = async (args, context) => {
     ...(frame.width && frame.height ? { width: frame.width, height: frame.height } : {}),
     ...(isData ? { imageData: frame.src } : { imageUrl: frame.src }),
   };
-  if (args?.placeOnCanvas !== true) return JSON.stringify(out);
-  // The image is in hand: a failed placement is reported next to it.
-  try {
-    const placed = await placeImageRect(frame.src, frame as unknown as Record<string, unknown>, `Trace frame ${frame.id}${typeof frame.stepIndex === "number" ? ` · step ${frame.stepIndex}` : ""}`, args, context?.signal, context?.sessionId);
-    if (!placed) return JSON.stringify({ ...out, placeError: "Placing the frame was aborted." });
-    return JSON.stringify({ ...out, placedNodeId: placed.id, placedAt: { x: placed.x, y: placed.y, width: placed.width, height: placed.height } });
-  } catch (e) {
-    return JSON.stringify({ ...out, placeError: clip(e instanceof Error ? e.message : "Placing the frame failed.", 500) });
-  }
+  return JSON.stringify(out);
 };

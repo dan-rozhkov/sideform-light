@@ -1,5 +1,3 @@
-import { parseWorkflowAttachment } from "@/lib/workflows/workflowAttachment";
-
 const MAX_TITLE_LENGTH = 40;
 
 // Markdown leaders that read as noise once hoisted into a plain-text title:
@@ -14,10 +12,7 @@ const MARKDOWN_LEADER = /^(?:#+|>|[-*])\s+/;
  * leave the existing (default) title alone.
  */
 export function deriveChatTitle(rawText: string): string | null {
-  // A message with an attached workflow ends in a raw <workflow> block: title from the user's own text,
-  // or from the workflow's title when the message is the workflow alone.
-  const attachment = parseWorkflowAttachment(rawText);
-  const text = attachment ? attachment.before || `Workflow: ${attachment.title}` : rawText;
+  const text = rawText;
   const firstLine = text
     .split("\n")
     .map((line) => line.trim())

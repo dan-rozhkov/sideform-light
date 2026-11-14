@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { UIMessage } from "ai";
 import { isToolUIPart } from "ai";
 import {
@@ -11,9 +11,6 @@ import {
 import { PanelEmptyState } from "@/components/PanelEmptyState";
 import { messageToClipboardText } from "@/lib/chatExport";
 import { IconSwap } from "@/components/ui/IconSwap";
-import { parseWorkflowAttachment } from "@/lib/workflows/workflowAttachment";
-import { memoryChangesFromInput, noteChangeList, skillChangeFromInput, SKILL_ACTIONS, type ChangeDetail } from "@/lib/memoryActivity";
-import type { ChatActivityNote } from "@/store/chatStore";
 import type { AskUserInput } from "@/types/askUser";
 import {
   Tooltip,
@@ -21,87 +18,11 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { SimpleMarkdown } from "./SimpleMarkdown";
-import { WorkflowAttachmentCard } from "./WorkflowAttachmentCard";
 import { ToolCallIndicator } from "./ToolCallIndicator";
 import { BrowseAgentIndicator } from "./BrowseAgentIndicator";
-import type { LikeMeta } from "./LikeReferenceButton";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 import { ImageLightbox } from "./ImageLightbox";
 import { AskUserForm } from "./AskUserForm";
-import { MemoryActivityRow } from "./MemoryActivityRow";
-
-// The memory tool's output is a plain object, never a thrown error — a
-// storage failure, an ambiguous `old_text`, `over_capacity`, or the circuit
-// breaker all arrive as ordinary `output-available` with `{ ok: false, ... }`
-// (see pen-editor-backend's src/ai/memory/tool.ts). Parse defensively: the
-// AI SDK can hand back the output as a JSON string or as an already-parsed
-// object depending on transport, and a malformed/unexpected shape must fall
-// through to the generic indicator rather than crash the message list.
-function isMemoryWriteSuccessful(output: unknown): boolean {
-  let parsed = output;
-  if (typeof parsed === "string") {
-    try {
-      parsed = JSON.parse(parsed);
-    } catch {
-      return false;
-    }
-  }
-  return (
-    typeof parsed === "object" &&
-    parsed !== null &&
-    (parsed as { ok?: unknown }).ok === true
-  );
-}
-
-// `skill_manage` is the phase-2 counterpart to the memory tool above — also
-// backend-executed, also never throws (see pen-editor-backend's
-// src/ai/skills/tool.ts): every guard/validation failure returns an ordinary
-// `output-available` with `{ error: ... }` rather than an error state.
-// Parsed just as defensively as the memory output, and additionally needs
-// the tool's *input* (action + name) since the success message alone
-// doesn't carry the skill name in a machine-stable position.
-function parseSkillManageSuccess(
-  input: unknown,
-  output: unknown,
-): ChangeDetail | null {
-  let parsedOutput = output;
-  if (typeof parsedOutput === "string") {
-    try {
-      parsedOutput = JSON.parse(parsedOutput);
-    } catch {
-      return null;
-    }
-  }
-  if (
-    typeof parsedOutput !== "object" ||
-    parsedOutput === null ||
-    (parsedOutput as { ok?: unknown }).ok !== true
-  ) {
-    return null;
-  }
-
-  if (typeof input !== "object" || input === null) return null;
-  const action = (input as { action?: unknown }).action;
-  const name = (input as { name?: unknown }).name;
-  if (typeof name !== "string" || name.length === 0) return null;
-  const kind = SKILL_ACTIONS.find((a) => a === action);
-  // "revive" is never an input action: it is derived from the output below.
-  if (!kind || kind === "revive") return null;
-
-  // `create` covers two distinct backend outcomes: a brand-new skill, or
-  // reviving an archived one at the same name (the "revive" branch of
-  // skill_manage's `create` action) — the input alone can't tell them
-  // apart, only the success message's wording can.
-  const message = (parsedOutput as { message?: unknown }).message;
-  if (
-    action === "create" &&
-    typeof message === "string" &&
-    message.startsWith("Revived archived skill")
-  ) {
-    return skillChangeFromInput("revive", name, input);
-  }
-  return skillChangeFromInput(kind, name, input);
-}
 
 interface ImagePreviewProps {
   url: string;
@@ -110,11 +31,9 @@ interface ImagePreviewProps {
   urls?: string[];
   /** Index of this thumbnail within the group. Defaults to 0. */
   index?: number;
-  /** When set, the lightbox offers a like button for urls it has an entry for. */
-  likeMeta?: Record<string, LikeMeta>;
 }
 
-export function ImagePreview({ url, alt, urls, index = 0, likeMeta }: ImagePreviewProps) {
+export function ImagePreview({ url, alt, urls, index = 0 }: ImagePreviewProps) {
   const group = urls && urls.length > 0 ? urls : [url];
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
@@ -136,7 +55,6 @@ export function ImagePreview({ url, alt, urls, index = 0, likeMeta }: ImagePrevi
       {lightboxIndex !== null && (
         <ImageLightbox
           urls={group}
-          likeMeta={likeMeta}
           index={lightboxIndex}
           onClose={() => setLightboxIndex(null)}
           onNavigate={setLightboxIndex}
@@ -218,41 +136,6 @@ interface MessageListProps {
    * box and resets `scrollTop` to 0. Defaults to true for callers that are
    * always visible. */
   isVisible?: boolean;
-  /** UI-only rows for background-review writes, each rendered after the
-   * assistant message it is anchored to. A note whose message is gone (rolled
-   * back) renders nothing. */
-  activityNotes?: ChatActivityNote[];
-}
-
-/** Maps message id -> notes rendered under it. `afterMessageId` anchors
- * directly; `turnMessageId` resolves to the last assistant message between
- * that user message and the next user message (nothing if absent). */
-function groupNotesByMessage(
-  messages: UIMessage[],
-  notes: ChatActivityNote[] | undefined,
-): Map<string, ChatActivityNote[]> {
-  const out = new Map<string, ChatActivityNote[]>();
-  if (!notes?.length) return out;
-  const add = (messageId: string, n: ChatActivityNote) => {
-    const list = out.get(messageId);
-    if (list) list.push(n);
-    else out.set(messageId, [n]);
-  };
-  for (const n of notes) {
-    if (n.afterMessageId !== undefined) {
-      add(n.afterMessageId, n);
-      continue;
-    }
-    const start = messages.findIndex((m) => m.id === n.turnMessageId && m.role === "user");
-    if (start === -1) continue;
-    let target: string | undefined;
-    for (let i = start + 1; i < messages.length; i++) {
-      if (messages[i].role === "user") break;
-      if (messages[i].role === "assistant") target = messages[i].id;
-    }
-    if (target !== undefined) add(target, n);
-  }
-  return out;
 }
 
 export function MessageList({
@@ -261,13 +144,8 @@ export function MessageList({
   onRollback,
   addToolOutput,
   isVisible = true,
-  activityNotes,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const notesByMessage = useMemo(
-    () => groupNotesByMessage(messages, activityNotes),
-    [messages, activityNotes],
-  );
   const isAutoScrollRef = useRef(true);
 
   const handleScroll = useCallback(() => {
@@ -326,8 +204,7 @@ export function MessageList({
             )
             .map((p) => p.text)
             .join("");
-          const workflowAttachment = parseWorkflowAttachment(textContent);
-          const shownText = workflowAttachment ? workflowAttachment.before : textContent;
+          const shownText = textContent;
 
           const imageParts = msg.parts.filter(
             (p): p is { type: "file"; mediaType: string; url: string } => {
@@ -370,7 +247,6 @@ export function MessageList({
                   </div>
                 )}
                 {shownText && <SimpleMarkdown content={shownText} />}
-                {workflowAttachment && <WorkflowAttachmentCard attachment={workflowAttachment} />}
               </div>
             </div>
           );
@@ -421,57 +297,6 @@ export function MessageList({
                     );
                   }
                 }
-                if (part.type === "tool-memory") {
-                  const tp = part as {
-                    toolCallId: string;
-                    state?: string;
-                    errorText?: string;
-                    input?: unknown;
-                    output?: unknown;
-                  };
-                  // The memory tool is backend-executed and arrives with an
-                  // output, never a client-side call — but it never throws
-                  // either: storage errors, over_capacity, an ambiguous
-                  // old_text, and the circuit breaker all resolve as a normal
-                  // `output-available` with `{ ok: false, error: ... }`. Only
-                  // a genuinely successful write gets the expandable "Memory updated" row;
-                  // everything else (state error, or an ok:false output)
-                  // falls through to the generic ToolCallIndicator so the
-                  // user can see what actually happened.
-                  if (
-                    tp.state === "output-available" &&
-                    !tp.errorText &&
-                    isMemoryWriteSuccessful(tp.output)
-                  ) {
-                    return (
-                      <MemoryActivityRow
-                        key={tp.toolCallId}
-                        changes={memoryChangesFromInput(tp.input)}
-                      />
-                    );
-                  }
-                }
-                if (part.type === "tool-skill_manage") {
-                  const tp = part as {
-                    toolCallId: string;
-                    state?: string;
-                    errorText?: string;
-                    input?: unknown;
-                    output?: unknown;
-                  };
-                  // Same rule as tool-memory above: only a genuine success
-                  // gets the "Memory updated" row; a thrown-error state or an
-                  // ordinary `{ error: ... }` output falls through to the
-                  // generic ToolCallIndicator below.
-                  if (tp.state === "output-available" && !tp.errorText) {
-                    const success = parseSkillManageSuccess(tp.input, tp.output);
-                    if (success) {
-                      return (
-                        <MemoryActivityRow key={tp.toolCallId} changes={[success]} />
-                      );
-                    }
-                  }
-                }
                 if (isToolUIPart(part)) {
                   const tp = part as { toolCallId: string };
                   if (part.type === "tool-browse_agent") {
@@ -483,7 +308,6 @@ export function MessageList({
                 }
                 return null;
               })}
-              {notesByMessage.get(msg.id)?.map((n) => <MemoryActivityRow key={n.id} changes={noteChangeList(n.changesByEvent)} />)}
               {isEmptyStreaming && <StreamingIndicator />}
             </div>
             <div className="ml-2 flex items-center">

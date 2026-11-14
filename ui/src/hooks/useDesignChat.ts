@@ -1,73 +1,39 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
-import { toast } from "sonner";
 import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
-import { createToolExecutor, type ToolExecutedEvent } from "@sideform/agent-harness/executor";
+import { createToolExecutor } from "@sideform/agent-harness/executor";
 import type { RetryState } from "@sideform/agent-harness/retry-fetch";
 import { browseTaskInnerBoundMs } from "@sideform/browser-agent/loop";
-import { track, bucketLength } from "@/lib/analytics";
-import { getLikedReferences } from "@/lib/canvasLink/likedReferences";
-import { consumeFirstPromptTiming } from "@/lib/analytics/sessionTiming";
 import { isOffline, OFFLINE_MESSAGE } from "@/lib/apiBase";
 import { getRequestUserId } from "@/lib/auth/authState";
 import { createChatTransport, resolveChatApiUrl, CLIENT_CAPABILITIES } from "@/lib/chatTransport";
 import { resolveSessionModel } from "@/lib/sessionModel";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
-import { buildSceneContext } from "@/lib/canvasLink/sceneContext";
 import { useChatStore } from "@/store/chatStore";
 import { toolHandlers, type ToolExecutionContext, type ToolHandler } from "@/lib/toolRegistry";
-import { runToolCall } from "@/lib/toolCallQueue";
-import { runTasteCheckForToolCall } from "@/lib/tools/tasteCheck";
-import { hasTouchedEmbeds } from "@/lib/tools/tasteCheckRegistry";
 import type { ChatLaunchPayload } from "@/types/chat";
 import type { UIMessage } from "ai";
-import { setCloudBrowserChat } from "@/lib/cloudBrowser";
-import { isDesktopBrowserAvailable } from "@/lib/tools/browser/bridge";
 import { isIsolatedQaCall } from "@/lib/tools/browser/isolation";
-import { APP_LAUNCH_ALLOWANCE_MS, appArgOf } from "@/lib/tools/browser/isolation";
 import { BROWSE_AGENT_OUTER_TIMEOUT_MS } from "@/lib/tools/browser/browseAgent";
-import { extractStreamingToolInputs } from "@/hooks/streamingToolParts";
 import { useOwnedChat } from "@/hooks/useOwnedChat";
 import { notifyChatState } from "@/lib/chats/desktopChatPersistence";
-import {
-  panelCallTool,
-  panelEndStream,
-  panelForwardFrame,
-  panelRunsInCanvas,
-  subscribePanelStreamLost,
-  withPanelCanvasContext,
-} from "@/lib/canvasLink/panelRuntime";
-import {
-  streamingToolAdapters,
-  streamingToolNames,
-  getStreamingToolAdapter,
-} from "@/lib/streamingTools";
 
 const STREAM_RENDER_THROTTLE_MS = 50;
 
 // Re-exported for tests (the implementation lives in lib/chatTransport.ts).
 export { resolveChatApiUrl };
 
-// Re-exported for tests (the implementation lives in lib/sessionModel.ts: the canvas link needs the
-// same resolution and must not import this hook module).
+// Re-exported for tests (the implementation lives in lib/sessionModel.ts).
 export { resolveSessionModel };
 
-// Exported for tests.
-export function buildCanvasContext(sessionId?: string): object {
-  const model = resolveSessionModel(sessionId);
-  const scene = buildSceneContext({ model });
-
-  const likedReferences = getLikedReferences(sessionId);
-
+/**
+ * The per-request body fields: the picked model, the anonymous user id, and the client capabilities.
+ * The main chat always runs in the `browser` agent mode (no canvas context, memory or skills). Exported for tests.
+ */
+export function buildChatBody(sessionId?: string): object {
   return {
-    canvasContext: JSON.stringify({
-      ...scene,
-      // Reference images the user hearted in this chat; the agent should
-      // prefer them. Omitted when empty so canvasContext stays byte-identical
-      // (prompt-cache invariant). Appended last for the same reason.
-      ...(likedReferences.length > 0 ? { likedReferences } : {}),
-    }),
-    model,
+    agentMode: "browser",
+    model: resolveSessionModel(sessionId),
     userId: getRequestUserId(),
     clientCapabilities: CLIENT_CAPABILITIES,
   };
@@ -77,36 +43,11 @@ export function buildCanvasContext(sessionId?: string): object {
 // the model. Per-tool overrides live in TOOL_CALL_TIMEOUT_MS_OVERRIDES below.
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 30_000;
 
-// Image generation can legitimately run close to the backend's own ceiling
-// (IMAGE_GENERATION_TIMEOUT_MS = 90_000 in pen-editor-backend/src/config.ts).
-// 95s is deliberately just above that: it lets the backend's clean 504 win
-// the race instead of this client cutting the call off first and reporting
-// a misleading "Tool call timed out" while the server keeps working (and
-// paying for it) in the background.
 /** Margin the chat-side browse_task timeout keeps above the loop's own
  * bound (`browseTaskInnerBoundMs`, the REAL bound on the call). */
 const BROWSE_TASK_OUTER_MARGIN_MS = 60_000;
 
 const TOOL_CALL_TIMEOUT_MS_OVERRIDES: Record<string, number> = {
-  generate_image: 95_000,
-  generate_frame_image: 95_000,
-  // remove-background/vectorize call out to their own upstream provider and
-  // can run well past the default budget; 60s is generous headroom without
-  // matching generate_image's 95s (these aren't racing a comparable backend
-  // ceiling documented anywhere yet).
-  remove_background: 60_000,
-  // open_canvas_tab can open a new tab in the desktop shell and waits for it to register: a cold
-  // load is far slower than a scene mutation.
-  open_canvas_tab: 60_000,
-  // doc_create / doc_open wait for the shell to open (and load) a document tab.
-  doc_create: 60_000,
-  doc_open: 60_000,
-  // workflow_create / workflow_open wait for the shell to open a workflow tab.
-  workflow_create: 60_000,
-  workflow_open: 60_000,
-  // doc_insert_image screenshots a node (canvas tab round trip) and uploads it.
-  doc_insert_image: 60_000,
-  vectorize_image: 60_000,
   // browse_task (docs/superpowers/specs/2026-09-18-browse-task-jev-loop-
   // design.md §3) runs a whole snapshot/step/perform loop internally bounded
   // by its own BROWSE_TASK_DEADLINE_MS = 90_000. That would not fit under
@@ -193,60 +134,15 @@ const TOOL_CALL_TIMEOUT_MS_OVERRIDES: Record<string, number> = {
   // browse_open's ~65s worst case (see browse_open's override above), so it
   // needs the same headroom as browse_open — 70s leaves margin above that.
   browse_tabs: 70_000,
-  // browse_capture serializes the whole DOM (and, on cloud, ships up to ~3 MB of
-  // HTML back). The desktop command budget is 20s; 60s sits well above it, and
-  // cloud mode adds its usual +60s.
-  browse_capture: 60_000,
   // browse_fill_login: the desktop chains a snapshot, 2x TYPE_TEXT and an
   // optional press, each bounded by the 20s command budget (cursor-move
   // budget included). Like browse_act's reasoning, worst case is a few
   // sequential 20s commands; 90s leaves margin without being unbounded.
   browse_fill_login: 90_000,
-  // generate_vector hands the prompt to QuiverAI's arrow-2, which draws the
-  // SVG token by token: measured 20s for a simple icon and ~90s for a
-  // detailed illustration, against the backend's own QUIVER_TIMEOUT_MS =
-  // 180_000. At the 30s default this fired on almost every real call — the
-  // model was told the generation "timed out" and retried it, paying twice,
-  // while the first generation had in fact finished and committed its nodes
-  // to the canvas. 185s sits just above the backend ceiling so the server's
-  // clean 504 wins the race, same reasoning as generate_image above.
-  generate_vector: 185_000,
 };
 
-// Cloud mode (no `window.penDesktop.browser`): the desktop values are sized
-// for local IPC. A cold cloud command can additionally spend a Steel session
-// create (<=20s) and a CDP connect (<=30s) before the command itself, so
-// browse_open (45s nav + those 50s + snapshot) gets 150s and every other
-// browse_* gets its desktop budget + 60s. Desktop values stay unchanged.
-const CLOUD_BROWSE_OPEN_TIMEOUT_MS = 150_000;
-const CLOUD_BROWSE_EXTRA_MS = 60_000;
-// browse_task's cloud call is bounded by CLOUD_MULTI_SUBGOAL_DEADLINE_MS
-// (15 min, @sideform/browser-agent loop; a single sub-goal loop runs
-// CLOUD_BROWSE_TASK_DEADLINE_MS = 180s, clamped to what is left of it):
-// 900 - 35 + 61.5 = 926.5s worst case after it starts, plus the cold
-// session create/connect above (<=50s) and settleEmptySnapshot's worst case
-// (244.8s, see browse_task above) — 1221.3s worst case. The real bound is
-// the handler's internal race (browseTaskInnerBoundMs() = 900 + 35 + 244.8 =
-// 1179.8s, cold session included since it runs inside the call); this outer
-// value is 60s above it.
-const CLOUD_BROWSE_TASK_TIMEOUT_MS = browseTaskInnerBoundMs(true) + BROWSE_TASK_OUTER_MARGIN_MS;
-
-// Launching an external app (`app` argument): the shell asks the user to
-// confirm first and then waits up to 30s for the app to start, on top of the
-// usual navigation + snapshot budget. browse_open gets 150s; browse_agent gets
-// the 80s on top of its own bound (the launch runs inside the run).
-const APP_BROWSE_OPEN_TIMEOUT_MS = 150_000;
-export function getToolCallTimeoutMs(toolName: string, input?: unknown): number {
-  const base = TOOL_CALL_TIMEOUT_MS_OVERRIDES[toolName] ?? DEFAULT_TOOL_CALL_TIMEOUT_MS;
-  if (appArgOf(input) !== undefined) {
-    if (toolName === "browse_open") return Math.max(base, APP_BROWSE_OPEN_TIMEOUT_MS);
-    if (toolName === "browse_agent") return base + APP_LAUNCH_ALLOWANCE_MS;
-  }
-  if (toolName === "browse_agent") return base;
-  if (!toolName.startsWith("browse_") || isDesktopBrowserAvailable()) return base;
-  if (toolName === "browse_open") return CLOUD_BROWSE_OPEN_TIMEOUT_MS;
-  if (toolName === "browse_task") return CLOUD_BROWSE_TASK_TIMEOUT_MS;
-  return base + CLOUD_BROWSE_EXTRA_MS;
+export function getToolCallTimeoutMs(toolName: string, _input?: unknown): number {
+  return TOOL_CALL_TIMEOUT_MS_OVERRIDES[toolName] ?? DEFAULT_TOOL_CALL_TIMEOUT_MS;
 }
 
 // The finished message's `metadata` is typed `unknown` (useChat isn't given
@@ -281,17 +177,7 @@ export function extractContextTokens(metadata: unknown): number | undefined {
 // are not queued (see toolCallQueue.ts). The timeout starts inside the queued
 // task so a call that waited behind a long batch_design still gets its full
 // budget.
-type ToolCallSource = "chat" | "bridge" | "webmcp" | "browse_agent" | "canvas-link";
-
-function trackToolExecuted(event: ToolExecutedEvent<ToolCallSource>): void {
-  track("agent_tool_executed", {
-    tool_name: event.toolName,
-    ok: event.ok,
-    duration_ms: event.durationMs,
-    ...(event.errorKind ? { error_kind: event.errorKind } : {}),
-    source: event.source,
-  });
-}
+type ToolCallSource = "chat" | "browse_agent";
 
 const CANCELLED_RESULT = JSON.stringify({ error: "Tool call cancelled" });
 
@@ -303,11 +189,6 @@ const withAbortedCheck =
   handler &&
   ((args, ctx) => {
     if (ctx?.signal?.aborted) return Promise.resolve(CANCELLED_RESULT);
-    try {
-      ctx?.onStart?.();
-    } catch {
-      // An observer must not stop the handler.
-    }
     return handler(args, ctx);
   });
 
@@ -315,52 +196,16 @@ const withAbortedCheck =
 // tool's default.
 const executeWithHarness = createToolExecutor<ToolExecutionContext, ToolCallSource>({
   resolveHandler: (toolName) => withAbortedCheck(toolHandlers[toolName]),
-  runQueued: runToolCall,
-  timeoutMs: (toolName, _input, ctx) => ctx?.timeoutMs ?? getToolCallTimeoutMs(toolName, _input),
-  onExecuted: trackToolExecuted,
+  timeoutMs: (toolName, input) => getToolCallTimeoutMs(toolName, input),
 });
-
-export interface ExecuteToolCallOptions {
-  /** Per-call budget replacing the tool's default (counted from the start of the queued task). */
-  timeoutMs?: number;
-}
 
 export function executeToolCall(
   toolName: string,
   input: unknown,
   context?: ToolExecutionContext,
-  source: ToolCallSource = "bridge",
-  options?: ExecuteToolCallOptions
+  source: ToolCallSource = "chat",
 ): Promise<string> {
-  const budget = options?.timeoutMs;
-  if (typeof budget === "number" && Number.isFinite(budget) && budget > 0) {
-    return executeWithHarness(toolName, input, { ...context, timeoutMs: budget }, source);
-  }
   return executeWithHarness(toolName, input, context, source);
-}
-
-/** The tools whose touched embeds get a Jev taste check (tasteCheck.ts). */
-function isTasteCheckedTool(toolName: string): boolean {
-  return toolName === "batch_design" || toolName === "edit_embed_html";
-}
-
-// Exported for tests. Joins the text parts of the LAST user-role message in
-// `messages` — this is the `brief` handed to a Jev taste check
-// (tasteCheck.ts truncates it to 4000 chars itself), so the check has some
-// idea what the user actually asked for. Returns undefined for a history
-// with no user message yet (shouldn't happen once a tool call exists, but
-// cheap to guard).
-export function getLastUserMessageText(messages: UIMessage[]): string | undefined {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    if (message.role !== "user") continue;
-    const text = message.parts
-      .filter((p): p is { type: "text"; text: string } => p.type === "text")
-      .map((p) => p.text)
-      .join("\n");
-    return text || undefined;
-  }
-  return undefined;
 }
 
 interface UseDesignChatOptions {
@@ -416,11 +261,6 @@ const ABORTED_RUN_OUTPUT = JSON.stringify({ status: "aborted", steps: 0 });
 
 export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   const [input, setInput] = useState("");
-  // Fallback chat for cloud-browser calls that carry no chat context; the
-  // browse_* handlers bind to their own session id when they have one.
-  useEffect(() => {
-    setCloudBrowserChat(sessionId);
-  }, [sessionId]);
   // Set when a send is refused because the browser is offline. The error
   // itself is DERIVED from this plus live connectivity (see `offlineError`
   // below) rather than stored: an "you are offline" banner is stale the
@@ -436,8 +276,7 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   const transport = useMemo(
     () =>
       createChatTransport({
-        // Agent panel: the canvas tab's context (async; the SDK awaits `body`).
-        body: () => withPanelCanvasContext(sessionId, buildCanvasContext(sessionId)),
+        body: () => buildChatBody(sessionId),
         onRetryStateChange: setRetryState,
       }),
     // Built once per mounted session: the model (and everything else in the
@@ -515,103 +354,20 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
       pendingToolCallAbortsRef.current.add(toolAbort);
       let handlerResult: string;
       try {
-        // Agent panel: canvas tools run in the bound canvas tab.
-        if (panelRunsInCanvas(toolCall.toolName)) {
-          // Analytics: the canvas tab's executeToolCall is the one event; the panel
-          // client reports only failures that never reached it (panelRuntime).
-          handlerResult = await panelCallTool(sessionId, toolCall.toolName, toolCall.input, {
-            toolCallId: toolCall.toolCallId,
-            timeoutMs: getToolCallTimeoutMs(toolCall.toolName, toolCall.input),
-            signal: toolAbort.signal,
-            // The tab runs the Jev taste check (below, for local calls) and merges its feedback.
-            ...(isTasteCheckedTool(toolCall.toolName) && !turnStoppedRef.current
-              ? { brief: getLastUserMessageText(chat.messages) }
-              : {}),
-          });
-        } else {
-          handlerResult = await executeToolCall(
-            toolCall.toolName,
-            toolCall.input,
-            { sessionId, toolCallId: toolCall.toolCallId, signal: toolAbort.signal },
-            "chat"
-          );
-        }
+        handlerResult = await executeToolCall(
+          toolCall.toolName,
+          toolCall.input,
+          { sessionId, toolCallId: toolCall.toolCallId, signal: toolAbort.signal },
+          "chat",
+        );
       } finally {
         pendingToolCallAbortsRef.current.delete(toolAbort);
-      }
-      let output = handlerResult;
-      // Jev taste check (src/lib/tools/tasteCheck.ts): a no-op for every
-      // tool except batch_design/edit_embed_html, and even for those two
-      // only when the handler above actually recorded a touched embed
-      // (tasteCheckRegistry.ts) — `hasTouchedEmbeds` peeks that synchronously
-      // so every other call skips this block without paying for
-      // `getLastUserMessageText` or a registry round-trip.
-      //
-      // AWAITED, deliberately (unlike an earlier version of this feature
-      // that fired-and-forgot this call): `onToolCall`'s return is what the
-      // AI SDK's stream reader awaits before it can process the turn's next
-      // chunk (node_modules/ai/dist/index.mjs, `case
-      // "tool-input-available"`), so keeping this call in that await chain
-      // is what keeps `chat.status` at "streaming" for as long as the check
-      // takes (bounded by its own internal timeout). That in turn is what
-      // the send-drain effect / Send / Rollback / Clear chat all key off to
-      // tell "turn in flight" apart from "turn done" — a detached check
-      // whose output arrived after `status` had already gone "ready" used to
-      // let all of those act on a turn that still had an unresolved tool
-      // part, and (via `sendAutomaticallyWhen`) risked silently resuming a
-      // turn the user had already stopped.
-      //
-      // Never allowed to throw: the taste check itself is fail-open by
-      // design (tasteCheck.ts's doc comment), but this try/catch is a second
-      // line of defense — `handlerResult`, the tool's real, already-
-      // committed result, must reach `chat.addToolOutput` even if something
-      // here misbehaves.
-      // `turnStoppedRef`: a Stop that landed while the handler itself was
-      // still running (e.g. queued behind other mutations) happened before
-      // any controller existed to abort, so don't start a check at all.
-      //
-      // Agent panel: canvas-link calls run this check in the canvas tab (the
-      // touched-embed registry lives in that process); the `brief` goes with
-      // the call and `handlerResult` already holds the merged feedback, so
-      // `hasTouchedEmbeds` is false here and this block is skipped.
-      if (
-        isTasteCheckedTool(toolCall.toolName) &&
-        !turnStoppedRef.current &&
-        hasTouchedEmbeds(toolCall.toolCallId)
-      ) {
-        const controller = new AbortController();
-        pendingTasteCheckAbortsRef.current.add(controller);
-        try {
-          output = await runTasteCheckForToolCall(
-            toolCall.toolName,
-            toolCall.toolCallId,
-            handlerResult,
-            { brief: getLastUserMessageText(chat.messages) },
-            controller.signal,
-          );
-        } catch {
-          output = handlerResult;
-        } finally {
-          pendingTasteCheckAbortsRef.current.delete(controller);
-        }
       }
       chat.addToolOutput({
         tool: toolCall.toolName,
         toolCallId: toolCall.toolCallId,
-        output,
+        output: handlerResult,
       });
-      // Record that this streaming-tool call's handler actually ran (see
-      // `completedStreamingCallKeysRef` below) — the "ready" sweep effect
-      // uses this, not part state, to tell "handler resolved" apart from
-      // "handler never got to run". `completedStreamingCallKeysRef` is
-      // declared further down in this function body, but that's fine: this
-      // closure isn't invoked until the AI SDK calls back into it, by which
-      // time every hook in this render has already run and the ref exists.
-      if (streamingToolNames.has(toolCall.toolName)) {
-        completedStreamingCallKeysRef.current.add(
-          streamingToolKey(toolCall.toolName, toolCall.toolCallId)
-        );
-      }
     },
   });
   const chat = useChat({
@@ -701,98 +457,21 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   const toolsBusy = parallelBrowseRuns > 0;
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // In-flight tool calls' AbortControllers (see onToolCall), aborted on the
-  // same terminal-abandonment paths as the taste checks below.
+  // In-flight tool calls' AbortControllers (see onToolCall), aborted on every terminal-abandonment path.
   const pendingToolCallAbortsRef = useRef<Set<AbortController>>(new Set());
-  // Every Jev taste-check `AbortController` currently in flight for this
-  // session (one per batch_design/edit_embed_html call awaiting a check
-  // inside `onToolCall` above) — a Set, not a single controller, because
-  // more than one such call can overlap. `clearStreamingToolSession` below
-  // aborts every entry on every terminal-abandonment path for this session
-  // (user Stop, an external abort e.g. closing this chat tab, a failed
-  // request, and unmount), so a check still running when the turn is
-  // stopped returns promptly (tasteCheck.ts's fail-open catch) instead of
-  // running out its own ~8s timeout — `onToolCall`'s await then resolves
-  // with the tool's real, already-committed result. Each entry is removed
-  // (by `onToolCall`'s own `finally`) once its check settles, so this never
-  // grows across a session's lifetime.
-  const pendingTasteCheckAbortsRef = useRef<Set<AbortController>>(new Set());
 
-  // Every `${toolName}:${toolCallId}` this session has ever staged a
-  // streaming frame for (across every registered streaming-tool adapter,
-  // src/lib/streamingTools/), and the subset that were abandoned
-  // (stop/error/unmount) rather than completed. AI SDK v6 deliberately keeps
-  // the partial assistant message — and its still-`input-streaming` tool
-  // part — in `chat.messages` after `Chat.stop()`/an aborted request (that's
-  // what `ignoreIncompleteToolCalls` in `convertToModelMessages` exists for).
-  // `clearStreamingToolSession` wipes each adapter's own per-session state
-  // (drafts, in-progress mutations, `finalizedKeys`, ...) on those terminal
-  // paths, so without a separate, never-cleared record here, the staging
-  // effect below would re-dispatch a frame for that abandoned call the
-  // moment `chat.messages` next changes (e.g. sending a follow-up message).
-  // A ref Set, not store state, because it must survive exactly the clears
-  // that wipe each adapter's own store.
-  const seenStreamingCallsRef = useRef<Map<string, { toolName: string; toolCallId: string }>>(
-    new Map()
-  );
-  const abandonedStreamingToolKeysRef = useRef<Set<string>>(new Set());
-
-  // Every `${toolName}:${toolCallId}` whose handler actually ran to
-  // completion (the `onToolCall` branch above resolved and delivered
-  // `addToolOutput`). This is deliberately NOT derived from a tool part's
-  // `state` in `chat.messages` — see the "ready" sweep effect below for why
-  // that would be unreliable for the one case it exists to catch (a
-  // validation failure never invokes `onToolCall` at all, yet still reaches
-  // `state: "output-available"`'s sibling terminal state before this hook
-  // gets a chance to look). A ref, not store state: it only gates the sweep
-  // effect's own read, so it never needs to trigger a re-render.
-  const completedStreamingCallKeysRef = useRef<Set<string>>(new Set());
-
-  function streamingToolKey(toolName: string, toolCallId: string): string {
-    return `${toolName}:${toolCallId}`;
-  }
-
-  // Every streaming-tool adapter's per-session state (transient previews,
-  // in-flight progressive mutations, ...) must never outlive this session on
-  // any terminal path except an ordinary "ready" — the final tool handler
-  // owns commit-before-clear on success, and a paused ask_user turn is not a
-  // terminal path at all. Each adapter's `onSessionClear` only touches THIS
-  // session, so concurrent sessions are unaffected.
-  //
-  // Every one of this function's callers (the abort-controller's `onAbort`
-  // below, the user-facing `stop` callback further down, the "request
-  // failed" effect, and this hook's own unmount cleanup) is exactly the set
-  // of terminal paths on which any Jev taste check still in flight
-  // (`pendingTasteCheckAbortsRef` above) must be cut short, so those
-  // controllers are aborted here, once, rather than at each call site.
+  // Terminal paths (user Stop, an external abort, a failed request, unmount): block auto-continuation and
+  // abort every in-flight tool call and live isolated run.
   const clearStreamingToolSession = useCallback(() => {
     turnStoppedRef.current = true;
-    for (const controller of pendingTasteCheckAbortsRef.current) {
-      controller.abort();
-    }
     for (const controller of pendingToolCallAbortsRef.current) {
       controller.abort();
     }
-    // Live isolated runs answer "aborted" at once: the step is complete and busy
-    // ends now. The handler's cleanup (closeSession) goes on in the background and
-    // its late result is ignored.
     for (const run of [...livePendingRunsRef.current.values()]) {
       run.controller.abort();
       run.settle(ABORTED_RUN_OUTPUT);
     }
-    for (const [key, call] of seenStreamingCallsRef.current) {
-      if (abandonedStreamingToolKeysRef.current.has(key)) continue;
-      abandonedStreamingToolKeysRef.current.add(key);
-      getStreamingToolAdapter(call.toolName)?.onAbandon({
-        sessionId,
-        toolCallId: call.toolCallId,
-      });
-      panelEndStream(call.toolCallId, "abandoned");
-    }
-    for (const adapter of streamingToolAdapters) {
-      adapter.onSessionClear(sessionId);
-    }
-  }, [sessionId]);
+  }, []);
 
   // Any new request (a user send, the send drain, a network retry) re-arms
   // auto-continuation — see `turnStoppedRef`.
@@ -816,166 +495,16 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
     return () => {
       controller.signal.removeEventListener("abort", onAbort);
       unregisterAbortController(sessionId);
-      // Unmount cleanup: nothing else observes this session's streaming-tool
-      // state once the hook is gone, so clear it here too.
       pendingInterruptSendRef.current = null;
       clearStreamingToolSession();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, registerAbortController, unregisterAbortController]);
 
-  // Agent panel: the canvas tab closed while a tool's INPUT was still streaming
-  // to it. The model would go on writing a call that can no longer run where it
-  // was built (and `callTool` refuses to move it to another tab). Stop the turn
-  // (like a user Stop: `turnStoppedRef` blocks auto-continuation), record the call
-  // as abandoned so it is never re-dispatched, and tell the user why. The part is
-  // left as the SDK has it: writing an output onto an `input-streaming` /
-  // `output-error` part would turn a truncated or undefined input into a permanent
-  // completed call in the history. Deliberately NOT `clearStreamingToolSession`:
-  // that would also abort unrelated live isolated QA runs and pending taste checks.
+  // A failed request ends the turn: abort what is still running.
   useEffect(() => {
-    return subscribePanelStreamLost(sessionId, (toolCallId) => {
-      for (const [key, call] of seenStreamingCallsRef.current) {
-        if (call.toolCallId === toolCallId) abandonedStreamingToolKeysRef.current.add(key);
-      }
-      turnStoppedRef.current = true;
-      void chat.stop();
-      toast.error("The canvas tab was closed.");
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
-
-  // Observe partial tool input as it streams in and dispatch it to whichever
-  // registered adapter (src/lib/streamingTools/) owns that tool name.
-  // Complete, validated final input (delivered via the tool handler in
-  // onToolCall above) remains the sole barrier for a tool's "real" effect —
-  // a transient preview for `draw_vector`, or a real (but rollback-able)
-  // scene mutation for the progressive-mutation adapters — this effect only
-  // ever forwards partial frames.
-  //
-  // Two guards, for two different failure modes of re-scanning the full
-  // `chat.messages` array on every update:
-  // - `chat.status !== "streaming"`: staging is only ever meaningful while a
-  //   turn is actively in flight, so skip entirely otherwise (cheap, and
-  //   covers most idle re-renders).
-  // - `abandonedStreamingToolKeysRef`: the status guard alone is NOT enough —
-  //   a stale `input-streaming` part from an abandoned call survives inside
-  //   `chat.messages` (see the ref's declaration above) and `chat.status` is
-  //   "streaming" again the moment a follow-up message is sent, so the same
-  //   stale part would otherwise pass the status guard and get re-dispatched.
-  //   Once a key is recorded as abandoned it is blocked permanently.
-  useEffect(() => {
-    if (chat.status !== "streaming") {
-      return;
-    }
-    for (const streamed of extractStreamingToolInputs(
-      chat.messages,
-      streamingToolNames
-    )) {
-      const key = streamingToolKey(streamed.toolName, streamed.toolCallId);
-      if (abandonedStreamingToolKeysRef.current.has(key)) {
-        continue;
-      }
-      seenStreamingCallsRef.current.set(key, {
-        toolName: streamed.toolName,
-        toolCallId: streamed.toolCallId,
-      });
-      // Agent panel: forwarded to the canvas tab instead of applied here.
-      if (panelForwardFrame(sessionId, streamed.toolName, streamed.toolCallId, streamed.input)) {
-        continue;
-      }
-      getStreamingToolAdapter(streamed.toolName)?.onFrame({
-        sessionId,
-        toolCallId: streamed.toolCallId,
-        input: streamed.input,
-      });
-    }
-  }, [chat.messages, chat.status, sessionId]);
-
-  // A failed request is a terminal path for this turn — any in-flight
-  // streaming-tool state belongs to a call that will never complete, so it
-  // must not linger. An ask_user pause is a distinct, non-error chat.status
-  // and is intentionally excluded from this effect.
-  useEffect(() => {
-    if (chat.status === "error") {
-      clearStreamingToolSession();
-      // Coarse categorization only — never chat.error.message itself, which
-      // can echo back request/response content.
-      const message = chat.error?.message;
-      const errorKind =
-        message === OFFLINE_MESSAGE
-          ? "offline"
-          : chat.error instanceof TypeError
-            ? "network"
-            : "unknown";
-      track("agent_turn_failed", { error_kind: errorKind });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (chat.status === "error") clearStreamingToolSession();
   }, [chat.status, clearStreamingToolSession]);
-
-  // A "ready" transition is the other terminal path for a streaming-tool
-  // call, alongside abort/error/unmount above — and it is the ONLY signal
-  // for two provider failure modes that never touch `chat.status ===
-  // "error"` at all (see the HIGH finding in
-  // docs/superpowers/specs/2026-09-13-streaming-tool-mutations-design.md):
-  //
-  // - A truncated turn: the provider stops streaming mid-call, so the tool
-  //   part is stuck at `state: "input-streaming"` forever. `onToolCall` is
-  //   only invoked from the SDK's "tool-input-available" branch (see
-  //   node_modules/ai/dist/index.mjs, the `case "tool-input-available":`
-  //   block awaiting `onToolCall`), so it never fires here either.
-  //   `lastAssistantMessageIsCompleteWithToolCalls` (same file, `every` over
-  //   `state === "output-available" || state === "output-error"`) treats an
-  //   `input-streaming` part as incomplete, so the SDK never auto-continues
-  //   — the turn just settles into "ready" for good, with the call
-  //   abandoned by the model.
-  // - A tool-input validation failure (e.g. the backend's zod
-  //   `.transform()` rejecting the final `batch_design` args under the
-  //   embed-only prototype policy): the SDK's `case "tool-input-error":`
-  //   branch (same file) flips the part straight to `state: "output-error"`
-  //   WITHOUT ever calling `onToolCall` — that callback lives only in the
-  //   sibling "tool-input-available" case. `output-error` DOES count as
-  //   "complete" for `lastAssistantMessageIsCompleteWithToolCalls`, so this
-  //   path is usually transient (the SDK auto-continues with the error as
-  //   the tool result) — but `chat.status` still passes through "ready" once
-  //   on the way, which is all this effect needs.
-  //
-  // Both leave `seenStreamingCallsRef` holding a call whose handler never
-  // ran — so `completedStreamingCallKeysRef` (set only from inside the
-  // `onToolCall` branch above) never gained its key — while progressive
-  // mutations may already be committed to the scene with no undo entry
-  // (streaming never calls `saveHistory`). Sweep every such call on every
-  // "ready" transition and abandon it (roll back / restore original HTML),
-  // exactly like the abort/error/unmount paths.
-  //
-  // Parallel isolated QA runs are the one exception to "ready means no handler
-  // is in flight", but they are not streaming-tool calls (no adapter owns
-  // browse_agent), so nothing here sweeps them; the hook-level `status` stays
-  // "streaming" for them (see the override near the return).
-  //
-  // This can NEVER misfire on a call that is merely between
-  // "tool-input-available" and its handler resolving: the stream reader
-  // above `await`s `onToolCall` synchronously, in place, before it advances
-  // to any later chunk — so `chat.status` cannot reach "ready" while a
-  // handler is still in flight. By the time "ready" is observed, every call
-  // that ever reached "tool-input-available" has either completed (recorded
-  // in `completedStreamingCallKeysRef`) or errored out (never recorded, and
-  // correctly swept here).
-  useEffect(() => {
-    if (chat.status !== "ready") {
-      return;
-    }
-    for (const [key, call] of seenStreamingCallsRef.current) {
-      if (abandonedStreamingToolKeysRef.current.has(key)) continue;
-      if (completedStreamingCallKeysRef.current.has(key)) continue;
-      abandonedStreamingToolKeysRef.current.add(key);
-      getStreamingToolAdapter(call.toolName)?.onAbandon({
-        sessionId,
-        toolCallId: call.toolCallId,
-      });
-      panelEndStream(call.toolCallId, "abandoned");
-    }
-  }, [chat.status, chat.messages, sessionId]);
 
   // Hands a payload to the transport. Writes no React state of its own, so
   // the send-drain effect below can call it directly without triggering a
@@ -988,16 +517,6 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
       const images = payload.images;
       if (!text && (!images || images.length === 0)) {
         return false;
-      }
-
-      track("chat_message_sent", {
-        has_attachment: !!images && images.length > 0,
-        is_slash_command: text.startsWith("/"),
-        length_bucket: bucketLength(text.length),
-      });
-      const { msSinceOpen, isFirst } = consumeFirstPromptTiming();
-      if (isFirst) {
-        track("first_prompt_sent", { ms_since_open: Math.round(msSinceOpen) });
       }
 
       if (images && images.length > 0) {

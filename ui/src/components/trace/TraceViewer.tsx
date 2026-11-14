@@ -69,8 +69,6 @@ interface ViewerProps {
   deepLink?: boolean;
   /** Trace switcher for the header. */
   switcher?: ReactNode;
-  /** Id of the trace when it was loaded from the backend (cloud); DOM snapshots and downloads then go through its routes. */
-  cloudTraceId?: string;
 }
 
 /** Writes `?step=N` into the address without a navigation: the router and the trace loader never see it. */
@@ -78,7 +76,7 @@ function writeStepToUrl(stepIndex: number): void {
   window.history.replaceState(window.history.state, "", stepLinkUrl(window.location, stepIndex));
 }
 
-export function TraceViewer({ trace, initialStep, deepLink = true, switcher, cloudTraceId }: ViewerProps) {
+export function TraceViewer({ trace, initialStep, deepLink = true, switcher }: ViewerProps) {
   const rows = useMemo(() => buildStepRows(trace), [trace]);
   const flagged = useMemo(() => stepsWithProblems(trace), [trace]);
   const frames = useMemo(() => sortedFrames(trace), [trace]);
@@ -212,7 +210,7 @@ export function TraceViewer({ trace, initialStep, deepLink = true, switcher, clo
 
   return (
     <div className="flex h-dvh flex-col bg-surface-panel text-text-primary">
-      <TraceHeader trace={trace} cloudTraceId={cloudTraceId} detailsOpen={detailsOpen} onToggleDetails={toggleDetails} switcher={switcher} />
+      <TraceHeader trace={trace} detailsOpen={detailsOpen} onToggleDetails={toggleDetails} switcher={switcher} />
       <Filmstrip
         trace={trace}
         selectedFrameId={shown?.id}
@@ -248,7 +246,7 @@ export function TraceViewer({ trace, initialStep, deepLink = true, switcher, clo
             position={position}
             kind={stepPick?.kind}
             dom={domOfStep(trace, stepIndex)}
-            cloudTraceId={cloudTraceId}
+           
             stepNumber={stepIndex === null ? 0 : stepIndex + 1}
             compare={
               stepPick?.canCompare && stepIndex !== null

@@ -3,39 +3,19 @@ import { useSearchParams } from "react-router";
 
 import { EditorProviders } from "@/components/EditorProviders";
 import { SettingsNav } from "@/components/settings/SettingsNav";
-import { AccountSection } from "@/components/settings/sections/AccountSection";
-import { AdvancedSection } from "@/components/settings/sections/AdvancedSection";
-import { AgentSection } from "@/components/settings/sections/AgentSection";
 import { AppearanceSection } from "@/components/settings/sections/AppearanceSection";
 import { BrowserSection } from "@/components/settings/sections/BrowserSection";
-import { CanvasSection } from "@/components/settings/sections/CanvasSection";
-import { IntegrationsSection } from "@/components/settings/sections/IntegrationsSection";
-import { MemorySection } from "@/components/settings/sections/MemorySection";
-import { PrivacySection } from "@/components/settings/sections/PrivacySection";
-import { ShortcutsSection } from "@/components/settings/sections/ShortcutsSection";
-import { SkillsSection } from "@/components/settings/sections/SkillsSection";
 import { useHtmlRouteClass } from "@/hooks/useHtmlRouteClass";
-import { parseSettingsSection, SETTINGS_SECTION_EVENT, type SettingsSection } from "@/lib/openSettings";
+import { parseSettingsSection, type SettingsSection } from "@/lib/openSettings";
 
 const SECTION_VIEWS: Record<SettingsSection, () => React.JSX.Element> = {
-  account: AccountSection,
   appearance: AppearanceSection,
-  canvas: CanvasSection,
-  agent: AgentSection,
-  memory: MemorySection,
-  skills: SkillsSection,
   browser: BrowserSection,
-  integrations: IntegrationsSection,
-  privacy: PrivacySection,
-  advanced: AdvancedSection,
-  shortcuts: ShortcutsSection,
 };
 
 /**
- * "/settings": two-column settings (desktop tab `/settings?chat=off&section=<id>`
- * or a plain browser page). Writes localStorage from its own document; the
- * other tabs follow through `storage` events and the theme BroadcastChannel.
- * Must not import App or Pixi.
+ * "/settings?section=appearance|browser": two sections. Writes localStorage from its own document;
+ * the other views follow through `storage` events and the theme BroadcastChannel.
  */
 export default function SettingsPage() {
   useHtmlRouteClass("route-settings");
@@ -59,16 +39,8 @@ export default function SettingsPage() {
     [setParams],
   );
 
-  // openSettings(section) while this page is showing.
-  useEffect(() => {
-    const onSection = (e: Event) => select(parseSettingsSection((e as CustomEvent<string>).detail));
-    window.addEventListener(SETTINGS_SECTION_EVENT, onSection);
-    const offDesktop = window.penDesktop?.settings?.onSection?.((id) => select(parseSettingsSection(id)));
-    return () => {
-      window.removeEventListener(SETTINGS_SECTION_EVENT, onSection);
-      offDesktop?.();
-    };
-  }, [select]);
+  // The shell asks an already open Settings tab to switch section.
+  useEffect(() => window.penDesktop?.settings?.onSection?.((id) => select(parseSettingsSection(id))), [select]);
 
   const View = SECTION_VIEWS[section];
   return (

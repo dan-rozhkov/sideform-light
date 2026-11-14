@@ -20,7 +20,6 @@ interface Props {
   /** 1-based number of the selected step, for the DOM view's labels. */
   stepNumber?: number;
   /** Set for a trace loaded from the backend: its DOM text is fetched through the backend route. */
-  cloudTraceId?: string;
 }
 
 const KIND_LABEL: Record<BrowseTraceFrame["kind"], string> = { step: "After step", screenshot: "Screenshot", final: "Final state" };
@@ -34,7 +33,7 @@ function altLabel(frame: BrowseTraceFrame, kind: FrameKind): string {
 /** Natural sizes of loaded frames, cached per src so revisiting a frame does not jump. */
 const measuredSizes = new Map<string, { width: number; height: number }>();
 
-export const FrameView = memo(function FrameView({ frame, startedAt, position, kind = "own", compare, dom, stepNumber = 0, cloudTraceId }: Props) {
+export const FrameView = memo(function FrameView({ frame, startedAt, position, kind = "own", compare, dom, stepNumber = 0 }: Props) {
   // Screenshot is the default; the choice is per snapshot, so another step starts on Screenshot again.
   const [domPick, setDomPick] = useState<{ id: number | null; view: "screenshot" | "dom" }>({ id: null, view: "screenshot" });
   const showDom = !!dom && domPick.id === dom.id && domPick.view === "dom";
@@ -98,7 +97,7 @@ export const FrameView = memo(function FrameView({ frame, startedAt, position, k
       <div className="relative min-h-[16rem] flex-1">
         <div className="absolute inset-x-4 top-0 bottom-4 flex items-center justify-center [container-type:size]">
           {showDom && dom ? (
-            <DomView dom={dom} stepNumber={stepNumber} cloudTraceId={cloudTraceId} />
+            <DomView dom={dom} stepNumber={stepNumber} />
           ) : frame && !broken ? (
             <img
               key={frame.id}

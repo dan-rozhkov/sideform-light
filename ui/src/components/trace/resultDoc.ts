@@ -15,12 +15,6 @@ export function goalHeadline(goal: string): string {
   return clip(goalFirstLine(goal), TITLE_MAX);
 }
 
-/** True when the result can be opened as a document: always on the web, on desktop only with `docs.open`. */
-export function canOpenResult(): boolean {
-  const desktop = typeof window !== "undefined" ? window.penDesktop : undefined;
-  return !desktop || !!desktop.docs?.open;
-}
-
 export function resultDocTitle(trace: BrowseTrace): string {
   return `Result · ${goalHeadline(trace.goal)}`;
 }

@@ -5,13 +5,11 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
-import { LikeReferenceButton, type LikeMeta } from "./LikeReferenceButton";
 import { CHEVRON_WEIGHT } from "@/components/ui/chevron";
 
 interface ImageLightboxProps {
   urls: string[];
   /** Opt-in: shows a like button for the current image if it has an entry. */
-  likeMeta?: Record<string, LikeMeta>;
   index: number;
   onClose: () => void;
   onNavigate: (index: number) => void;
@@ -19,7 +17,6 @@ interface ImageLightboxProps {
 
 export function ImageLightbox({
   urls,
-  likeMeta,
   index,
   onClose,
   onNavigate,
@@ -71,9 +68,6 @@ export function ImageLightbox({
         className="max-w-[90vw] max-h-[90vh] rounded-lg img-outline"
       />
 
-      {likeMeta?.[url] && (
-        <LikeReferenceButton url={url} {...likeMeta[url]} variant="lightbox" />
-      )}
 
       {hasMultiple && (
         <>

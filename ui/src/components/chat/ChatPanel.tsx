@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import {
   BrainIcon,
   PlusIcon,
@@ -7,27 +7,12 @@ import {
   ArrowLeftIcon,
   StopIcon,
   CaretDownIcon,
-  ArrowLineLeftIcon,
   DotsThreeVerticalIcon,
-  BookOpenIcon,
-  LockIcon,
 } from "@/components/icons";
-import { toast } from "sonner";
-import { useChatStore, NO_ACTIVITY_NOTES } from "@/store/chatStore";
-import { useLeftSidebarStore } from "@/store/leftSidebarStore";
-import { useIsMobile } from "@/hooks/useIsMobile";
-import { useUserSkillStore } from "@/store/userSkillStore";
-import type { ChatSummary, ParallelCount } from "@/store/chatStore";
+import { useChatStore, type ChatSummary, type ParallelCount } from "@/store/chatStore";
 import { useDesignChat } from "@/hooks/useDesignChat";
-import { usePromptSuggestion } from "@/hooks/usePromptSuggestion";
 import { useModelOptions } from "@/hooks/useModelOptions";
-import { isModelOptionLocked } from "@/lib/chatModels";
-import { useAgentActivityNotes } from "@/hooks/useAgentActivityNotes";
-import { useReleaseCloudBrowserWhenDone } from "@/hooks/useReleaseCloudBrowserWhenDone";
-import { getActorId, useAuthStore } from "@/lib/auth/authState";
 import { openSettings } from "@/lib/openSettings";
-import { hasOpenCodeKey, subscribeOpenCodeKey } from "@/lib/opencodeKey";
-import { useOpenCodeKeyDialogStore } from "@/store/openCodeKeyDialogStore";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { IconButton } from "@/components/ui/IconButton";
 import { Button } from "@/components/ui/button";
@@ -48,20 +33,12 @@ import {
 import type { ChatLaunchPayload } from "@/types/chat";
 import { chatToMarkdown, chatFilename, downloadMarkdown } from "@/lib/chatExport";
 import { CHEVRON_WEIGHT } from "@/components/ui/chevron";
-import { releaseCloudBrowser } from "@/lib/cloudBrowser";
-import { releaseDesktopChatApp } from "@/lib/tools/browser/bridge";
 import { useBrowseCheckpointStore } from "@/store/browseCheckpointStore";
-import { parseWorkflowAttachment } from "@/lib/workflows/workflowAttachment";
-import { getWorkflow } from "@/lib/workflows/workflowStore";
 import { MessageList } from "./MessageList";
-import { ChatSessionIdContext } from "./ChatSessionContext";
 import { ChatInput } from "./ChatInput";
 import { ChatList } from "./ChatList";
 import { ConversationFilesPopover } from "./ConversationFilesPopover";
-import { CloudBrowserPanel } from "./CloudBrowserPanel";
-import { SkillsPage } from "./SkillsPage";
 import { ContextMeter } from "./ContextMeter";
-import { OpenCodeKeyDialog } from "./OpenCodeKeyDialog";
 import { hasPendingAskUser } from "./pendingAskUser";
 
 const PARALLEL_COUNT_OPTIONS = [
@@ -91,12 +68,8 @@ type ComposerControlsRenderer = (props: ComposerControlsProps) => ReactNode;
  * the old tab bar now that a chat is opened from (and returned to) the list. */
 function OpenChatHeader({
   chatId,
-  trailingAction,
 }: {
   chatId: string;
-  /** Extra header button rendered right after "New chat" (the /agent page
-   * moves the skills button here). */
-  trailingAction?: ReactNode;
 }) {
   const chatTitle = useChatStore(
     (s) => s.chats.find((c) => c.id === chatId)?.title ?? "",
@@ -131,7 +104,6 @@ function OpenChatHeader({
       >
         <PlusIcon className="size-4" weight="light" />
       </IconButton>
-      {trailingAction}
       <ConversationFilesPopover getMessages={() => activeActions?.getMessages() ?? []} />
       {activeActions?.hasMessages && (
         <DropdownMenu>
@@ -174,7 +146,6 @@ function ChatSession({
   isActive,
   isVisible,
   composerControls,
-  onManageSkills,
 }: {
   sessionId: string;
   isActive: boolean;
@@ -185,7 +156,6 @@ function ChatSession({
    * unmounting when closed). */
   isVisible: boolean;
   composerControls: ComposerControlsRenderer;
-  onManageSkills: () => void;
 }) {
   const {
     messages,
@@ -199,49 +169,9 @@ function ChatSession({
     clearError,
     retryState,
     addToolOutput,
-    status,
   } = useDesignChat({ sessionId });
 
-  // Surfaces server-side memory/skill writes that happen after this turn's
-  // stream already closed (background review) — the model has no chance to
-  // mention these itself. See useAgentActivityNotes for the delayed-check
-  // design. The result is a UI-only row in chatStore (never part of
-  // `messages`, so it is never sent to the backend).
-  // Subscribed so the id re-resolves when the session loads/changes.
-  useAuthStore((s) => s.userId);
-  // The checks fire 20-60s after the turn, so they read the latest message
-  // through a ref rather than the render that scheduled them.
-  const latestMessagesRef = useRef(messages);
-  useEffect(() => {
-    latestMessagesRef.current = messages;
-  }, [messages]);
-  // Only assistant messages render notes, so the anchor is the last
-  // assistant message — a turn stopped before any reply ends on the user's.
-  const getLastMessageId = useCallback(
-    () => latestMessagesRef.current.filter((m) => m.role === "assistant").at(-1)?.id,
-    [],
-  );
-  useAgentActivityNotes({
-    userId: getActorId(),
-    status,
-    sessionId,
-    getLastMessageId,
-  });
-  const activityNotes = useChatStore(
-    (s) => s.activityNotes[sessionId] ?? NO_ACTIVITY_NOTES,
-  );
-
-  const isMobile = useIsMobile();
   const awaitingAnswer = hasPendingAskUser(messages);
-  const { suggestion, dismiss: dismissSuggestion } = usePromptSuggestion({
-    sessionId,
-    status,
-    messages,
-    input,
-    awaitingAnswer,
-    enabled: isVisible && !isMobile,
-  });
-
   const parallelCount = useChatStore((s) => s.parallelCount);
   const setParallelCount = useChatStore((s) => s.setParallelCount);
   const createChat = useChatStore((s) => s.createChat);
@@ -282,13 +212,6 @@ function ChatSession({
   useEffect(() => {
     setChatActivity(sessionId, { needsAnswer: awaitingAnswer, isBusy: isLoading });
   }, [sessionId, awaitingAnswer, isLoading, setChatActivity]);
-
-  // Frees the cloud browser once the agent has sat idle for a few minutes.
-  useReleaseCloudBrowserWhenDone({
-    chatId: sessionId,
-    isBusy: isLoading,
-    awaitingAnswer,
-  });
 
   // Reports new activity — a new assistant reply, or the agent starting to
   // wait on the user — to the store on every such event, active chat or not.
@@ -345,12 +268,6 @@ function ChatSession({
         // An empty transcript has no context usage yet — leaving the old
         // reading would show a stale meter over nothing.
         useChatStore.getState().clearContextTokens(sessionId);
-        // Liked references point at images from the wiped transcript.
-        useChatStore.getState().clearLikedReferences(sessionId);
-        // A cleared chat starts over, so its cloud browser does too.
-        void releaseCloudBrowser(sessionId);
-        // Same for the desktop app this chat launched.
-        releaseDesktopChatApp(sessionId);
         // Its browser checkpoints (cookies, storage) go with the transcript.
         useBrowseCheckpointStore.getState().clearChat(sessionId);
       },
@@ -398,15 +315,7 @@ function ChatSession({
       .join("");
 
     setMessages(messages.slice(0, index));
-    // Never put the raw <workflow> block into the composer: restore the user's text and,
-    // when that workflow still exists, its chip (re-attached by id).
-    const attachment = parseWorkflowAttachment(text);
-    setInput(attachment ? attachment.before : text);
-    if (attachment) {
-      const stored = attachment.id ? getWorkflow(attachment.id) : null;
-      if (stored) useChatStore.getState().setAttachedWorkflowId(sessionId, stored.id);
-      else toast(`The workflow \u201c${attachment.title}\u201d no longer exists. It was not re-attached.`);
-    }
+    setInput(text);
     // The transcript just shrank, so the last measured context size (taken
     // before the rollback) no longer describes this chat — leaving it would
     // show a near-full, red meter over a three-message session until the
@@ -444,20 +353,13 @@ function ChatSession({
       )}
 
       {/* Messages */}
-      <ChatSessionIdContext.Provider value={sessionId}>
         <MessageList
           messages={messages}
           isLoading={isLoading}
           onRollback={isLoading ? undefined : handleRollback}
           addToolOutput={addToolOutput}
-          activityNotes={activityNotes}
           isVisible={isVisible}
         />
-      </ChatSessionIdContext.Provider>
-
-      {/* Cloud browser live view (web build only; hides itself on desktop
-          and when this chat has no live session). */}
-      <CloudBrowserPanel chatId={sessionId} />
 
       {/* Composer */}
       <div
@@ -472,9 +374,6 @@ function ChatSession({
           stop={stop}
           shouldFocus={isVisible}
           awaitingAnswer={awaitingAnswer}
-          suggestion={suggestion}
-          onDismissSuggestion={dismissSuggestion}
-          onManageSkills={onManageSkills}
           renderFooter={(footerProps) => (
             <div className="flex items-center gap-0.5 px-2 pb-1.5 pt-1">
               {composerControls(footerProps)}
@@ -487,21 +386,14 @@ function ChatSession({
 }
 
 export function ChatPanelContent({
-  variant = "sidebar",
-  isVisible,
+  variant = "standalone",
+  isVisible = true,
 }: {
-  /** "sidebar" (default, /app Agents section): title row with the skills
-   * button and the expand toggle. "standalone" (the /agent page): no title
-   * row and no expand toggle (there is no sidebar to expand); the skills
-   * button sits in the chat header / next to "New chat" instead. */
+  /** "standalone" (the /agent page): no title row and no expand toggle. "sidebar" adds a title row. */
   variant?: "sidebar" | "standalone";
-  /** Override the computed visibility (sidebar section + mobile panel state).
-   * Hosts with no sidebar (the standalone /agent page) pass true. */
   isVisible?: boolean;
 } = {}) {
   const isStandalone = variant === "standalone";
-  const isExpanded = useChatStore((s) => s.isExpanded);
-  const toggleExpanded = useChatStore((s) => s.toggleExpanded);
   const model = useChatStore((s) => s.model);
   const setModel = useChatStore((s) => s.setModel);
   const modelOptions = useModelOptions();
@@ -509,44 +401,7 @@ export function ChatPanelContent({
   const setParallelCount = useChatStore((s) => s.setParallelCount);
   const chats = useChatStore((s) => s.chats);
   const activeChatId = useChatStore((s) => s.activeChatId);
-  const isAgentsSectionActive = useLeftSidebarStore((s) => s.activeSection === "agents");
-  const isMobile = useIsMobile();
-  const isPanelOpen = useLeftSidebarStore((s) => s.isPanelOpen);
-  // Whether the Agents chat is actually on screen, not just the active
-  // section: on mobile the left panel can be closed while Agents stays the
-  // active section — and now that LeftSidebar keeps the chat subtree mounted
-  // (`display: none`) instead of unmounting it, MessageList's scroll
-  // position and ChatInput's focus/resize effects need this real visibility
-  // signal instead of a boolean that never changes across close/reopen.
-  const isChatVisible = isVisible ?? (isAgentsSectionActive && (!isMobile || isPanelOpen));
-  const [isSkillsPageOpen, setSkillsPageOpen] = useState(false);
-  // The skills page is tied to the chat it was opened over: if the active chat
-  // changes while it is open (e.g. a launch creates a chat), close it so the
-  // new chat is not hidden behind it. Adjusting state during render rather
-  // than in an effect, per React's "adjusting state when a prop changes"
-  // pattern — no extra committed render with the stale page still visible.
-  const [skillsOpenedOver, setSkillsOpenedOver] = useState(activeChatId);
-  if (activeChatId !== skillsOpenedOver) {
-    setSkillsOpenedOver(activeChatId);
-    if (isSkillsPageOpen) setSkillsPageOpen(false);
-  }
-  const isOpenCodeDialogOpen = useOpenCodeKeyDialogStore((s) => s.open);
-  const setOpenCodeDialogOpen = useOpenCodeKeyDialogStore((s) => s.setOpen);
-  const ensureSkillsHydrated = useUserSkillStore((s) => s.ensureHydrated);
-  // Re-renders the picker the moment a key is saved/removed in the dialog,
-  // so a just-unlocked model becomes selectable without a reload.
-  const hasKey = useSyncExternalStore(
-    subscribeOpenCodeKey,
-    hasOpenCodeKey,
-    hasOpenCodeKey,
-  );
-
-  // Hydrate the user's custom skills once the chat panel mounts (not on every
-  // slash-menu keystroke) so the slash menu can list them alongside the
-  // built-ins without each open needing a fresh fetch.
-  useEffect(() => {
-    void ensureSkillsHydrated();
-  }, [ensureSkillsHydrated]);
+  const isChatVisible = isVisible;
   // Falls back to the id itself, never a generic "Model": a selection the
   // backend list doesn't cover is exactly when the user needs to see WHICH
   // model they're on. reconcileModels() resets such a selection once
@@ -581,32 +436,15 @@ export function ChatPanelContent({
           <DropdownMenuContent side="top" align="end" className="w-56">
             <DropdownMenuRadioGroup value={model} onValueChange={setModel}>
               {modelOptions.map((option) => {
-                const locked = isModelOptionLocked(option, hasKey);
                 return (
-                  <DropdownMenuRadioItem
-                    key={option.value}
-                    value={option.value}
-                    disabled={locked}
-                  >
-                    <span className="flex min-w-0 flex-1 items-center gap-2">
-                      <span className="truncate">{option.label}</span>
-                      {locked && (
-                        <LockIcon
-                          size={12}
-                          weight="light"
-                          className="shrink-0 text-text-muted"
-                        />
-                      )}
-                    </span>
+                  <DropdownMenuRadioItem key={option.value} value={option.value}>
+                    <span className="truncate">{option.label}</span>
                   </DropdownMenuRadioItem>
                 );
               })}
             </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setOpenCodeDialogOpen(true)}>
-              {hasKey ? "OpenCode key" : "Connect OpenCode…"}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => openSettings("agent")}>Model settings…</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openSettings()}>Settings…</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -687,23 +525,6 @@ export function ChatPanelContent({
     </>
   );
 
-  const skillsButton = (
-    <IconButton
-      data-testid="manage-skills-button"
-      type="button"
-      variant="ghost"
-      size="icon"
-      onClick={() => setSkillsPageOpen((open) => !open)}
-      aria-pressed={isSkillsPageOpen}
-      tooltip="Manage skills"
-      aria-label="Manage skills"
-    >
-      <BookOpenIcon className="size-4" weight="regular" />
-    </IconButton>
-  );
-  // Standalone: the skills button lives in the chat header / list row.
-  const chatHeaderAction = isStandalone ? skillsButton : undefined;
-
   return (
     <div className="w-full h-full bg-surface-panel flex flex-col overflow-hidden">
       {!isStandalone && (
@@ -711,36 +532,10 @@ export function ChatPanelContent({
           <span className="text-sm font-medium text-text-primary flex-1">
             Sideform Agent
           </span>
-          {skillsButton}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  onClick={toggleExpanded}
-                  className="-my-0.5 p-1 rounded-control-sm hover:bg-secondary text-text-muted transition-colors"
-                  aria-label={isExpanded ? "Collapse panel" : "Expand panel"}
-                >
-                  <ArrowLineLeftIcon
-                    size={16}
-                    className={isExpanded ? "" : "rotate-180"}
-                  />
-                </button>
-              }
-            />
-            <TooltipContent>
-              {isExpanded ? "Collapse panel" : "Expand panel"}
-            </TooltipContent>
-          </Tooltip>
         </div>
       )}
 
-      {isSkillsPageOpen ? (
-        <SkillsPage onClose={() => setSkillsPageOpen(false)} />
-      ) : activeChatId === null ? (
-        <ChatList trailingAction={chatHeaderAction} />
-      ) : (
-        <OpenChatHeader chatId={activeChatId} trailingAction={chatHeaderAction} />
-      )}
+      {activeChatId === null ? <ChatList /> : <OpenChatHeader chatId={activeChatId} />}
 
       {/* Keep all sessions mounted so switching chats doesn't reset chat state.
           While the chat list is shown (activeChatId === null) every session is
@@ -750,39 +545,20 @@ export function ChatPanelContent({
           key={chat.id}
           data-testid={`chat-session-${chat.id}`}
           className={
-            chat.id === activeChatId && !isSkillsPageOpen
+            chat.id === activeChatId
               ? "flex-1 min-h-0 flex flex-col"
               : "hidden"
           }
         >
           <ChatSession
             sessionId={chat.id}
-            // The skills page covers the chat, so treat every session as
-            // inactive/invisible while it is open: ChatSession then renders
-            // nothing (state stays in its hooks), replies that arrive mark the
-            // chat unread, and on return isActive/isVisible flip back so the
-            // message list re-pins scroll and the composer refocuses.
-            isActive={!isSkillsPageOpen && chat.id === activeChatId}
-            isVisible={!isSkillsPageOpen && isChatVisible}
+            isActive={chat.id === activeChatId}
+            isVisible={isChatVisible}
             composerControls={composerControls}
-            onManageSkills={() => setSkillsPageOpen(true)}
           />
         </div>
       ))}
 
-      {/* Mounted once here, not inside `composerControls` — that renderer runs
-          once per mounted ChatSession (every open chat tab, not just the
-          active one, so switching tabs doesn't reset session state), so a
-          dialog embedded in its returned JSX would mount once per tab.
-          With N open chats that's N stacked backdrops, N focus traps, and N
-          copies of `id="opencode-key-dialog-description"` (invalid DOM, and
-          aria-describedby only ever resolves to the first). The open/close
-          state already lived at this level for the same reason the skills page's
-          does. */}
-      <OpenCodeKeyDialog
-        open={isOpenCodeDialogOpen}
-        onOpenChange={setOpenCodeDialogOpen}
-      />
     </div>
   );
 }

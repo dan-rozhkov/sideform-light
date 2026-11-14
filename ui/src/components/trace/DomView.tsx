@@ -13,21 +13,23 @@ type Loaded = { src: string; text: string } | { src: string; error: string };
  * same origin, no forms, no navigation); `ax` is shown as read-only text. There is no link to open it elsewhere: that
  * would run it without the sandbox.
  */
-export function DomView({ dom, stepNumber, cloudTraceId }: { dom: BrowseTraceDom; stepNumber: number; cloudTraceId?: string }) {
+export function DomView({ dom, stepNumber }: { dom: BrowseTraceDom; stepNumber: number }) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   // Per DOM view (the iframe is keyed by the snapshot): off until the viewer asks.
   const [remote, setRemote] = useState<{ id: number; on: boolean }>({ id: dom.id, on: false });
   const remoteImages = remote.id === dom.id && remote.on;
   useEffect(() => {
-    const controller = new AbortController();
-    readDomText(dom, cloudTraceId, controller.signal).then(
-      (text) => setLoaded({ src: dom.src, text }),
+    let cancelled = false;
+    readDomText(dom).then(
+      (text) => !cancelled && setLoaded({ src: dom.src, text }),
       (error: unknown) => {
-        if (!controller.signal.aborted) setLoaded({ src: dom.src, error: error instanceof Error ? error.message : String(error) });
+        if (!cancelled) setLoaded({ src: dom.src, error: error instanceof Error ? error.message : String(error) });
       },
     );
-    return () => controller.abort();
-  }, [dom, cloudTraceId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [dom]);
 
   const current = loaded && loaded.src === dom.src ? loaded : null;
   // Page address and title are plain text, never a link.

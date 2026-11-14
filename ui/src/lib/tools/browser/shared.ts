@@ -60,9 +60,9 @@ export async function callBrowserBridge(
 /**
  * The desktop bridge's `browser` surface type, pulled out once so every
  * browse_* module can name it instead of repeating the
- * `NonNullable<NonNullable<typeof window.penDesktop>["browser"]>` spelling.
+ * `NonNullable<NonNullable<typeof window.penAgentPanel>["browser"]>` spelling.
  */
-export type PenDesktopBrowser = NonNullable<NonNullable<typeof window.penDesktop>["browser"]>;
+export type PenDesktopBrowser = NonNullable<NonNullable<typeof window.penAgentPanel>["browser"]>;
 
 /**
  * Parses a browse_* handler's own JSON-string result back into an object so

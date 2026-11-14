@@ -53,19 +53,6 @@ export function applyThemeWithoutTransitions(theme: UITheme) {
   });
 }
 
-let mountedEditors = 0;
-
-/** An editor is mounted: it owns its theme. Returns the unmount cleanup (counter-safe for StrictMode). */
-export function registerMountedEditor(): () => void {
-  mountedEditors += 1;
-  let done = false;
-  return () => {
-    if (done) return;
-    done = true;
-    mountedEditors -= 1;
-  };
-}
-
 let stateSetter: ((theme: UITheme) => void) | null = null;
 let storageSyncInstalled = false;
 
@@ -79,31 +66,14 @@ export function setUIThemeStateSetter(fn: ((theme: UITheme) => void) | null) {
 }
 
 /**
- * Editor routes (`/app`, `/c/:id`, under the configured base) own their
- * theme: `ui-theme` is also written by document-driven theme application
- * (opening a document), which must not flip other editor tabs.
- */
-export function isEditorRoute(pathname: string, base: string = import.meta.env.BASE_URL || "/"): boolean {
-  const prefix = base.endsWith("/") ? base.slice(0, -1) : base;
-  if (!pathname.startsWith(prefix)) return false;
-  const path = pathname.slice(prefix.length) || "/";
-  return path === "/app" || path.startsWith("/app/") || path.startsWith("/c/");
-}
-
-/**
- * Non-editor routes (/agent panel, showcase) follow theme changes made in
- * other same-origin documents; they never write the theme. Decided at event
- * time by the current route. `storage` fires only in the OTHER documents.
- * Idempotent.
+ * Every view follows theme changes made in other same-origin documents (`storage` fires only in the
+ * OTHER documents). Idempotent.
  */
 export function installUIThemeStorageSync() {
   if (storageSyncInstalled || typeof window === "undefined") return;
   storageSyncInstalled = true;
   window.addEventListener("storage", (e: StorageEvent) => {
     if (e.storageArea !== localStorage) return;
-    // An editor owns its theme: while one is mounted, or the URL says one is
-    // about to mount (cold /app still loading), remote changes are ignored.
-    if (mountedEditors > 0 || isEditorRoute(window.location.pathname)) return;
     // key === null: localStorage.clear() in another document -> removed -> light.
     if (e.key !== null && e.key !== UI_THEME_STORAGE_KEY) return;
     const theme = parseUITheme(e.key === null ? null : e.newValue);
@@ -129,11 +99,9 @@ export function postUserTheme(theme: UITheme) {
 let broadcastSyncInstalled = false;
 
 /**
- * The user-intent channel next to the `storage` sync above. Editor routes
- * ignore `ui-theme` storage events (a document opening also writes it), so a
- * theme picked on the Settings page reaches them here instead: only
- * `source: "user"` changes are posted, and every route, editors included,
- * applies a received one as "remote" (never written back). BroadcastChannel
+ * The user-intent channel next to the `storage` sync above: only
+ * `source: "user"` changes are posted, and every view applies a received one
+ * as "remote" (never written back). BroadcastChannel
  * does not deliver to the posting instance. Idempotent.
  */
 export function installUIThemeBroadcastSync() {

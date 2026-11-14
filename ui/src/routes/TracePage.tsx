@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { EditorProviders } from "@/components/EditorProviders";
-import { TraceFilePicker } from "@/components/trace/TraceFilePicker";
 import { TraceFailure, TraceSkeleton } from "@/components/trace/TraceStates";
 import { TraceSwitcher } from "@/components/trace/TraceSwitcher";
 import { TraceViewer } from "@/components/trace/TraceViewer";
@@ -11,18 +10,14 @@ import type { TraceSource } from "@/lib/browseTraces";
 import { canListLocalTraces } from "@/lib/browseTraceList";
 import { loadBrowseTrace, traceSourceFromParam, type TraceLoadResult } from "@/lib/browseTraceLoad";
 
-/**
- * "/trace/:id": the viewer of a recorded browse run (`?src=local|cloud`,
- * default cloud; `?step=N` opens on that step). "/trace": open a trace file.
- * Must not import App, Pixi or the chat.
- */
+/** "/trace/:id": the viewer of a recorded browse run (local traces only; `?step=N` opens on that step). */
 export default function TracePage() {
   useHtmlRouteClass("route-trace");
   const { id = "" } = useParams();
   const [params] = useSearchParams();
   const source = traceSourceFromParam(params.get("src"));
   // Keyed: another trace starts from its own ?step=, not the previous one's.
-  return <EditorProviders>{id ? <RemoteTrace key={`${source}:${id}`} id={id} source={source} /> : <TraceFilePicker />}</EditorProviders>;
+  return <EditorProviders><RemoteTrace key={`${source}:${id}`} id={id} source={source} /></EditorProviders>;
 }
 
 function RemoteTrace({ id, source }: { id: string; source: TraceSource }) {
@@ -61,7 +56,7 @@ function RemoteTrace({ id, source }: { id: string; source: TraceSource }) {
   return result === null ? (
     <TraceSkeleton />
   ) : result.ok ? (
-    <TraceViewer key={result.trace.id} trace={result.trace} initialStep={stepParam} switcher={switcher} cloudTraceId={source === "cloud" ? id : undefined} />
+    <TraceViewer key={result.trace.id} trace={result.trace} initialStep={stepParam} switcher={switcher} />
   ) : (
     <TraceFailure failure={result} onRetry={retry} switcher={switcher} />
   );

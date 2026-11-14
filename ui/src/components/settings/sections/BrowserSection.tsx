@@ -1,24 +1,18 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 
 import { Switch } from "@/components/ui/switch";
-import { traceFlag } from "@/lib/browseTracePref";
-import {
-  getDesktopBrowserSettings,
-  hasDesktopBrowserSettings,
-  setDesktopBrowserSettings,
-  type DesktopBrowserSettings,
-} from "@/lib/desktopBrowserSettings";
+import { getDesktopBrowserSettings, hasDesktopBrowserSettings, setDesktopBrowserSettings } from "@/lib/desktopBrowserSettings";
 
 import { SettingsGroup, SettingsSection } from "../SettingsSection";
 
-function DesktopBrowserRows() {
-  // null until loaded: the switches stay disabled, so no wrong value flashes.
-  const [values, setValues] = useState<DesktopBrowserSettings | null>(null);
+function AdBlockRow() {
+  // null until loaded: the switch stays disabled, so no wrong value flashes.
+  const [adBlock, setAdBlock] = useState<boolean | null>(null);
 
   useEffect(() => {
     let alive = true;
     getDesktopBrowserSettings().then(
-      (v) => alive && setValues(v),
+      (v) => alive && setAdBlock(v.adBlock),
       () => {},
     );
     return () => {
@@ -26,70 +20,22 @@ function DesktopBrowserRows() {
     };
   }, []);
 
-  const toggle = (key: keyof DesktopBrowserSettings, next: boolean) => {
-    setValues((cur) => (cur ? { ...cur, [key]: next } : cur));
-    setDesktopBrowserSettings({ [key]: next }).catch(() => {
-      setValues((cur) => (cur ? { ...cur, [key]: !next } : cur));
-    });
+  const toggle = (next: boolean) => {
+    setAdBlock(next);
+    setDesktopBrowserSettings({ adBlock: next }).catch(() => setAdBlock(!next));
   };
 
   return (
-    <>
-      <SettingsGroup
-        inline
-        title="Block ads and trackers"
-        description="Block ads and tracking requests in the built-in browser. Pages load faster and the agent reads less noise."
-      >
-        <Switch
-          aria-label="Block ads and trackers"
-          checked={values?.adBlock ?? false}
-          disabled={!values}
-          onCheckedChange={(v) => toggle("adBlock", v)}
-        />
-      </SettingsGroup>
-      <SettingsGroup
-        inline
-        title="Let MCP clients control the browser"
-        description="Coding agents connected over MCP, such as Claude Code or Cursor, can open pages, read them and click in the built-in browser. They act on the sites you are signed in to there. Saved passwords are never shown to them."
-      >
-        <Switch
-          aria-label="Let MCP clients control the browser"
-          checked={values?.mcpBrowser ?? false}
-          disabled={!values}
-          onCheckedChange={(v) => toggle("mcpBrowser", v)}
-        />
-      </SettingsGroup>
-      {/* Only a shell that knows the setting returns the key; an older one gets no broken switch. */}
-      {values && "askAppAccess" in values && (
-        <SettingsGroup
-          inline
-          title="Ask before the agent controls an app"
-          description="Show a confirmation before the agent attaches to or opens a desktop app. Apps with high risk, such as Terminal and password managers, always ask."
-        >
-          <Switch
-            aria-label="Ask before the agent controls an app"
-            checked={values.askAppAccess ?? false}
-            onCheckedChange={(v) => toggle("askAppAccess", v)}
-          />
-        </SettingsGroup>
-      )}
-    </>
+    <SettingsGroup
+      inline
+      title="Block ads and trackers"
+      description="Block ads and tracking requests in the built-in browser. Pages load faster and the agent reads less noise."
+    >
+      <Switch aria-label="Block ads and trackers" checked={adBlock ?? false} disabled={adBlock === null} onCheckedChange={toggle} />
+    </SettingsGroup>
   );
 }
 
 export function BrowserSection() {
-  const allTraces = useSyncExternalStore(traceFlag.subscribe, traceFlag.get, () => false);
-
-  return (
-    <SettingsSection title="Browser">
-      <SettingsGroup
-        inline
-        title="Record traces for all runs"
-        description="Save a step-by-step trace of every browser run, not only QA tests. Screenshots of the visited pages are stored with it. On the web, traces are uploaded, and anyone with the link can open them."
-      >
-        <Switch aria-label="Record traces for all runs" checked={allTraces} onCheckedChange={traceFlag.set} />
-      </SettingsGroup>
-      {hasDesktopBrowserSettings() && <DesktopBrowserRows />}
-    </SettingsSection>
-  );
+  return <SettingsSection title="Browser">{hasDesktopBrowserSettings() && <AdBlockRow />}</SettingsSection>;
 }

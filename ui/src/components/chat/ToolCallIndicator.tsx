@@ -1,4 +1,4 @@
-import { createElement, useContext, useMemo, useState } from "react";
+import { createElement, useMemo, useState } from "react";
 import {
   CaretDownIcon,
   DownloadSimpleIcon,
@@ -11,11 +11,8 @@ import { getToolIcon } from "@/lib/toolIcons";
 import { browseToolHint } from "@/lib/tools/browser/browseToolHint";
 import { downloadFile, filenameFromUrl } from "@/lib/downloadFile";
 import { extractImageRefs } from "./extractImageUrls";
-import { LikeReferenceButton, type LikeMeta } from "./LikeReferenceButton";
 import { ImagePreview } from "./MessageList";
-import { ChatSessionIdContext } from "./ChatSessionContext";
-import { revealToolTab } from "@/lib/canvasLink/revealToolTab";
-import { useChatStore } from "@/store/chatStore";
+import { revealToolTab } from "@/lib/revealToolTab";
 import {
   Tooltip,
   TooltipTrigger,
@@ -111,7 +108,6 @@ interface ToolCallIndicatorProps {
 
 export function ToolCallIndicator({ part, statusLabel, statusError, extraPanes, hint, inputForDisplay }: ToolCallIndicatorProps) {
   const [open, setOpen] = useState(false);
-  const contextSessionId = useContext(ChatSessionIdContext);
   const toolPart = part as AnyToolPart;
   const status = getToolStatus(toolPart);
   const toolName = getToolName(part as Parameters<typeof getToolName>[0]);
@@ -124,12 +120,6 @@ export function ToolCallIndicator({ part, statusLabel, statusError, extraPanes, 
     [status, output],
   );
   const imageUrls = useMemo(() => imageRefs.map((r) => r.url), [imageRefs]);
-  const likeMeta = useMemo(() => {
-    const meta: Record<string, LikeMeta> = {};
-    for (const r of imageRefs) meta[r.url] = { sourceUrl: r.sourceUrl, tool: toolName };
-    return meta;
-  }, [imageRefs, toolName]);
-
   const downloadOne = (url: string, index: number) =>
     downloadFile(url, filenameFromUrl(url, index));
 
@@ -146,9 +136,8 @@ export function ToolCallIndicator({ part, statusLabel, statusError, extraPanes, 
     <div className="my-0.5">
       <button
         onClick={() => {
-          // In the desktop agent panel the chip also brings forward the tab its call runs in.
+          // In the agent panel the chip also brings forward the browser tab its call runs in.
           void revealToolTab({
-            sessionId: contextSessionId ?? useChatStore.getState().activeChatId,
             toolCallId: toolPart.toolCallId,
             toolName,
             input: toolPart.input,
@@ -203,8 +192,7 @@ export function ToolCallIndicator({ part, statusLabel, statusError, extraPanes, 
           <div className="flex gap-1.5 overflow-x-auto overflow-y-hidden pb-1 layers-scrollbar">
             {imageUrls.map((url, i) => (
               <div key={url} className="shrink-0 relative group">
-                <ImagePreview url={url} urls={imageUrls} index={i} likeMeta={likeMeta} />
-                <LikeReferenceButton url={url} {...likeMeta[url]} />
+                <ImagePreview url={url} urls={imageUrls} index={i} />
                 <Tooltip>
                   <TooltipTrigger
                     render={

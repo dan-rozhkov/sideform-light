@@ -1,42 +1,39 @@
-import type { BrowseTraceSavePayload, BrowseTraceSaveResult, DesktopAuthApi, DesktopDocsDiskApi, DesktopSettingsApi, DesktopWorkflowsDiskApi, PenDesktopApi } from "@/lib/desktopBridge";
 import type { BrowseTrace } from "@sideform/browser-agent/agent/session";
 import type { UIMessage } from "ai";
-import type { AgentPanelCanvasBridge } from "@/lib/canvasLink/protocol";
+import type { BrowseTraceSavePayload, BrowseTraceSaveResult, DesktopBrowserBridge, DesktopSettingsApi } from "@/lib/desktopBridge";
 
-/** Preload API of the agent panel view (docs/canvas-link.md). */
+/** Preload API of the agent panel view (`preload/agentPanel`), version 3. */
 export interface PenAgentPanelApi {
   version: number;
-  /** Desktop sign-in through the system browser; same shape as `window.penDesktop.auth`. Absent on an older shell. */
-  auth?: DesktopAuthApi;
-  /** version >= 2: the link to the canvas tabs. Absent on an older shell. */
-  canvas?: AgentPanelCanvasBridge;
-  /** version >= 2: the shell's built-in browser, the same shape as `window.penDesktop.browser`. */
-  browser?: NonNullable<PenDesktopApi["browser"]> & {
+  /** The shell's built-in browser, driven by the browse_* tools. */
+  browser?: DesktopBrowserBridge & {
+    /**
+     * Isolated browser session for one browse_agent run (parallel runs). Same methods as `browser`, each
+     * call targets the session. `sessionId` matches `^[A-Za-z0-9_-]{1,64}$`.
+     */
+    isolated?(sessionId: string): DesktopBrowserBridge;
+    /** Closes the isolated session (tabs, fixture, storage). Idempotent. */
+    closeSession?(sessionId: string): Promise<{ ok: true } | { error: string }>;
     /**
      * Makes the tab the agent drives the active one: undefined = the shared browser, a string = an
-     * isolated QA session id. Resolves false when there is no such tab (closed). Absent on an older shell.
+     * isolated session id. Resolves false when there is no such tab (closed).
      */
     revealAgentTab?(sessionId?: string): Promise<unknown>;
   };
-  /** The shell's markdown document tabs (/doc). Absent on a shell without doc tabs. */
-  docs?: AgentPanelDocsBridge;
-  /** The shell's workflow tabs (/workflow). Absent on a shell without workflow tabs. */
-  workflows?: AgentPanelWorkflowsBridge;
-  /** Opens or focuses the Settings tab. Absent on an older shell. */
+  /** Opens or focuses the Settings tab. */
   settings?: DesktopSettingsApi;
-  /** version >= 2: the shell's on-disk chat store. Absent on an older shell. Feature-detect every function. */
+  /** The shell's on-disk chat store. Feature-detect every function. */
   chats?: AgentPanelChatsBridge;
-  /** Local browse-run traces. Absent on a shell without trace tabs. */
+  /** Local browse-run traces. */
   traces?: {
     save(payload: BrowseTraceSavePayload): Promise<BrowseTraceSaveResult>;
     /** Opens or focuses the trace tab for `id`. */
     open(id: string): Promise<{ ok: boolean; error?: string }>;
-    /** Open trace tabs in strip order. Absent on a shell that cannot list them. */
+    /** Open trace tabs in strip order. */
     listTabs?(): Promise<{ tabs: { traceId: string; title: string; active: boolean }[] } | { error: string }>;
     /**
-     * The stored trace (the shape `penDesktop.traces.read` returns). `{ frames: false }` skips the frame
-     * images: `frame.src` stays the stored asset path. With `frames: true`, `frameIds` inlines only those frames (an older
-     * shell ignores it and inlines all). Absent on an older shell.
+     * The stored trace. `{ frames: false }` skips the frame images: `frame.src` stays the stored asset
+     * path. With `frames: true`, `frameIds` inlines only those frames.
      */
     read?(id: string, opts?: { frames?: boolean; frameIds?: number[] }): Promise<{ trace: BrowseTrace } | { error: string }>;
   };
@@ -64,22 +61,12 @@ export interface StoredChat {
   messages: UIMessage[];
 }
 
-/** The agent panel's chat storage (pen-editor-desktop `chats:*` IPC). */
+/** The agent panel's chat storage (`chats:*` IPC). */
 export interface AgentPanelChatsBridge {
   list(): Promise<{ chats: StoredChatMeta[] } | { error: string }>;
   read(id: string): Promise<{ chat: StoredChat | null } | { error: string }>;
   save(chat: StoredChat): Promise<{ ok: boolean; rev: number; stale?: boolean } | { error: string }>;
   remove(id: string): Promise<{ ok: boolean } | { error: string }>;
-}
-
-/** Opens or activates the doc tab that shows `docId`. Resolves after the tab exists. */
-export interface AgentPanelDocsBridge extends DesktopDocsDiskApi {
-  open(docId: string): Promise<{ ok: boolean; error?: string }>;
-}
-
-/** Opens or activates the workflow tab that shows `workflowId`. Resolves after the tab exists. */
-export interface AgentPanelWorkflowsBridge extends DesktopWorkflowsDiskApi {
-  open(workflowId: string): Promise<{ ok: boolean; error?: string }>;
 }
 
 declare global {
@@ -89,21 +76,9 @@ declare global {
      * resolves after their replies. Never rejects. The shell awaits it on quit and window close.
      */
     penChatsFlush?: () => Promise<void>;
-    /** Exposed by the desktop shell's preload ONLY inside the agent panel view. */
+    /** Exposed by the shell's preload ONLY inside the agent panel view. */
     penAgentPanel?: PenAgentPanelApi;
   }
-}
-
-/** The panel's markdown-document bridge, or undefined (web, dev build, shell without doc tabs). */
-export function getAgentPanelDocsBridge(): AgentPanelDocsBridge | undefined {
-  const docs = window.penAgentPanel?.docs;
-  return typeof docs?.open === "function" ? docs : undefined;
-}
-
-/** The panel's workflow-tab bridge, or undefined (web, dev build, shell without workflow tabs). */
-export function getAgentPanelWorkflowsBridge(): AgentPanelWorkflowsBridge | undefined {
-  const workflows = window.penAgentPanel?.workflows;
-  return typeof workflows?.open === "function" ? workflows : undefined;
 }
 
 type PanelTraces = NonNullable<PenAgentPanelApi["traces"]>;
@@ -114,55 +89,4 @@ export type TraceTabsBridge = PanelTraces & Required<Pick<PanelTraces, "listTabs
 export function getAgentPanelTraceTabsBridge(): TraceTabsBridge | undefined {
   const traces = window.penAgentPanel?.traces;
   return typeof traces?.listTabs === "function" && typeof traces.read === "function" ? (traces as TraceTabsBridge) : undefined;
-}
-
-/** The panel's canvas bridge, or undefined (web, dev build, shell older than panel version 2). */
-export function getAgentPanelCanvasBridge(): AgentPanelCanvasBridge | undefined {
-  return window.penAgentPanel?.canvas;
-}
-
-/**
- * True where the standalone /agent chat may run: the desktop shell's agent
- * panel (its preload exposes `window.penAgentPanel`) or a dev build. On the
- * public web the page is a dead end until canvas tools are routed to a canvas
- * tab (tool calls would mutate an empty in-memory scene and vanish).
- */
-export function isAgentPanelHost(): boolean {
-  return import.meta.env.DEV || typeof window.penAgentPanel !== "undefined";
-}
-
-function isRoutePath(pathname: string, name: string, base: string): boolean {
-  const prefix = base.endsWith("/") ? base.slice(0, -1) : base;
-  return pathname === `${prefix}/${name}` || pathname === `${prefix}/${name}/`;
-}
-
-/** True when `pathname` is the canvas-less /agent route (basename-aware). */
-export function isAgentRoutePath(pathname: string, base: string = import.meta.env.BASE_URL || "/"): boolean {
-  return isRoutePath(pathname, "agent", base);
-}
-
-/** True when `pathname` is the canvas-less /doc route (basename-aware). */
-export function isDocRoutePath(pathname: string, base: string = import.meta.env.BASE_URL || "/"): boolean {
-  return isRoutePath(pathname, "doc", base);
-}
-
-/** True when `pathname` is the canvas-less /workflow route (basename-aware). */
-export function isWorkflowRoutePath(pathname: string, base: string = import.meta.env.BASE_URL || "/"): boolean {
-  return isRoutePath(pathname, "workflow", base);
-}
-
-/** True when `pathname` is the canvas-less /trace/<id> or /trace (open a file) route (basename-aware). */
-export function isTraceRoutePath(pathname: string, base: string = import.meta.env.BASE_URL || "/"): boolean {
-  const prefix = base.endsWith("/") ? base.slice(0, -1) : base;
-  return pathname === `${prefix}/trace` || pathname.startsWith(`${prefix}/trace/`);
-}
-
-/** True when `pathname` is the canvas-less /settings page (basename-aware). */
-export function isSettingsRoutePath(pathname: string, base: string = import.meta.env.BASE_URL || "/"): boolean {
-  return isRoutePath(pathname, "settings", base);
-}
-
-/** True when `pathname` is the canvas-less /auth/desktop hand-off page (basename-aware). */
-export function isAuthDesktopRoutePath(pathname: string, base: string = import.meta.env.BASE_URL || "/"): boolean {
-  return isRoutePath(pathname, "auth/desktop", base);
 }

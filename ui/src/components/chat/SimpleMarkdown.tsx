@@ -1,14 +1,5 @@
 import { useMemo } from "react";
-import { openChatArtifact } from "@/lib/chatArtifacts";
-import { classifyHref } from "@/lib/docs/docLinks";
-import {
-  activateCanvasTabLink,
-  focusNodeLink,
-  handleLinkClick,
-  openDocLink,
-  openTraceLink,
-} from "@/lib/docs/docLinkActions";
-import { whenDesktopDocsReady } from "@/lib/docs/desktopDocMirror";
+import { classifyHref, openTraceLink } from "@/lib/chatLinks";
 
 interface SimpleMarkdownProps {
   content: string;
@@ -51,21 +42,6 @@ function parseBlocks(src: string): Block[] {
 const LINK_CLASS = "text-accent-primary underline underline-offset-2 cursor-pointer";
 const SAFE_EXTERNAL = /^(?:https?:|mailto:)/i;
 
-/** What a click on an internal link in a chat message opens. Never throws (handleLinkClick guards it). */
-function openChatLink(href: string, label: string): void {
-  handleLinkClick(href, {
-    // The desktop mirror fills the docs store asynchronously; wait for it so a real document is not reported missing.
-    openDoc: (id) =>
-      void whenDesktopDocsReady().then(() =>
-        openDocLink(id, (docId) => openChatArtifact({ kind: "doc", id: docId, title: label })),
-      ),
-    focusNode: focusNodeLink,
-    activateCanvasTab: activateCanvasTabLink,
-    openTrace: openTraceLink,
-    openExternal: (url) => void window.open(url, "_blank", "noopener,noreferrer"),
-  });
-}
-
 function renderLink(label: string, href: string, raw: string, key: number): React.ReactNode {
   const target = classifyHref(href);
   if (target.kind === "external") {
@@ -85,7 +61,7 @@ function renderLink(label: string, href: string, raw: string, key: number): Reac
       data-link-kind={target.kind}
       onClick={(e) => {
         e.preventDefault();
-        openChatLink(href, label);
+        openTraceLink(target.id);
       }}
       onAuxClick={(e) => e.preventDefault()}
     >

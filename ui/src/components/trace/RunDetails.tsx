@@ -4,15 +4,14 @@ import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StatusDot } from "./parts";
-import { canOpenResult, resultText } from "./resultDoc";
+import { resultText } from "./resultDoc";
 import { browserLabel, formatDuration, traceDuration } from "./traceModel";
 
-/** "Run details": duration, steps, failures, browser and start time, plus the error and (when it cannot open as a document) the result. */
+/** "Run details": duration, steps, failures, browser and start time, plus the error and the result. */
 export const RunDetails = memo(function RunDetails({ trace }: { trace: BrowseTrace }) {
   const failedSteps = trace.steps.filter((s) => !s.ok).length;
   const browser = browserLabel(trace);
-  // Without a way to open the result as a document, show it here.
-  const inlineResult = canOpenResult() ? "" : resultText(trace);
+  const inlineResult = resultText(trace);
   const problems = failedSteps > 0 || !!trace.error;
   const rows: { term: string; value: string; danger?: boolean }[] = [
     { term: "Duration", value: formatDuration(traceDuration(trace)) },

@@ -1,5 +1,4 @@
 import { parseBrowseTrace, type BrowseTrace } from "@sideform/browser-agent/agent/session";
-import { apiFetch } from "@/lib/apiBase";
 import type { TraceSource } from "@/lib/browseTraces";
 
 export type TraceLoadResult =
@@ -31,24 +30,10 @@ async function loadLocal(id: string): Promise<TraceLoadResult> {
   return validate(value.trace);
 }
 
-async function loadCloud(id: string): Promise<TraceLoadResult> {
-  const response = await apiFetch(`/api/browse/traces/${encodeURIComponent(id)}`);
-  // 400: the id is not even a valid trace id, so there is nothing to retry.
-  if (response.status === 404 || response.status === 400) return { ok: false, reason: "not-found", message: "This trace does not exist." };
-  if (!response.ok) return { ok: false, reason: "error", message: `The server answered ${response.status}.` };
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    return { ok: false, reason: "invalid", message: "The response is not JSON." };
-  }
-  return validate(body);
-}
-
 /** Loads and validates a trace. Never rejects. */
-export async function loadBrowseTrace(id: string, source: TraceSource): Promise<TraceLoadResult> {
+export async function loadBrowseTrace(id: string, _source: TraceSource = "local"): Promise<TraceLoadResult> {
   try {
-    return source === "local" ? await loadLocal(id) : await loadCloud(id);
+    return await loadLocal(id);
   } catch (error) {
     return { ok: false, reason: "error", message: error instanceof Error ? error.message : String(error) };
   }

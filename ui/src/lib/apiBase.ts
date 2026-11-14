@@ -1,10 +1,12 @@
-// Resolves backend API URLs from the same env vars the chat hook uses, so every
-// caller (chat, model list, …) agrees on where the backend lives.
+// Resolves backend API URLs for every caller (chat, model list, browse helpers).
 //
 // - VITE_AI_API_URL: explicit full chat URL (e.g. https://host/api/chat). We
 //   strip the trailing /api/chat to recover the base for other endpoints.
 // - VITE_DESIGN_AGENT_BACKEND_URL: backend base URL.
-// - neither set: same-origin (dev proxy / co-hosted).
+// - neither set: the local backend. There is no same-origin fallback: the page
+//   origin is app://sideform, which serves no API.
+export const DEFAULT_BACKEND_URL = "http://localhost:3001";
+
 function resolveBackendBase(): string {
   const explicitApiUrl = import.meta.env.VITE_AI_API_URL as string | undefined;
   if (explicitApiUrl) {
@@ -18,41 +20,19 @@ function resolveBackendBase(): string {
     return backendUrl.replace(/\/$/, "");
   }
 
-  return "";
+  return DEFAULT_BACKEND_URL;
 }
 
 export function resolveApiUrl(path: string): string {
   return `${resolveBackendBase()}${path}`;
 }
 
-// Every backend call must carry the session cookie (accounts, see
-// src/lib/auth/): the one place that sets `credentials: "include"`. Callers
-// never spell it themselves — use apiFetch (path) or apiFetchUrl (a URL that
-// was already resolved, e.g. one with a query string built elsewhere).
-// Credentialed cross-origin calls only succeed against an origin the backend
-// allowlists (CORS_ALLOWED_ORIGINS / APP_ORIGIN); same-origin is unaffected.
-//
-// The cookie is sent ONLY once GET /api/auth-config resolved `enabled: true`
-// (authConfig.ts sets the flag). Before that, or when accounts are off or the
-// config failed, requests go out exactly as they did before accounts existed:
-// a credentialed request to a backend that has no CORS credentials support
-// would otherwise be blocked by the browser.
-let credentialsEnabled = false;
-
-export function setCredentialsEnabled(enabled: boolean): void {
-  credentialsEnabled = enabled;
-}
-
-export function credentialsMode(): RequestCredentials | undefined {
-  return credentialsEnabled ? "include" : undefined;
-}
-
-export function withCredentials(init?: RequestInit): RequestInit {
-  return credentialsEnabled ? { ...init, credentials: "include" } : { ...init };
-}
+// There are no accounts and no cookies: every backend call goes out with
+// `credentials: "omit"`. Callers never spell it themselves.
+export const CREDENTIALS_MODE: RequestCredentials = "omit";
 
 export function apiFetchUrl(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(url, withCredentials(init));
+  return fetch(url, { ...init, credentials: CREDENTIALS_MODE });
 }
 
 export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -75,9 +55,3 @@ export const OFFLINE_MESSAGE =
   "Offline. AI and backend features are disabled until the connection is restored.";
 
 export const OFFLINE_SEND_TITLE = "Offline — sending is disabled";
-
-// Shown as the tooltip/aria-label on the crossed-cloud indicator beside the
-// document name while offline. Documents are local-only (no cloud sync), so
-// "offline" and "document is local-only" are the same condition here.
-export const OFFLINE_DOCUMENT_TITLE =
-  "Offline — document is available locally only";

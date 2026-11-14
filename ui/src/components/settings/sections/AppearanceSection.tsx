@@ -4,14 +4,13 @@ import { useUIThemeStore } from "@/store/uiThemeStore";
 import type { UITheme } from "@/lib/uiTheme";
 
 import { SettingsGroup, SettingsSection } from "../SettingsSection";
-import { AppIconGroup } from "../AppIconGroup";
 import { ThemePreviewCard } from "../ThemePreviewCard";
 
 export function AppearanceSection() {
   const uiTheme = useUIThemeStore((s) => s.uiTheme);
   return (
     <SettingsSection title="Appearance">
-      <SettingsGroup title="Theme" description="Applies to the editor and every open window.">
+      <SettingsGroup title="Theme" description="Applies to every open window.">
         <RadioGroup
           aria-label="Theme"
           value={uiTheme}
@@ -22,7 +21,6 @@ export function AppearanceSection() {
           <ThemePreviewCard theme="dark" label="Dark" />
         </RadioGroup>
       </SettingsGroup>
-      <AppIconGroup />
     </SettingsSection>
   );
 }

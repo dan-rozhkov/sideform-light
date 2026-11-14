@@ -3,78 +3,13 @@ import type { UIMessage } from "ai";
 import { onStorageKey } from "@/lib/storageSync";
 import { deriveChatTitle } from "@/lib/chatTitle";
 import { canUseModel, getDefaultModel } from "@/lib/chatModels";
-import { releaseCloudBrowser } from "@/lib/cloudBrowser";
-import { releaseDesktopChatApp } from "@/lib/tools/browser/bridge";
 import { useBrowseCheckpointStore } from "./browseCheckpointStore";
-import { subscribeByok } from "@/lib/byokProvider";
-import { subscribeOpenCodeKey } from "@/lib/opencodeKey";
-import { mergeChangesByEvent, type ChangeDetail } from "@/lib/memoryActivity";
 import type { AttachedImage, ChatLaunchPayload } from "@/types/chat";
 
 /** Stable empty reference so the per-session selector never returns a fresh
  * array for chats without attachments (which would re-render on every store
  * change). Never mutated — the store always writes fresh arrays. */
 export const NO_ATTACHED_IMAGES: AttachedImage[] = [];
-
-/** A UI-only transcript row for a background-review write (see
- * useAgentActivityNotes). Deliberately NOT a UIMessage: it lives beside the
- * AI SDK `messages` array and is never sent to the backend, so it cannot
- * touch the model's history or the prompt-cache prefix. */
-export type ChatActivityNote = {
-  /** Stable dedup key (derived from the activity response's latestId). */
-  id: string;
-  /** What the review changed, per activity event, from the events' `detail`.
-   * Keyed by `String(eventId)`, or `noid:<content>` for an event without a
-   * numeric id. Seeing an event again adds nothing; a new event always does.
-   * Empty/absent lists: an older backend, so the row has nothing to expand. */
-  changesByEvent?: Record<string, ChangeDetail[]>;
-} & (
-  | {
-      /** Old backends: the message the note renders after. A rolled-back id
-       * renders nothing. */
-      afterMessageId: string;
-      turnMessageId?: never;
-    }
-  | {
-      afterMessageId?: never;
-      /** The USER message that started the reviewed turn; the note renders
-       * under the last assistant message of that turn. Missing, or no
-       * assistant reply: renders nothing. */
-      turnMessageId: string;
-    }
-);
-
-/** `existing` with `incoming`'s new events added; `existing` itself when
- * every incoming event key is already there. */
-function mergeNoteChanges(existing: ChatActivityNote, incoming: ChatActivityNote): ChatActivityNote {
-  const merged = mergeChangesByEvent(existing.changesByEvent, incoming.changesByEvent);
-  if (merged === existing.changesByEvent) return existing;
-  return { ...existing, changesByEvent: merged };
-}
-
-/** Stable empty reference for chats with no activity notes. Never mutated. */
-export const NO_ACTIVITY_NOTES: ChatActivityNote[] = [];
-
-/** Copy of the liked map with `chatId` set to `next`, or dropped when empty. */
-function withChatLikes(
-  map: Record<string, LikedReference[]>,
-  chatId: string,
-  next: LikedReference[],
-): Record<string, LikedReference[]> {
-  const out = { ...map };
-  if (next.length === 0) delete out[chatId];
-  else out[chatId] = next;
-  return out;
-}
-
-/** A reference image the user hearted; `url` is always http(s). */
-export interface LikedReference {
-  url: string;
-  /** Citation page the image came from (e.g. a Mobbin screen URL). */
-  sourceUrl?: string;
-  /** Name of the tool whose result surfaced the image. */
-  tool?: string;
-}
 
 export interface ChatSummary {
   id: string;
@@ -126,10 +61,6 @@ interface ChatState {
   model: string;
   parallelCount: ParallelCount;
   chats: ChatSummary[];
-  /** UI-only background-review rows per chat. In-memory like the chats and
-   * their messages, so they do not survive a reload either. */
-  activityNotes: Record<string, ChatActivityNote[]>;
-  addActivityNote: (chatId: string, note: ChatActivityNote) => void;
   /** The chat currently shown in the panel, or null to show the chat list
    * with no chat open. */
   activeChatId: string | null;
@@ -144,14 +75,6 @@ interface ChatState {
    * goes inactive (inactive ChatSessions render null for performance).
    */
   attachedImages: Record<string, AttachedImage[]>;
-  /** Composer-attached workflow id per chat id (at most one); same lifetime as `attachedImages`. */
-  attachedWorkflowIds: Record<string, string>;
-  /**
-   * Reference images the user "liked" (hearted) in the agent's tool results,
-   * keyed by chat id. Sent to the backend inside canvasContext so the agent
-   * prioritizes them. In-memory only, like the other per-chat maps.
-   */
-  likedReferences: Record<string, LikedReference[]>;
   /**
    * The last completed turn's actual input-token count for a chat, keyed by
    * chat id — set from the `/api/chat` `finish` chunk's `messageMetadata.
@@ -171,10 +94,6 @@ interface ChatState {
 
   createChat: (opts?: { activate?: boolean; parallelCount?: ParallelCount }) => string;
   closeChat: (chatId: string) => void;
-  /** Likes the reference if absent, unlikes it (matched by url) if present. */
-  toggleLikedReference: (chatId: string, ref: LikedReference) => void;
-  removeLikedReference: (chatId: string, url: string) => void;
-  clearLikedReferences: (chatId: string) => void;
   /** Makes a chat active, restores its parallelCount, and clears unread. */
   openChat: (chatId: string) => void;
   /** Returns to the chat list — no chat is active. */
@@ -208,7 +127,6 @@ interface ChatState {
     update: AttachedImage[] | ((prev: AttachedImage[]) => AttachedImage[]),
   ) => void;
 
-  setAttachedWorkflowId: (chatId: string, workflowId: string | null) => void;
 
   setContextTokens: (chatId: string, tokens: number) => void;
   /** Drops a chat's context-usage reading — called wherever a fresh context
@@ -248,22 +166,6 @@ export function reconcileModels() {
     if (!isValid(model)) setModel(getDefaultModel());
   }
 }
-
-// Re-run reconcileModels() on EVERY change to the OpenCode key — saved or
-// removed, from the dialog or anywhere else that ever calls
-// setOpenCodeKey/clearOpenCodeKey (opencodeKey.ts is the single point of
-// truth for both). A key removal is exactly the case reconcileModels()'s own
-// comment calls out ("a user who deletes their key... would hit a 400 on
-// every turn instead of falling back"), but before this subscription that
-// guarantee only held at app boot (App.tsx's loadModels().then(...) call) —
-// nothing re-ran it when the key changed mid-session. Subscribing here,
-// rather than having OpenCodeKeyDialog's "Remove key" button call
-// reconcileModels() directly, means the guarantee holds for every future
-// caller of clearOpenCodeKey too, not just today's one button.
-subscribeOpenCodeKey(reconcileModels);
-// Same for the custom provider: removing it (or one of its models) must move
-// a selection off a `byok/` id that can no longer run.
-subscribeByok(reconcileModels);
 
 function normalizeParallelCount(count: string | null): ParallelCount {
   if (count === "2") return 2;
@@ -315,27 +217,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isExpanded: localStorage.getItem("chat-expanded") === "true",
   model: normalizeModel(localStorage.getItem("chat-model")),
   parallelCount: normalizeParallelCount(localStorage.getItem("chat-parallel-count")),
-  activityNotes: {},
-  addActivityNote: (chatId, note) => {
-    set((s) => {
-      // Dedup across every chat, not just this one: the cursor is per user,
-      // so two mounted chats with checks in flight can both read the same
-      // event, and the user should see it once.
-      // A repeat of a known id (a later check of the same turn) MERGES its
-      // changes into the existing note instead of being dropped.
-      for (const [id, list] of Object.entries(s.activityNotes)) {
-        const at = list.findIndex((n) => n.id === note.id);
-        if (at === -1) continue;
-        const merged = mergeNoteChanges(list[at], note);
-        if (merged === list[at]) return s;
-        const next = [...list];
-        next[at] = merged;
-        return { activityNotes: { ...s.activityNotes, [id]: next } };
-      }
-      const existing = s.activityNotes[chatId] ?? NO_ACTIVITY_NOTES;
-      return { activityNotes: { ...s.activityNotes, [chatId]: [...existing, note] } };
-    });
-  },
   chats: [
     makeChat(
       initialChatId,
@@ -349,8 +230,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   launchQueue: {},
   sessionActions: {},
   attachedImages: {},
-  attachedWorkflowIds: {},
-  likedReferences: {},
   contextTokens: {},
 
   toggleOpen: () => set((s) => ({ isOpen: !s.isOpen })),
@@ -406,10 +285,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       abortControllers,
       launchQueue,
       attachedImages,
-      attachedWorkflowIds,
-      likedReferences,
       contextTokens,
-      activityNotes,
     } = get();
 
     // Abort any ongoing request for this chat
@@ -417,11 +293,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (controller) {
       controller.abort();
     }
-    // Deleting a chat ends its cloud browser session (fire-and-forget;
-    // releaseCloudBrowser never rejects and is a no-op without a handle).
-    void releaseCloudBrowser(chatId);
-    // It also ends the desktop app this chat launched (no-op without one).
-    releaseDesktopChatApp(chatId);
     useBrowseCheckpointStore.getState().deleteChat(chatId);
 
     // If only one chat remains, replace it with a new empty chat
@@ -435,14 +306,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete newLaunchQueue[chatId];
       const newAttachedImages = { ...attachedImages };
       delete newAttachedImages[chatId];
-      const newAttachedWorkflowIds = { ...attachedWorkflowIds };
-      delete newAttachedWorkflowIds[chatId];
-      const newLikedReferences = { ...likedReferences };
-      delete newLikedReferences[chatId];
       const newContextTokens = { ...contextTokens };
       delete newContextTokens[chatId];
-      const newActivityNotes = { ...activityNotes };
-      delete newActivityNotes[chatId];
       set({
         chats: [makeChat(newId, nextChatTitle([]), model, parallelCount)],
         // Only jump into the replacement chat if the user was already looking
@@ -454,10 +319,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         abortControllers: newControllers,
         launchQueue: newLaunchQueue,
         attachedImages: newAttachedImages,
-        attachedWorkflowIds: newAttachedWorkflowIds,
-        likedReferences: newLikedReferences,
         contextTokens: newContextTokens,
-        activityNotes: newActivityNotes,
       });
       return;
     }
@@ -467,16 +329,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const newLaunchQueue = { ...launchQueue };
     const newAttachedImages = { ...attachedImages };
     const newContextTokens = { ...contextTokens };
-    const newLikedReferences = { ...likedReferences };
-    delete newLikedReferences[chatId];
     delete newControllers[chatId];
     delete newLaunchQueue[chatId];
     delete newAttachedImages[chatId];
-    const newAttachedWorkflowIds = { ...attachedWorkflowIds };
-    delete newAttachedWorkflowIds[chatId];
     delete newContextTokens[chatId];
-    const newActivityNotes = { ...activityNotes };
-    delete newActivityNotes[chatId];
 
     // Closing the open chat returns to the chat list rather than jumping to a
     // sibling chat.
@@ -488,36 +344,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       abortControllers: newControllers,
       launchQueue: newLaunchQueue,
       attachedImages: newAttachedImages,
-      attachedWorkflowIds: newAttachedWorkflowIds,
-      likedReferences: newLikedReferences,
       contextTokens: newContextTokens,
-      activityNotes: newActivityNotes,
-    });
-  },
-
-  toggleLikedReference: (chatId, ref) => {
-    set((s) => {
-      const prev = s.likedReferences[chatId] ?? [];
-      const next = prev.some((r) => r.url === ref.url)
-        ? prev.filter((r) => r.url !== ref.url)
-        : [...prev, ref];
-      return { likedReferences: withChatLikes(s.likedReferences, chatId, next) };
-    });
-  },
-
-  removeLikedReference: (chatId, url) => {
-    set((s) => {
-      const prev = s.likedReferences[chatId];
-      if (!prev?.some((r) => r.url === url)) return s;
-      const next = prev.filter((r) => r.url !== url);
-      return { likedReferences: withChatLikes(s.likedReferences, chatId, next) };
-    });
-  },
-
-  clearLikedReferences: (chatId) => {
-    set((s) => {
-      if (!(chatId in s.likedReferences)) return s;
-      return { likedReferences: withChatLikes(s.likedReferences, chatId, []) };
     });
   },
 
@@ -668,16 +495,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         nextMap[chatId] = next;
       }
       return { attachedImages: nextMap };
-    });
-  },
-
-  setAttachedWorkflowId: (chatId, workflowId) => {
-    set((s) => {
-      if ((s.attachedWorkflowIds[chatId] ?? null) === workflowId) return s;
-      const next = { ...s.attachedWorkflowIds };
-      if (workflowId === null) delete next[chatId];
-      else next[chatId] = workflowId;
-      return { attachedWorkflowIds: next };
     });
   },
 

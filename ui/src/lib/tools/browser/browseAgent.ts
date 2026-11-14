@@ -10,7 +10,6 @@ import {
   createFixtureSetup,
   unmatchedMocks,
   createRunCheckpoint,
-  singleUseTool,
   QA_VERDICT_TOOL,
   QA_VERDICT_FIELD,
   qaVerdictHooks,
@@ -49,14 +48,13 @@ import { apiFetch, resolveApiUrl } from "@/lib/apiBase";
 import { combineSignals } from "@/lib/abortSignals";
 import { createChatTransport, CLIENT_CAPABILITIES } from "@/lib/chatTransport";
 import type { ToolHandler } from "../../toolRegistry";
-import { CLOSE_SESSION_TIMEOUT_MS, closeBrowserSession, getBrowserBridge, isDesktopBrowserAvailable, type BrowserBridge } from "./bridge";
-import { APP_NEEDS_DESKTOP_ERROR } from "./browseOpen";
-import { peBase, safeParseObject } from "./shared";
-import { APP_LAUNCH_ALLOWANCE_MS, appArgOf, appSessionFor, desktopAppsAvailable, isIsolatedQaCall, rememberRunSession, runSessionId } from "./isolation";
+import { CLOSE_SESSION_TIMEOUT_MS, closeBrowserSession, getBrowserBridge, type BrowserBridge } from "./bridge";
+import { peBase } from "./shared";
+import { isIsolatedQaCall, rememberRunSession, runSessionId } from "./isolation";
 import { acquireBrowseSlot } from "@/lib/browseRunLimiter";
 import { tracesForAllRuns } from "@/lib/browseTracePref";
 import { canSaveBrowseTrace, saveBrowseTrace } from "@/lib/browseTraces";
-import { traceLinkHref } from "@/lib/docs/docLinks";
+import { traceLinkHref } from "@/lib/traceOpener";
 import { useBrowseAgentPhaseStore } from "@/store/browseAgentPhaseStore";
 import { checkpointForModel, useBrowseCheckpointStore } from "@/store/browseCheckpointStore";
 
@@ -79,9 +77,6 @@ import { checkpointForModel, useBrowseCheckpointStore } from "@/store/browseChec
  * so is browse_agent itself (toolCallQueue.ts) — otherwise the nested calls
  * would deadlock behind their own parent.
  *
- * A non-QA `app` run on such a shell gets a per-run app session instead (no slot, closed in `finally`); QA-only
- * behaviour (recording key, `isolated` checkpoints, resume gate, judge reserve) keys off `qaOn`, never `runSession` alone.
- *
  * A `qa: true` run on a desktop shell with `browser.isolated` gets its own
  * browser (the cloud browser has no isolation; its QA runs stay sequential in
  * the shared session): the nested context carries
@@ -103,8 +98,6 @@ export {
 export type { BrowseAgentStatus } from "@sideform/browser-agent/agent/session";
 
 const NESTED_ID_MAX_CHARS = 200;
-/** Allowed only when the caller passed `capture: true` (the user's direct ask). */
-const CAPTURE_TOOL = "browse_capture";
 /** A normal tool (callable repeatedly: two-step sign-in), allowed only when the bridge the run uses has it. */
 const FILL_LOGIN_TOOL = "browse_fill_login";
 /**
@@ -424,7 +417,7 @@ export function nestedChatId(sessionId: string | undefined, toolCallId: string |
 export const browseAgent: ToolHandler = async (args, context) => {
   // The tool's outer timeout started now: the QA judge has to end before it.
   const outerEnd =
-    Date.now() + (context?.timeoutMs ?? BROWSE_AGENT_OUTER_TIMEOUT_MS + (appArgOf(args) ? APP_LAUNCH_ALLOWANCE_MS : 0));
+    Date.now() + (BROWSE_AGENT_OUTER_TIMEOUT_MS);
   // Stops a started judge request when anything throws after it started (the body or the cleanup): nobody awaits it then.
   const judgeAbort = new AbortController();
   let outcome: RunOutcome;
@@ -444,30 +437,7 @@ const runWithCleanup = async (
   outerEnd: number,
   judgeSignal: AbortSignal,
 ): Promise<RunOutcome> => {
-  // Confirm + launch of an app must not eat the agent's step budget: the inner deadline grows by the same allowance as the outer timeout.
-  const appAllowance = appArgOf(args) ? APP_LAUNCH_ALLOWANCE_MS : 0;
-  if (!isIsolatedQaCall(args)) {
-    // A native-app run gets its own per-run app session (no slot): the shell binds an app per session key, so
-    // concurrent runs (two chats, or two runs of one chat) each drive their own app instead of one panel-wide binding.
-    // The session is closed at the end: that frees the app binding and any browser a stray open{url} created in it.
-    const appSession = appSessionFor(args, context?.sessionId, context?.toolCallId);
-    // Known limit: an app the chat already bound in the shared scope with a direct browse_open {app} is attached again here (own binding).
-    // With a session the run ends with clearActEmulation + releaseApp (inside runBrowseAgent) and closeBrowserSession, each bounded: the tail must fit the outer timeout.
-    const appTailMs = CLEAR_EMULATION_TIMEOUT_MS + RELEASE_APP_TIMEOUT_MS + CLOSE_SESSION_TIMEOUT_MS;
-    const appDeadlineMs = appAllowance ? BROWSE_AGENT_DEADLINE_MS + appAllowance - (appSession ? appTailMs : 0) : undefined;
-    const outcome = () => runBrowseAgent(args, context, appSession, appDeadlineMs, outerEnd, judgeSignal);
-    if (!appSession) return outcome();
-    if (context?.toolCallId) rememberRunSession(context.toolCallId, appSession);
-    try {
-      return await outcome();
-    } finally {
-      try {
-        await closeBrowserSession(appSession);
-      } finally {
-        resetLoopGuard(appSession);
-      }
-    }
-  }
+  if (!isIsolatedQaCall(args)) return runBrowseAgent(args, context, undefined, undefined, outerEnd, judgeSignal);
   const waitStart = Date.now();
   const slot = await acquireBrowseSlot(context?.signal ?? new AbortController().signal);
   if (!slot) return JSON.stringify({ status: "aborted", steps: 0 });
@@ -481,11 +451,11 @@ const runWithCleanup = async (
     const checksReserve = args.checks !== undefined && args.checks !== null ? QA_FINAL_CHECKS_TIMEOUT_MS : 0;
     // A QA run on a bridge that serves the request log drains it once more after the loop.
     const flushReserve =
-      args.qa === true && canSaveBrowseTrace(isDesktopBrowserAvailable()) && typeof getBrowserBridge(context?.sessionId)?.requests === "function"
+      args.qa === true && canSaveBrowseTrace() && typeof getBrowserBridge(context?.sessionId)?.requests === "function"
         ? TRACE_FLUSH_RESERVE_MS
         : 0;
     const deadlineMs =
-      BROWSE_AGENT_DEADLINE_MS + appAllowance - (Date.now() - waitStart) - CHECKPOINT_CALL_TIMEOUT_MS - CLOSE_SESSION_TIMEOUT_MS - checksReserve - flushReserve;
+      BROWSE_AGENT_DEADLINE_MS - (Date.now() - waitStart) - CHECKPOINT_CALL_TIMEOUT_MS - CLOSE_SESSION_TIMEOUT_MS - checksReserve - flushReserve;
     if (deadlineMs < MIN_ISOLATED_RUN_MS) {
       return JSON.stringify({
         status: "error",
@@ -541,14 +511,6 @@ async function clearActEmulation(bridge: BrowserBridge | undefined): Promise<voi
   await withTimeout(async () => void (await bridge?.clearActEmulation?.()), CLEAR_EMULATION_TIMEOUT_MS, undefined);
 }
 
-/** Bound of the run-end app release. */
-const RELEASE_APP_TIMEOUT_MS = 5_000;
-
-/** Hands the browser back from an app a run launched (desktop `releaseApp`). Bounded; never changes the result. */
-async function releaseApp(bridge: BrowserBridge | undefined): Promise<void> {
-  await withTimeout(async () => void (await bridge?.releaseApp?.()), RELEASE_APP_TIMEOUT_MS, undefined);
-}
-
 /**
  * A page screenshot as a trace frame. The recorder normalizes the image itself. The screenshot drains the page's pending
  * JS dialogs like every controller command: they go back as `dialogs`, for the recorder to hand to the tool output.
@@ -573,15 +535,6 @@ function withCarriedDialogs<T>(output: T, dialogs: readonly unknown[] | undefine
   return { ...output, dialogs: [...(Array.isArray(own) ? own : []), ...dialogs] };
 }
 
-/** The trace label of a run's `app` (a name or a path): "/Applications/Orca.app" → "Orca". */
-export function appLabelOf(app: string): string {
-  const last = app.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? app;
-  return last.replace(/\.app$/i, "") || app;
-}
-
-/** A run whose `app` this run launched (set before the launch call: a launch that timed out may still have started). */
-type AppRun = { launched: boolean };
-
 const runBrowseAgent = async (
   args: Record<string, unknown>,
   context: Parameters<ToolHandler>[1],
@@ -590,16 +543,11 @@ const runBrowseAgent = async (
   outerEnd: number,
   judgeSignal: AbortSignal,
 ): Promise<RunOutcome> => {
-  const appRun = { launched: false };
   try {
-    return await runBrowseAgentBody(args, context, runSession, deadlineMs, outerEnd, judgeSignal, appRun);
+    return await runBrowseAgentBody(args, context, runSession, deadlineMs, outerEnd, judgeSignal);
   } finally {
     const bridge = getBrowserBridge(context?.sessionId, runSession);
     await clearActEmulation(bridge);
-    // Only an app THIS run launched: one the chat opened with browse_open stays.
-    // Also when the launch is still pending (timeout, abort): the desktop's
-    // releaseApp cancels a pending launch, so calling it here is correct.
-    if (appRun.launched) await releaseApp(bridge);
   }
 };
 
@@ -610,23 +558,10 @@ const runBrowseAgentBody = async (
   deadlineMs: number | undefined,
   outerEnd: number,
   judgeSignal: AbortSignal,
-  appRun: AppRun,
 ): Promise<RunOutcome> => {
   const goal = typeof args.goal === "string" ? args.goal.trim() : "";
   if (!goal) return JSON.stringify(goalRequiredResult());
   const url = typeof args.url === "string" ? args.url.trim() : "";
-  const app = appArgOf(args) ?? "";
-  if (app) {
-    const refuse = (error: string) => JSON.stringify({ status: "error", steps: 0, error });
-    if (url || (args.setup !== undefined && args.setup !== null) || (args.resume !== undefined && args.resume !== null)) {
-      return refuse("`app` cannot be combined with url, setup or resume: the app is the start, not a page.");
-    }
-    if (!desktopAppsAvailable()) return refuse(APP_NEEDS_DESKTOP_ERROR);
-  }
-  // The gate: browse_capture reaches the subagent only on the main agent's
-  // explicit `capture: true` (spec 2026-10-15-browse-capture-design.md).
-  const captureAllowed = args.capture === true;
-
   // QA mode: the nested run gets the QA prompt and `qa_verdict`; the verdict ends it.
   // A QA run with `resume` is allowed only when it is isolated (it continues a
   // scenario in its own browser); in the shared browser it stays a fresh scenario.
@@ -662,13 +597,12 @@ const runBrowseAgentBody = async (
   }
   const recorder = qaOn ? createStepRecorder() : undefined;
   // The run trace (spec 2026-10-20-browse-run-trace-design.md): steps, a frame after each page-changing step, QA at the end.
-  const desktopRun = isDesktopBrowserAvailable();
   // QA runs keep a trace; so does every run when the "record traces for all runs" setting is on. A desktop shell
   // without a save bridge (older) cannot keep one either: no recorder, so no screenshots are taken.
-  const traceRecorder = (qaOn || tracesForAllRuns()) && canSaveBrowseTrace(desktopRun)
+  const traceRecorder = (qaOn || tracesForAllRuns()) && canSaveBrowseTrace()
     ? createBrowseTraceRecorder({
         goal,
-        labels: { browser: desktopRun ? "desktop" : "cloud", mode: qaOn ? "qa" : "browse", ...(app ? { app: appLabelOf(app) } : {}) },
+        labels: { browser: "desktop", mode: qaOn ? "qa" : "browse" },
         ...(typeof bridge?.screenshot === "function" ? { capture: () => captureTraceFrame(bridge) } : {}),
         // DOM snapshot of failed steps (viewer: Screenshot / DOM). Needs a bridge that can read the page at all.
         ...(bridge && typeof bridge.capture === "function" ? { captureDom: createTraceDomSource(bridge) } : {}),
@@ -680,7 +614,7 @@ const runBrowseAgentBody = async (
 
   // Playwright export: only a run that keeps a trace records the repro captures. The run's setup (a fixture, or the app).
   if (traceRecorder) {
-    const reproSetup = app ? { app: true } : args.setup && typeof args.setup === "object" && !Array.isArray(args.setup) ? args.setup : undefined;
+    const reproSetup = args.setup && typeof args.setup === "object" && !Array.isArray(args.setup) ? args.setup : undefined;
     traceRecorder.setRepro({ setup: reproSetup as Parameters<typeof traceRecorder.setRepro>[0]["setup"] });
   }
   const reproOn = !!traceRecorder;
@@ -702,16 +636,6 @@ const runBrowseAgentBody = async (
   // Lazy: useDesignChat imports toolRegistry, which imports this module.
   const { executeToolCall } = await import("@/hooks/useDesignChat");
 
-  // Every screenshot the sub-agent put on the canvas, in order: the parent cannot otherwise tell which image is which.
-  const placed: { nodeId: string; url?: string }[] = [];
-  const notePlacedScreenshot = (toolName: string, output: unknown): void => {
-    if (toolName !== "browse_screenshot" || typeof output !== "string" || !output.includes('"placedNodeId"')) return;
-    const shot = safeParseObject(output);
-    if (typeof shot.placedNodeId === "string") {
-      placed.push({ nodeId: shot.placedNodeId, ...(typeof shot.url === "string" ? { url: shot.url } : {}) });
-    }
-  };
-
   const session = createBrowseAgentSession({
     signal: context?.signal,
     ...(deadlineMs !== undefined ? { deadlineMs } : {}),
@@ -719,19 +643,6 @@ const runBrowseAgentBody = async (
       ...(loginAllowed ? { [FILL_LOGIN_TOOL]: {} } : {}),
       // qa_verdict is single-use and ends the run; qa_assert is neither (no hooks).
       ...(qaOn ? { [QA_VERDICT_TOOL]: { ...qaVerdictHooks() }, ...(assertAllowed ? { [QA_ASSERT_TOOL]: {} } : {}) } : {}),
-      ...(captureAllowed
-      ? {
-          [CAPTURE_TOOL]: singleUseTool({
-            name: CAPTURE_TOOL,
-            isSuccess: (p) => typeof p.nodeId === "string",
-            fields: (p) => ({
-              captured: { nodeId: p.nodeId, width: p.width, height: p.height, url: p.url, title: p.title },
-            }),
-            doneMessage: (p) =>
-              `browse_capture already ran in this task; the page is on the canvas as ${String(p.nodeId) || "an existing node"}.`,
-          }),
-        }
-      : {}),
     },
     executeTool: async (call, { signal }) => {
       // Guard-refused calls never reach here, so the trail holds model calls that ran.
@@ -756,7 +667,6 @@ const runBrowseAgentBody = async (
                 "browse_agent",
               );
         end?.({ output });
-        notePlacedScreenshot(call.toolName, output);
         // Awaited: the step frame must show the page right after this step.
         const carried = await traceEnd?.({ output }).catch(() => undefined);
         // The trace screenshot drained dialogs the model has not seen yet: put them into its result.
@@ -777,11 +687,9 @@ const runBrowseAgentBody = async (
       // header is sent.
       body: () => ({
         agentMode: "browse",
-        ...(captureAllowed ? { browseCapture: true } : {}),
         ...(qaOn ? { browseQa: true } : {}),
         // Per run, from the bridge this run uses: the static capability may differ (isolated session, older shell).
-        // canvasTabs off: the sub-agent has no chat-to-canvas binding, so it is never offered open_canvas_tab.
-        clientCapabilities: { ...CLIENT_CAPABILITIES, canvasTabs: false, browseAssert: assertAllowed },
+        clientCapabilities: { ...CLIENT_CAPABILITIES, browseAssert: assertAllowed },
         ...(loginAllowed ? { browseLogin: true } : {}),
         userId: getRequestUserId(),
       }),
@@ -819,8 +727,7 @@ const runBrowseAgentBody = async (
   const checkpointChat = parentSessionId;
   // An isolated run has its own browser and journal: its session id is the key,
   // so parallel isolated runs each record.
-  // A non-QA app run records no checkpoint at all (`openCheckpoint(!app)` below), so its key is never used.
-  const recordingKey = (qaOn ? runSession : undefined) ?? (isDesktopBrowserAvailable() ? DESKTOP_RECORDING_KEY : checkpointChat);
+  const recordingKey = (qaOn ? runSession : undefined) ?? DESKTOP_RECORDING_KEY;
 
   // Checkpoint (spec 2026-10-16-checkpoint-design.md): the package's
   // createRunCheckpoint owns the lifecycle (bounded start, capture conditions,
@@ -957,7 +864,7 @@ const runBrowseAgentBody = async (
     return unmatched.length > 0 ? { ...q, unmatchedMocks: unmatched } : q;
   };
   const toJson = (result: BrowseAgentResult, extraIn: Record<string, unknown>, checkpoint: unknown, qa: Awaited<ReturnType<typeof buildQa>>): string => {
-    const extra = placed.length ? { ...extraIn, placed } : extraIn;
+    const extra = extraIn;
     if (!recorder) return JSON.stringify({ ...result, ...extra, ...(checkpoint ? { checkpoint } : {}) });
     // Key order as the package's runBrowseAgent: `qa` before `error` and `setupStage`; the verdict field is folded into `qa`.
     const { error, setupStage, [QA_VERDICT_FIELD]: _verdict, ...rest } = result as BrowseAgentResult & Record<string, unknown>;
@@ -991,57 +898,19 @@ const runBrowseAgentBody = async (
           ...(typeof result.error === "string" ? { error: result.error } : {}),
           ...(finalQa ? { qa: finalQa } : {}),
         }),
-        desktopRun,
         { outerEnd, signal },
       );
       return toJson(result, saved ? { ...extra, trace: { ...saved, href: traceLinkHref(saved.id, saved.source) } } : extra, checkpoint, finalQa);
     };
 
   if (!hasSetup && !hasResume) {
-    // An external app cannot be resumed from a browser journal: no checkpoint for an app run.
-    const cp = openCheckpoint(!app);
+    const cp = openCheckpoint(true);
     try {
       await cp.begin();
       const result = await session.run(
         goal,
         driver,
-        app
-          ? {
-              toolCallId,
-              // The pre-open for an app: browse_open { app } through the same executor as the model's own call.
-              setup: async ({ signal: runSignal }) => {
-                appRun.launched = true;
-                const openInput = { app };
-                // The launch is the trace's first step (it skips executeTool, the model's own path), with a frame of the app window.
-                let traceEnd: ReturnType<NonNullable<typeof traceRecorder>["onToolCall"]> | undefined;
-                try {
-                  // The session signal: it also aborts at the run deadline, so no frame is taken for a launch that outlived the run.
-                  traceEnd = traceRecorder?.onToolCall({ toolName: "browse_open", input: openInput }, { signal: runSignal });
-                } catch {
-                  // An observer must not change the run.
-                }
-                let opened: string;
-                try {
-                  opened = await executeToolCall(
-                    "browse_open",
-                    openInput,
-                    { sessionId: parentSessionId, ...browserContext, toolCallId: `${toolCallId ?? "browse_agent"}:open`, signal },
-                    "browse_agent",
-                  );
-                } catch (err) {
-                  await traceEnd?.({ error: err }).catch(() => undefined);
-                  throw err;
-                }
-                const parsedOpen = parseJsonObject(opened);
-                if (typeof parsedOpen.error === "string") {
-                  await traceEnd?.({ error: parsedOpen.error }).catch(() => undefined);
-                  throw new SetupError("open", parsedOpen.error);
-                }
-                const carried = await traceEnd?.({ output: opened }).catch(() => undefined);
-                return withCarriedDialogs(opened, carried?.dialogs);
-              },
-            }
-          : { url: url || undefined, toolCallId },
+        { url: url || undefined, toolCallId },
       );
       await finishTraceCapture(result);
       const qa = await buildQa(result);

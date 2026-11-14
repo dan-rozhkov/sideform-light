@@ -80,7 +80,7 @@ const QA_LABELS: Record<string, string> = {
 function traceOf(v: unknown): SavedTrace | undefined {
   const t = asRecord(v);
   if (!t || typeof t.id !== "string" || t.id === "") return undefined;
-  return t.source === "local" || t.source === "cloud" ? { id: t.id, source: t.source } : undefined;
+  return t.source === "local" ? { id: t.id, source: t.source } : undefined;
 }
 
 /**

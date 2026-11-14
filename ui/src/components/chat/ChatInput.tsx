@@ -1,48 +1,30 @@
-import { useState, useRef, useCallback, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useRef, useCallback, useEffect, type ReactNode } from "react";
 import {
   PaperPlaneRightIcon,
   StopIcon,
   XIcon,
-  CodeIcon,
 } from "@/components/icons";
-import { toast } from "sonner";
 import type { AttachedImage, ChatLaunchPayload } from "@/types/chat";
 import { useChatStore, NO_ATTACHED_IMAGES } from "@/store/chatStore";
 import {
   useCanSendImages,
   useModelSupportsVision,
 } from "@/hooks/useImageSupport";
-import { useSelectionContext } from "@/hooks/useSelectionContext";
-import { useEmbedElementContext } from "@/hooks/useEmbedElementContext";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { OFFLINE_SEND_TITLE } from "@/lib/apiBase";
 import {
   downscaleImageDataUrl,
   MAX_ATTACHMENT_SIDE,
 } from "@/lib/tools/screenshotDownscale";
-import { NodeIcon } from "@/components/layers/LayerIcons";
-import { WorkflowChip } from "@/components/workflow/WorkflowPicker";
 import { AttachMenu } from "./AttachMenu";
-import { useWorkflowById } from "@/components/workflow/useWorkflowList";
-import { getWorkflow } from "@/lib/workflows/workflowStore";
-import { workflowToPrompt } from "@/lib/workflows/workflowMarkdown";
 import {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
-import { SlashCommandMenu } from "./SlashCommandMenu";
-import type { SlashCommand } from "./slashCommands";
-import { LikedReferencesStrip } from "./LikedReferencesStrip";
 
 // Maximum images per message (mirrored by MAX_IMAGE_PARTS on the backend).
 const MAX_IMAGES = 4;
-// A marquee can select hundreds of nodes; the chips are a reference hint, not
-// message content (the ids ride in canvasContext either way), so the strip is
-// capped and the rest collapse into a "+N more" chip instead of growing the
-// composer without bound.
-const MAX_SELECTION_CHIPS = 6;
-
 interface ChatInputProps {
   /** Owning chat session; keys the composer's persisted image attachments. */
   sessionId: string;
@@ -65,15 +47,6 @@ interface ChatInputProps {
    * either effect on close/reopen. */
   shouldFocus?: boolean;
   renderFooter?: (props: ChatInputFooterProps) => ReactNode;
-  /** Opens the "Manage skills" modal — forwarded to the slash menu's footer
-   * row. Omitted in contexts without skill management. */
-  onManageSkills?: () => void;
-  /** Predicted next message, shown as ghost text while the input is empty;
-   * Tab / ArrowRight accepts it into the input. */
-  suggestion?: string | null;
-  /** Called when the user types or accepts, so the parent drops the
-   * suggestion for good (it must not reappear after they delete their text). */
-  onDismissSuggestion?: () => void;
 }
 
 interface ChatInputFooterProps {
@@ -81,7 +54,7 @@ interface ChatInputFooterProps {
   canSubmit: boolean;
   isLoading: boolean;
   stop: () => void;
-  /** The ready "Attach" paperclip menu (image + workflows). */
+  /** The ready "Attach image" button. */
   attachMenu: ReactNode;
 }
 
@@ -94,12 +67,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-// Small top-right "x" overlay for a dismissible manually-attached image
-// chip. Selected-canvas-node chips (`selectionContext` below) never get one:
-// the node id they represent keeps riding along in canvasContext regardless
-// of anything dismissed in the composer, so a "remove" affordance on them
-// would be dead — clicking it could never actually take the id out of
-// context.
+// Small top-right "x" overlay for a dismissible attached image chip.
 function RemoveChipButton({
   label,
   onRemove,
@@ -153,9 +121,6 @@ export function ChatInput({
   awaitingAnswer,
   shouldFocus = false,
   renderFooter,
-  onManageSkills,
-  suggestion,
-  onDismissSuggestion,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -171,19 +136,6 @@ export function ChatInput({
     [setSessionAttachedImages, sessionId],
   );
   const [isDragOver, setIsDragOver] = useState(false);
-  // At most one attached workflow, per chat in chatStore.attachedWorkflowIds (not
-  // persisted). The chip shows what is stored right now; the send reads it fresh again.
-  const attachedWorkflowId = useChatStore((s) => s.attachedWorkflowIds[sessionId] ?? null);
-  const setSessionAttachedWorkflowId = useChatStore((s) => s.setAttachedWorkflowId);
-  const setAttachedWorkflowId = useCallback(
-    (id: string | null) => setSessionAttachedWorkflowId(sessionId, id),
-    [setSessionAttachedWorkflowId, sessionId],
-  );
-  const attachedWorkflow = useWorkflowById(attachedWorkflowId);
-  // The slash query the user explicitly dismissed the menu for. Openness is
-  // derived from the input (see `showSlashMenu` below), so only the dismissal
-  // — a real user event — needs to be remembered.
-  const [dismissedSlashQuery, setDismissedSlashQuery] = useState<string | null>(null);
   const model = useChatStore((s) => s.model);
   // Whether an image may be attached at all — the selected model's native
   // vision OR the backend's auxiliary vision fallback. `nativeVision`
@@ -202,27 +154,12 @@ export function ChatInput({
     if (shouldFocus) textareaRef.current?.focus();
   }, [shouldFocus]);
 
-  // Selected canvas nodes, shown above the composer as context chips. No
-  // screenshot is ever attached for these — the node's id already rides
-  // along in canvasContext's selectedIds/selectedNodes (see
-  // buildCanvasContext in useDesignChat.ts), and the agent can call
-  // get_screenshot itself if it needs pixels. These chips therefore carry no
-  // message content of their own: they don't occupy an attachment slot,
-  // don't count toward MAX_IMAGES, and can't be individually dismissed (the
-  // id keeps riding in canvasContext regardless).
-  const selectionContext = useSelectionContext(sessionId);
-  // The element the user last picked inside an embed (if any and still
-  // live) — display-only, mirroring what's already riding in
-  // canvasContext.selectedEmbedElement (see useDesignChat.ts). Not part of
-  // attachments/images: it's not message content, just an indicator.
-  const embedElementContext = useEmbedElementContext(sessionId);
-
   const canSubmit =
     isOnline &&
     // Block sending while an ask_user question is unanswered so the answer
     // isn't stranded (covers both the built-in send button and renderFooter).
     !awaitingAnswer &&
-    (input.trim().length > 0 || attachedImages.length > 0 || attachedWorkflow !== null);
+    (input.trim().length > 0 || attachedImages.length > 0);
   const imageDisabledReason = !canAttachImages
     ? "Selected model can't read images"
     : attachedImages.length >= MAX_IMAGES
@@ -234,35 +171,8 @@ export function ChatInput({
       imageDisabledReason={imageDisabledReason}
       imageHint={imageHint}
       onPickImage={() => fileInputRef.current?.click()}
-      selectedWorkflowId={attachedWorkflowId}
-      onSelectWorkflow={setAttachedWorkflowId}
     />
   );
-
-  // Extract slash query from input (e.g. "/aud" -> "aud", "/" -> "")
-  const slashQuery = useMemo(() => {
-    const match = input.match(/^\/(\S*)$/);
-    return match ? match[1] : null;
-  }, [input]);
-
-  // Derived, not mirrored: the menu is open for any bare slash query except
-  // the one it was dismissed for. Editing the query past the dismissed one
-  // reopens it, exactly as when this was an effect writing state.
-  const showSlashMenu = slashQuery !== null && slashQuery !== dismissedSlashQuery;
-
-  const handleSlashSelect = useCallback(
-    (cmd: SlashCommand) => {
-      // The trailing space makes this no longer a bare slash query, so the
-      // menu closes on its own.
-      setInput(`/${cmd.name} `);
-      textareaRef.current?.focus();
-    },
-    [setInput]
-  );
-
-  const handleSlashClose = useCallback(() => {
-    setDismissedSlashQuery(slashQuery);
-  }, [slashQuery]);
 
   const resize = useCallback(() => {
     const ta = textareaRef.current;
@@ -281,20 +191,9 @@ export function ChatInput({
     ta.style.overflowY = full > 96 ? "auto" : "hidden";
   }, []);
 
-  // Set when a suggestion is accepted; the next input change moves the caret
-  // to the end once the textarea holds the new value.
-  const caretToEndRef = useRef(false);
   useEffect(() => {
     resize();
-    const ta = textareaRef.current;
-    if (ta && caretToEndRef.current) {
-      caretToEndRef.current = false;
-      ta.setSelectionRange(ta.value.length, ta.value.length);
-    }
-  }, [input, suggestion, resize]);
-
-  const suggestionId = `${formId}-suggestion`;
-  const showSuggestion = input === "" && !awaitingAnswer && !!suggestion;
+  }, [input, resize]);
 
   // Re-measure when the composer becomes visible again. While hidden behind
   // `display: none` (mobile panel closed), `scrollHeight` reads 0, so a
@@ -335,24 +234,8 @@ export function ChatInput({
       // disabled while offline, but Enter bypasses it. Calling onSubmit
       // unconditionally lets its offline guard (in useDesignChat) surface a
       // visible per-message error instead of Enter being a silent no-op.
-      if ((input.trim() || images.length > 0 || attachedWorkflowId) && !awaitingAnswer) {
-        let text = input.trim();
-        let workflowGone = false;
-        if (attachedWorkflowId) {
-          const workflow = getWorkflow(attachedWorkflowId);
-          if (workflow) {
-            const block = workflowToPrompt(workflow);
-            text = text ? `${text}\n\n${block}` : block;
-          } else {
-            workflowGone = true;
-            toast("The attached workflow was deleted. It was not sent.");
-          }
-        }
-        if (!text && images.length === 0) {
-          // Only a deleted workflow was attached: nothing to send.
-          if (workflowGone) setAttachedWorkflowId(null);
-          return;
-        }
+      if ((input.trim() || images.length > 0) && !awaitingAnswer) {
+        const text = input.trim();
         const didSend = onSubmit({
           text,
           images: images.length > 0 ? images : undefined,
@@ -362,37 +245,20 @@ export function ChatInput({
         // user can retry without re-attaching everything.
         if (didSend) {
           setAttachedImages([]);
-          setAttachedWorkflowId(null);
         }
       }
     },
-    [input, attachedImages, attachedWorkflowId, canAttachImages, awaitingAnswer, onSubmit, setAttachedImages, setAttachedWorkflowId]
+    [input, attachedImages, canAttachImages, awaitingAnswer, onSubmit, setAttachedImages]
   );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (
-        showSuggestion &&
-        suggestion &&
-        !e.nativeEvent.isComposing &&
-        !e.shiftKey &&
-        !e.altKey &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        (e.key === "Tab" || e.key === "ArrowRight")
-      ) {
-        e.preventDefault();
-        caretToEndRef.current = true;
-        setInput(suggestion);
-        onDismissSuggestion?.();
-        return;
-      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         doSubmit();
       }
     },
-    [doSubmit, showSuggestion, suggestion, setInput, onDismissSuggestion]
+    [doSubmit]
   );
 
   const handleSubmit = useCallback(
@@ -464,82 +330,6 @@ export function ChatInput({
       onDrop={handleDrop}
       className={`relative px-2 pb-1.5 pt-2 ${isDragOver ? "bg-secondary" : ""}`}
     >
-      {showSlashMenu && slashQuery !== null && (
-        <SlashCommandMenu
-          query={slashQuery}
-          onSelect={handleSlashSelect}
-          onClose={handleSlashClose}
-          onManageSkills={
-            onManageSkills
-              ? () => {
-                  setDismissedSlashQuery(slashQuery);
-                  onManageSkills();
-                }
-              : undefined
-          }
-        />
-      )}
-
-      {/* Selected element inside an embed, attached as visual context.
-          No remove button, same reasoning as the reference-only canvas
-          chips below — the picker selection keeps riding in canvasContext
-          regardless of anything dismissed in the composer. */}
-      {(embedElementContext || selectionContext.length > 0) && (
-        <div className="mb-2 flex flex-wrap gap-2 pl-2">
-          {embedElementContext && (
-            <div
-              title={
-                embedElementContext.selection.textPreview
-                  ? `${embedElementContext.label} in ${embedElementContext.embedName} — "${embedElementContext.selection.textPreview}"`
-                  : `${embedElementContext.label} in ${embedElementContext.embedName}`
-              }
-              aria-label={`Selected embed element: ${embedElementContext.label}`}
-              className="inline-flex items-center gap-1 rounded-control-sm bg-[var(--color-accent-selection)] px-2 py-1 text-xs text-[var(--color-accent-primary)]"
-            >
-              <CodeIcon size={14} />
-              <span className="max-w-24 truncate">{embedElementContext.label}</span>
-            </div>
-          )}
-
-          {/* Selected canvas nodes, shown as reference context only — no
-              screenshot, no remove button (see the `selectionContext` doc
-              comment above: the id keeps riding in canvasContext regardless of
-              anything dismissed here). */}
-          {selectionContext.length > 0 && (
-            <>
-              {selectionContext.slice(0, MAX_SELECTION_CHIPS).map((sel) => (
-                <div
-                  key={sel.nodeId}
-                  title={sel.name}
-                  aria-label={sel.name}
-                  className="inline-flex items-center gap-1 rounded-control-sm bg-[var(--color-accent-selection)] px-2 py-1 text-xs text-[var(--color-accent-primary)] [&_svg]:!text-[var(--color-accent-primary)]"
-                >
-                  <NodeIcon type={sel.type} />
-                  <span className="max-w-24 truncate">{sel.name}</span>
-                </div>
-              ))}
-              {selectionContext.length > MAX_SELECTION_CHIPS && (
-                <div
-                  aria-label={`${selectionContext.length - MAX_SELECTION_CHIPS} more selected nodes`}
-                  className="inline-flex items-center rounded-control-sm bg-[var(--color-accent-selection)] px-2 py-1 text-xs text-[var(--color-accent-primary)]"
-                >
-                  +{selectionContext.length - MAX_SELECTION_CHIPS} more
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      <LikedReferencesStrip sessionId={sessionId} />
-
-      {attachedWorkflow && (
-        <WorkflowChip
-          title={attachedWorkflow.title}
-          onRemove={() => setAttachedWorkflowId(null)}
-        />
-      )}
-
       {/* Image previews */}
       {attachedImages.length > 0 && !canAttachImages && (
         <div className="mb-2 text-xs text-amber-500">
@@ -586,28 +376,15 @@ export function ChatInput({
           value={input}
           onChange={(e) => {
             setInput(e.target.value);
-            onDismissSuggestion?.();
             resize();
           }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          placeholder={
-            awaitingAnswer
-              ? "Answer the question above to continue…"
-              : showSuggestion
-                ? suggestion
-                : "Ask Sideform Agent…"
-          }
-          aria-describedby={showSuggestion ? suggestionId : undefined}
+          placeholder={awaitingAnswer ? "Answer the question above to continue…" : "Ask Sideform Light…"}
           rows={1}
           disabled={awaitingAnswer}
           className="flex-1 resize-none bg-transparent pl-2 text-sm text-text-primary placeholder:text-text-disabled outline-none min-h-[29px] max-h-[96px] py-1 leading-normal"
         />
-        {showSuggestion && (
-          <span id={suggestionId} className="sr-only">
-            Suggestion: {suggestion}. Press Tab to accept.
-          </span>
-        )}
         {!renderFooter && isLoading && (
           <Tooltip>
             <TooltipTrigger

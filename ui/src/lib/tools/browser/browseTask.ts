@@ -1,7 +1,7 @@
 import { runBrowseTask } from "@sideform/browser-agent/loop";
 import type { ToolHandler } from "../../toolRegistry";
 import { browseBackend } from "./backend";
-import { getBrowserBridge, isDesktopBrowserAvailable } from "./bridge";
+import { getBrowserBridge } from "./bridge";
 import { BROWSER_NOT_AVAILABLE_ERROR } from "./shared";
 
 /**
@@ -47,7 +47,7 @@ export const browseTask: ToolHandler = async (args, context) => {
       backend: browseBackend,
       permissions: () => BROWSE_TASK_PERMISSIONS,
       storage: safeLocalStorage(),
-      cloud: !isDesktopBrowserAvailable(),
+      cloud: false,
       stepScreenshots: browseStepScreenshotEnabled(),
       signal: context?.signal,
       maxSteps,
