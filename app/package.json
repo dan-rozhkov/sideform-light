@@ -1,6 +1,7 @@
 {
   "name": "sideform-light",
   "version": "0.1.1",
+  "license": "MIT",
   "description": "Sideform Light: an agent chat next to a built-in browser",
   "main": "dist/main/index.js",
   "private": true,
@@ -60,7 +61,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "Sideform-Light-Setup-${version}.${ext}"
+      "artifactName": "Sideform-Light-Setup-${version}.${ext}",
+      "license": "build/installer-license.txt"
     }
   },
   "dependencies": {

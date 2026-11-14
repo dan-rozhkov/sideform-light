@@ -12,8 +12,21 @@ Get the installer from the [latest release](https://github.com/dan-rozhkov/sidef
   shows a warning: click **More info → Run anyway**.
 - **macOS:** `.dmg`. The app is not notarized. On first start, right-click the app and select **Open**.
 
-Your data (saved logins, history, chats, traces) stays on your computer. The app sends only agent
-requests to the Sideform backend.
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- Committers and reviewers: [dan-rozhkov](https://github.com/dan-rozhkov)
+- Approvers: [dan-rozhkov](https://github.com/dan-rozhkov)
+
+Every release is built from this repository by GitHub Actions (`.github/workflows/release.yml`) and is
+signed only after manual approval. Privacy policy: [PRIVACY.md](PRIVACY.md). The Windows installer shows it
+before installation.
+
+## Privacy
+
+Your chats, saved logins, history and traces stay on your computer. The app sends data to the Sideform
+backend only when you send a message to the agent. See [PRIVACY.md](PRIVACY.md).
 
 ## Windows
 
@@ -38,3 +51,7 @@ cd app && npm ci && SIDEFORM_LIGHT_BACKEND_URL=http://localhost:3001 npm start
 ```
 
 Both backend URLs must be the same. Releases are built by `.github/workflows/release.yml` on a `v*` tag.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
