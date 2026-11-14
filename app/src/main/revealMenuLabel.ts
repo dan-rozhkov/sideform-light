@@ -1,7 +1,6 @@
-// Dependency-free on purpose: menu.ts imports it, and pen-editor's
-// desktopMenuContract test builds the real menu template from menu.ts.
-// Keeping it out of revealInFolder.ts stops that import chain from reaching
-// traceStore → @sideform/browser-agent, which does not resolve there.
+// Dependency-free on purpose: menu.ts imports it. Keeping it out of
+// revealInFolder.ts stops that import chain from reaching traceStore →
+// @sideform/browser-agent.
 
 /** "Reveal in Finder" on macOS, "Show in Explorer" on Windows, "Show in Folder" elsewhere. */
 export function revealMenuLabel(platform: NodeJS.Platform): string {

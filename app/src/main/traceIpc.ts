@@ -1,12 +1,10 @@
-import type { TraceListResult, TraceReadOptions, TraceReadResult, TraceSaveResult, TraceStore } from "./traceStore";
+import type { TraceReadOptions, TraceReadResult, TraceSaveResult, TraceStore } from "./traceStore";
 
 /** Sender rules of `traces:save` and `traces:read`, kept out of window.ts so they are unit-tested. */
 export interface TraceIpcDeps {
-  store: Pick<TraceStore, "save" | "read" | "list">; // async: all trace I/O is off the main thread's sync path
+  store: Pick<TraceStore, "save" | "read">; // async: all trace I/O is off the main thread's sync path
   /** True only for this window's agent panel webContents. */
   isPanel(webContentsId: number): boolean;
-  /** True for this window's canvas (editor) tabs. */
-  isEditorTab(webContentsId: number): boolean;
   /** True for this window's trace tabs. */
   isTraceTab(webContentsId: number): boolean;
 }
@@ -29,10 +27,10 @@ export function handleTraceListTabs(
   }
 }
 
-/** `traces:save` (invoke): the agent panel or an editor tab, which run the browse agent. */
+/** `traces:save` (invoke): the agent panel, which runs the browse agent. */
 export async function handleTraceSave(deps: TraceIpcDeps, sender: number, payload: unknown): Promise<TraceSaveResult> {
-  if (!deps.isPanel(sender) && !deps.isEditorTab(sender)) {
-    return { error: "traces:save is only allowed from the agent panel or an editor tab" };
+  if (!deps.isPanel(sender)) {
+    return { error: "traces:save is only allowed from the agent panel" };
   }
   try {
     return await deps.store.save(payload);
@@ -56,26 +54,14 @@ export function parseTraceReadOptions(raw: unknown): TraceReadOptions | undefine
   return { frames, ...(frameIds ? { frameIds } : {}) };
 }
 
-/** `traces:read` (invoke): a trace tab, the agent panel or an editor tab. `opts` is optional (`{ frames: false }` or `{ frames: true, frameIds }`). */
+/** `traces:read` (invoke): a trace tab or the agent panel. `opts` is optional (`{ frames: false }` or `{ frames: true, frameIds }`). */
 export async function handleTraceRead(deps: TraceIpcDeps, sender: number, id: unknown, opts?: unknown): Promise<TraceReadResult> {
-  if (!deps.isPanel(sender) && !deps.isEditorTab(sender) && !deps.isTraceTab(sender)) {
+  if (!deps.isPanel(sender) && !deps.isTraceTab(sender)) {
     return { error: "traces:read is not allowed from this sender" };
   }
   try {
     const parsed = parseTraceReadOptions(opts);
     return parsed ? await deps.store.read(id, parsed) : await deps.store.read(id);
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-/** `traces:list` (invoke): same senders as `traces:read` (those can already read any trace by id); summaries only, newest first. */
-export async function handleTraceList(deps: TraceIpcDeps, sender: number): Promise<TraceListResult> {
-  if (!deps.isPanel(sender) && !deps.isEditorTab(sender) && !deps.isTraceTab(sender)) {
-    return { error: "traces:list is not allowed from this sender" };
-  }
-  try {
-    return await deps.store.list();
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }

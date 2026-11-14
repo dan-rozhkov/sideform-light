@@ -1,37 +1,33 @@
 /**
- * Process-level sender registry and flush handshake of canvas storage (`canvases:*`).
+ * Process-level sender registry and close-flush handshake of the agent panel (`chats:*` storage).
  *
- * Why not "is this a live tab of my window": the frontend's last autosave is flushed while the tab
- * closes (`window.penCanvasFlush`, see below). TabManager drops the tab entry BEFORE `webContents.close()` runs the
- * unload handlers, and on window close/quit the window's handlers are gone before `destroyAll()`.
- * So the final `canvases:save` must be accepted from a webContents that is no longer a live tab.
- * A webContents id therefore stays a writer for `graceMs` after its `destroyed` event
+ * Why not "is this the live panel of my window": the panel's last chat save is flushed while the panel
+ * closes (`window.penChatsFlush`, see chatFlush.ts). The window's handlers can be gone before the panel's
+ * unload handlers run, so the final `chats:save` must be accepted from a webContents that is no longer
+ * a live panel. A webContents id therefore stays a panel for `graceMs` after its `destroyed` event
  * (the IPC message of the unload handler reaches main before or just after it). Ids are never reused
  * within a process, so a late entry cannot admit a stranger.
  */
 
-export interface CanvasSenderRegistryOptions {
+export interface PanelSenderRegistryOptions {
   /** How long an id stays valid after `release`. Default 10 s. */
   graceMs?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
 }
 
-export interface CanvasSenderRegistry {
-  /** An editor (canvas) tab: may list, read, save and delete. Cancels a pending release. */
-  addWriter(webContentsId: number): void;
-  /** An agent panel: may list only. */
+export interface PanelSenderRegistry {
+  /** An agent panel: may use chat storage. Cancels a pending release. */
   addPanel(webContentsId: number): void;
   /** The webContents is destroyed: it stays valid for the grace period, then is forgotten. */
   release(webContentsId: number): void;
-  isWriter(webContentsId: number): boolean;
   isPanel(webContentsId: number): boolean;
 }
 
-export const CANVAS_WRITER_GRACE_MS = 10_000;
+export const PANEL_SENDER_GRACE_MS = 10_000;
 
-export function createCanvasSenderRegistry(opts: CanvasSenderRegistryOptions = {}): CanvasSenderRegistry {
-  const graceMs = opts.graceMs ?? CANVAS_WRITER_GRACE_MS;
+export function createPanelSenderRegistry(opts: PanelSenderRegistryOptions = {}): PanelSenderRegistry {
+  const graceMs = opts.graceMs ?? PANEL_SENDER_GRACE_MS;
   const setTimer =
     opts.setTimer ??
     ((fn, ms) => {
@@ -40,7 +36,6 @@ export function createCanvasSenderRegistry(opts: CanvasSenderRegistryOptions = {
       return t;
     });
   const clearTimer = opts.clearTimer ?? ((h) => clearTimeout(h as NodeJS.Timeout));
-  const writers = new Set<number>();
   const panels = new Set<number>();
   const timers = new Map<number, unknown>();
 
@@ -51,39 +46,33 @@ export function createCanvasSenderRegistry(opts: CanvasSenderRegistryOptions = {
   };
 
   return {
-    addWriter(id) {
-      cancel(id);
-      writers.add(id);
-    },
     addPanel(id) {
       cancel(id);
       panels.add(id);
     },
     release(id) {
       cancel(id);
-      if (!writers.has(id) && !panels.has(id)) return;
+      if (!panels.has(id)) return;
       timers.set(
         id,
         setTimer(() => {
           timers.delete(id);
-          writers.delete(id);
           panels.delete(id);
         }, graceMs),
       );
     },
-    isWriter: (id) => writers.has(id),
     isPanel: (id) => panels.has(id),
   };
 }
 
 /**
- * Flush handshake with the page. The editor page defines `window.penCanvasFlush: () => Promise<void>`:
- * it resolves after its pending canvas save got its `canvases:save` reply (at once when nothing is
+ * Flush handshake with the page. The panel page defines `window.penChatsFlush: () => Promise<void>`:
+ * it resolves after its pending chat saves got their `chats:save` reply (at once when nothing is
  * pending) and never rejects. Main runs this script and awaits the returned promise (executeJavaScript
  * awaits it), so when it resolves the save is on disk or failed: no assumption about the order of the
  * script reply and the ipc dispatch.
  */
-export const FLUSH_SCRIPT = "typeof window.penCanvasFlush === 'function' ? window.penCanvasFlush() : undefined";
+export const CHATS_FLUSH_SCRIPT = "typeof window.penChatsFlush === 'function' ? window.penChatsFlush() : undefined";
 
 /** Longest wait for one page flush. */
 export const FLUSH_TIMEOUT_MS = 3000;
@@ -112,7 +101,7 @@ export interface CloseFlushPort {
 export interface CloseFlushOptions {
   /** Longest wait for the page flush. Default 3 s. */
   flushTimeoutMs?: number;
-  /** Script of the flush handshake. Default `FLUSH_SCRIPT` (canvas tabs); the agent panel passes the chat one. */
+  /** Script of the flush handshake. Default `CHATS_FLUSH_SCRIPT`. */
   script?: string;
 }
 
@@ -120,7 +109,7 @@ export interface CloseFlushOptions {
 export async function flushPage(
   port: Pick<CloseFlushPort, "isDestroyed" | "runInPage">,
   timeoutMs = FLUSH_TIMEOUT_MS,
-  script = FLUSH_SCRIPT,
+  script = CHATS_FLUSH_SCRIPT,
 ): Promise<void> {
   if (port.isDestroyed()) return;
   let run: Promise<unknown>;
@@ -132,7 +121,7 @@ export async function flushPage(
   await withTimeout(run, timeoutMs);
 }
 
-/** Tab closes that are still flushing (a quit waits for these too). */
+/** Closes that are still flushing (a quit waits for these too). */
 const pendingCloses = new Set<Promise<void>>();
 export function pendingCloseFlushes(): Promise<void>[] {
   return [...pendingCloses];
@@ -147,7 +136,7 @@ export function flushThenClose(port: CloseFlushPort, opts: CloseFlushOptions = {
       try {
         if (!port.isDestroyed()) port.close();
       } catch (err) {
-        console.error("canvas tab close failed", err);
+        console.error("panel close failed", err);
       }
     }
   })();
@@ -156,5 +145,5 @@ export function flushThenClose(port: CloseFlushPort, opts: CloseFlushOptions = {
   return flow;
 }
 
-/** The process-wide sender registry (window.ts registers views). */
-export const canvasSenders = createCanvasSenderRegistry();
+/** The process-wide sender registry (window.ts registers the panel views). */
+export const panelSenders = createPanelSenderRegistry();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as path from "node:path";
 import { chatDirFor, createChatStore, isValidChatId, MAX_CHAT_MODEL_CHARS, MAX_CHAT_TITLE_CHARS } from "../src/main/chatStore";
-import type { DocFs } from "../src/main/docStore";
+import type { StoreFs } from "../src/main/storeUtils";
 
 const ROOT = "/ud/chats";
 const MSGS = [{ id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] }];
@@ -21,7 +21,7 @@ function memFs() {
   const files = new Map<string, Buffer>();
   const mtimes = new Map<string, number>();
   const order: string[] = [];
-  const api: DocFs & { files: Map<string, Buffer>; mtimes: Map<string, number>; order: string[]; delay: number; fail?: RegExp; writes: number; reads: string[] } = {
+  const api: StoreFs & { files: Map<string, Buffer>; mtimes: Map<string, number>; order: string[]; delay: number; fail?: RegExp; writes: number; reads: string[] } = {
     files,
     mtimes,
     order,

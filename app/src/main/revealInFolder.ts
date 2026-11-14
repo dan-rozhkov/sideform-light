@@ -1,18 +1,15 @@
 import path from "node:path";
-import { isValidCanvasId, isValidDocId, isValidTraceId, isValidWorkflowId } from "./config";
+import { isValidTraceId } from "./config";
 import { TRACE_FILE } from "./traceStore";
 
-/** A tab or Recent row whose data is a file on disk under userData. */
+/** A tab whose data is a file on disk under userData (a trace). */
 export interface RevealTarget {
-  kind: "canvas" | "doc" | "workflow" | "trace";
+  kind: "trace";
   id: string;
 }
 
-/** The storage roots (canvas, doc and workflow dirs depend on `PEN_DESKTOP_URL`, see window.ts). */
+/** The storage roots. */
 export interface RevealDirs {
-  canvases: string;
-  documents: string;
-  workflows: string;
   /** `<userData>/browse-traces`; one directory per trace inside. */
   traces: string;
 }
@@ -26,12 +23,6 @@ export { revealMenuLabel } from "./revealMenuLabel";
  */
 export function revealTargetFor(target: RevealTarget, dirs: RevealDirs): { file: string; dir: string } | null {
   switch (target.kind) {
-    case "canvas":
-      return isValidCanvasId(target.id) ? { file: path.join(dirs.canvases, `${target.id}.pen.json`), dir: dirs.canvases } : null;
-    case "doc":
-      return isValidDocId(target.id) ? { file: path.join(dirs.documents, `${target.id}.json`), dir: dirs.documents } : null;
-    case "workflow":
-      return isValidWorkflowId(target.id) ? { file: path.join(dirs.workflows, `${target.id}.json`), dir: dirs.workflows } : null;
     case "trace": {
       if (!isValidTraceId(target.id)) return null;
       const dir = path.join(dirs.traces, target.id);

@@ -1,4 +1,4 @@
-type TabKind = "editor" | "browser" | "doc" | "workflow" | "trace" | "settings" | "passwords" | "history";
+type TabKind = "browser" | "trace" | "settings" | "passwords" | "history";
 type TabRow = {
   id: number;
   title: string;
@@ -13,8 +13,6 @@ type TabsSnapshot = {
   tabs: TabRow[];
   activeId: number | null;
   activeKind: TabKind | null;
-  /** Still sent by main; the tab strip no longer renders it (File menu does). */
-  mcpStatus: "listening" | "not-published" | "off" | "error";
   /**
    * Set by window.ts (see tabManager.ts's shouldFocusAddressBar) exactly on
    * the push where a fresh, empty-URL browser tab just became active — the
@@ -28,7 +26,7 @@ type TabsSnapshot = {
   tabStripLeft?: number;
   /** The agent panel is collapsed (sidebar toggle state). */
   panelCollapsed?: boolean;
-  /** Shell motion allowed; false = PEN_DESKTOP_NO_ANIMATIONS=1 or OS reduced motion (no tab motion). */
+  /** Shell motion allowed; false = SIDEFORM_LIGHT_NO_ANIMATIONS=1 or OS reduced motion (no tab motion). */
   motion?: boolean;
   /** Island gap / corner radius in px (layout.ts), for the address row CSS. */
   islandGap?: number;
@@ -43,7 +41,6 @@ interface PenTabbarApi {
   isMac: boolean;
   newTab(): void;
   togglePanel(): void;
-  openNewTabMenu(anchor: { x: number; y: number }): void;
   openToolsMenu(anchor: { x: number; y: number }): void;
   openTabMenu(id: number, anchor: { x: number; y: number }): void;
   activateTab(id: number): void;
@@ -78,10 +75,7 @@ const urlInputEl = document.getElementById("url-input") as HTMLInputElement;
 
 document.documentElement.toggleAttribute("data-macos", window.penTabbar.isMac);
 const newTabEl = document.getElementById("new-tab")!;
-newTabEl.addEventListener("click", () => {
-  const rect = newTabEl.getBoundingClientRect();
-  window.penTabbar.openNewTabMenu({ x: rect.left, y: rect.bottom + 4 });
-});
+newTabEl.addEventListener("click", () => window.penTabbar.newTab());
 
 const toolsBtnEl = document.getElementById("browser-tools")!;
 // Static header buttons: their glyphs are pen-set icons built here, not markup in tabbar.html (one source: glyphs.ts).
@@ -328,14 +322,10 @@ window.penTabbar.onOmniboxRefresh(() => {
   querySuggestions(suggest.query, false);
 });
 
-// Leading tab icons, keyed by tab kind: a paintbrush for editor (canvas) tabs, a globe for
-// browser tabs, never a site favicon. The tab bar CSP has no img-src: the tab bar draws no images.
-// Glyphs come from the pen-editor icon set (glyphs.ts, pen icon names): stroked, currentColor, the tab text color.
+// Leading tab icons, keyed by tab kind: a globe for browser tabs, never a site favicon. The tab bar CSP has no img-src: the tab bar draws no images.
+// Glyphs come from the pen icon set (glyphs.ts, pen icon names): stroked, currentColor, the tab text color.
 const GLYPHS: Record<TabKind, string> = {
-  editor: "PaintBrush",
   browser: "Globe",
-  doc: "FileText",
-  workflow: "TreeStructure",
   trace: "FilmStrip",
   settings: "Gear",
   history: "ClockCounterClockwise",
@@ -382,7 +372,7 @@ function agentCursorIcon(): SVGSVGElement {
 // is dropped. Motion is skipped under prefers-reduced-motion and on the first render.
 const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const prefersReducedMotion = (): boolean => reducedMotionQuery.matches;
-// `shellMotion` comes from main (tabbar:state `motion`): false for PEN_DESKTOP_NO_ANIMATIONS=1 and the OS setting.
+// `shellMotion` comes from main (tabbar:state `motion`): false for SIDEFORM_LIGHT_NO_ANIMATIONS=1 and the OS setting.
 let shellMotion = true;
 const canAnimate = (el: Element): boolean => typeof el.animate === "function" && shellMotion && !prefersReducedMotion();
 

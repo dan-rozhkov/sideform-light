@@ -51,7 +51,7 @@ for (const mode of ["keep", "reset"] as const) {
     test.setTimeout(90_000);
     const app = await launchShell({
       args: ["."],
-      env: { ...process.env, PEN_DESKTOP_URL: fixture.baseUrl, PEN_DESKTOP_USER_DATA_DIR: userData },
+      env: { ...process.env, SIDEFORM_LIGHT_UI_URL: fixture.baseUrl, SIDEFORM_LIGHT_USER_DATA_DIR: userData },
     });
     try {
       await expect(app.canvasPage.locator("#ready")).toHaveText("stub-editor");

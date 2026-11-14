@@ -1,21 +1,21 @@
 /**
- * Quit handshake for canvas storage (pure; Electron injected by index.ts).
+ * Quit handshake for chat storage (pure; Electron injected by index.ts).
  *
- * First `before-quit` of a quit cycle: if any canvas tab exists (or a tab close is still flushing),
+ * First `before-quit` of a quit cycle: if any agent panel exists (or a panel close is still flushing),
  * hold the quit, flush ALL of them in parallel (bounded), then quit again. The re-entrant pass must not
  * hold. A quit that is cancelled by something else after the hold leaves no stale state: the flag is
  * consumed by the pass it lets through, so a later quit holds again.
  */
 
-import { withTimeout } from "./canvasWriters";
+import { withTimeout } from "./panelSenders";
 
 /** Overall cap for the quit flush. */
 export const QUIT_FLUSH_MS = 3000;
 
 export interface QuitFlushDeps {
-  /** Canvas tabs in any window, or a tab close still flushing. */
+  /** Agent panels in any window, or a panel close still flushing. */
   hasWork(): boolean;
-  /** Flushes every canvas tab of every window and waits for pending tab-close flushes. */
+  /** Flushes every agent panel and waits for pending close flushes. */
   flushAll(): Promise<unknown>;
   /** Calls `app.quit()` again. */
   quit(): void;

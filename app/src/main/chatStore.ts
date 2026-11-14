@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { nodeDocFs, type DocFs } from "./docStore";
+import { nodeStoreFs, type StoreFs } from "./storeUtils";
 import { createKeyedChain, isObject, message, sweepStaleTmp } from "./storeUtils";
 
 /**
@@ -12,7 +12,7 @@ import { createKeyedChain, isObject, message, sweepStaleTmp } from "./storeUtils
  */
 
 export const CHAT_DIR = "chats";
-/** Directory used while `PEN_DESKTOP_URL` overrides the editor: a dev frontend must never touch production chats. */
+/** Directory used while `SIDEFORM_LIGHT_UI_URL` overrides the ui: a dev server must never touch production chats. */
 export const DEV_CHAT_DIR = "chats-dev";
 
 /** The chats directory name: `chats-dev` when the editor URL is overridden, else `chats`. */
@@ -66,7 +66,7 @@ export interface ChatStore {
 export interface ChatStoreOptions {
   /** Absolute path of the chats directory (`<userData>/chats`). */
   rootDir: string;
-  fs?: DocFs;
+  fs?: StoreFs;
   /** Clock for sweeping stale temp files. Default Date.now. */
   now?: () => number;
 }
@@ -103,7 +103,7 @@ export function parseStoredChat(raw: unknown): { chat: StoredChat } | { error: s
 
 export function createChatStore(opts: ChatStoreOptions): ChatStore {
   const { rootDir } = opts;
-  const io = opts.fs ?? nodeDocFs;
+  const io = opts.fs ?? nodeStoreFs;
   const now = opts.now ?? Date.now;
   // Last known stored (meta) rev per id. This process is the only writer, so it stays true.
   const revs = new Map<string, number>();

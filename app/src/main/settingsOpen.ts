@@ -4,7 +4,7 @@ import { isValidSettingsSection } from "./config";
 export interface SettingsOpenDeps {
   /** True only for this window's agent panel webContents. */
   isPanel(webContentsId: number): boolean;
-  /** True for this window's editor, doc, trace and Settings tabs; browser tabs are not allowed. */
+  /** True for this window's trace and Settings tabs; browser tabs are not allowed. */
   isPageTab(webContentsId: number): boolean;
   /** Opens the Settings tab, or activates the existing one (a singleton), with keyboard focus. A valid section points it at that section. */
   openSettingsTab(section: string | undefined): void;
@@ -13,7 +13,7 @@ export interface SettingsOpenDeps {
 export type SettingsOpenResult = { ok: boolean };
 
 /**
- * `settings:open` (invoke, agent panel or any frontend tab of this window). The section is optional:
+ * `settings:open` (invoke, agent panel or a trace/Settings tab of this window). The section is optional:
  * an unknown or non-string one is ignored (the tab still opens). A person asked for the page, so the
  * tab takes keyboard focus. Never throws: the sender gets `{ok:false}`.
  */

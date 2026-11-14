@@ -75,7 +75,7 @@ test("passwords tab: add, list, detail, search, edit, delete; light and dark", a
   mkdirSync(userData, { recursive: true });
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl, PEN_DESKTOP_USER_DATA_DIR: userData },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl, SIDEFORM_LIGHT_USER_DATA_DIR: userData },
   });
   const pageErrors: string[] = [];
   try {

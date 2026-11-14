@@ -50,7 +50,7 @@ export interface EffectiveCursorSettings extends CursorSettings {
 /** Precedence: a (non-empty) env var wins and locks its menu items; empty or
  * whitespace-only counts as unset; otherwise the saved settings apply. */
 export function resolveCursorSettings(env: NodeJS.ProcessEnv, saved: CursorSettings): EffectiveCursorSettings {
-  const enabledLocked = isEnvValueSet(env.PEN_DESKTOP_BROWSER_CURSOR);
+  const enabledLocked = isEnvValueSet(env.SIDEFORM_LIGHT_BROWSER_CURSOR);
   return {
     enabled: enabledLocked ? resolveBrowserCursorEnabled(env) : saved.enabled,
     enabledLocked,

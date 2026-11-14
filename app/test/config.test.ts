@@ -8,15 +8,15 @@ describe("resolveEditorUrl", () => {
     expect(DEFAULT_EDITOR_URL).toBe("https://app.sideform.pro/app");
   });
 
-  it("honors PEN_DESKTOP_URL", () => {
+  it("honors SIDEFORM_LIGHT_URL", () => {
     expect(
-      resolveEditorUrl({ PEN_DESKTOP_URL: "http://localhost:5173/app" }),
+      resolveEditorUrl({ SIDEFORM_LIGHT_URL: "http://localhost:5173/app" }),
     ).toBe("http://localhost:5173/app");
   });
 
   it("ignores a non-http(s) or unparseable override", () => {
-    expect(resolveEditorUrl({ PEN_DESKTOP_URL: "file:///etc/passwd" })).toBe(DEFAULT_EDITOR_URL);
-    expect(resolveEditorUrl({ PEN_DESKTOP_URL: "not a url" })).toBe(DEFAULT_EDITOR_URL);
+    expect(resolveEditorUrl({ SIDEFORM_LIGHT_URL: "file:///etc/passwd" })).toBe(DEFAULT_EDITOR_URL);
+    expect(resolveEditorUrl({ SIDEFORM_LIGHT_URL: "not a url" })).toBe(DEFAULT_EDITOR_URL);
   });
 });
 
@@ -26,25 +26,25 @@ describe("resolveBrowserCursorEnabled", () => {
   });
 
   it("is disabled by off/0/false, case-insensitively", () => {
-    expect(resolveBrowserCursorEnabled({ PEN_DESKTOP_BROWSER_CURSOR: "off" })).toBe(false);
-    expect(resolveBrowserCursorEnabled({ PEN_DESKTOP_BROWSER_CURSOR: "OFF" })).toBe(false);
-    expect(resolveBrowserCursorEnabled({ PEN_DESKTOP_BROWSER_CURSOR: "0" })).toBe(false);
-    expect(resolveBrowserCursorEnabled({ PEN_DESKTOP_BROWSER_CURSOR: "false" })).toBe(false);
-    expect(resolveBrowserCursorEnabled({ PEN_DESKTOP_BROWSER_CURSOR: "False" })).toBe(false);
+    expect(resolveBrowserCursorEnabled({ SIDEFORM_LIGHT_BROWSER_CURSOR: "off" })).toBe(false);
+    expect(resolveBrowserCursorEnabled({ SIDEFORM_LIGHT_BROWSER_CURSOR: "OFF" })).toBe(false);
+    expect(resolveBrowserCursorEnabled({ SIDEFORM_LIGHT_BROWSER_CURSOR: "0" })).toBe(false);
+    expect(resolveBrowserCursorEnabled({ SIDEFORM_LIGHT_BROWSER_CURSOR: "false" })).toBe(false);
+    expect(resolveBrowserCursorEnabled({ SIDEFORM_LIGHT_BROWSER_CURSOR: "False" })).toBe(false);
   });
 
   it("stays enabled for any other value", () => {
-    expect(resolveBrowserCursorEnabled({ PEN_DESKTOP_BROWSER_CURSOR: "on" })).toBe(true);
-    expect(resolveBrowserCursorEnabled({ PEN_DESKTOP_BROWSER_CURSOR: "1" })).toBe(true);
-    expect(resolveBrowserCursorEnabled({ PEN_DESKTOP_BROWSER_CURSOR: "" })).toBe(true);
+    expect(resolveBrowserCursorEnabled({ SIDEFORM_LIGHT_BROWSER_CURSOR: "on" })).toBe(true);
+    expect(resolveBrowserCursorEnabled({ SIDEFORM_LIGHT_BROWSER_CURSOR: "1" })).toBe(true);
+    expect(resolveBrowserCursorEnabled({ SIDEFORM_LIGHT_BROWSER_CURSOR: "" })).toBe(true);
   });
 });
 
 describe("resolveUserDataDir", () => {
   it("is undefined when unset or blank, trimmed otherwise", () => {
     expect(resolveUserDataDir({})).toBeUndefined();
-    expect(resolveUserDataDir({ PEN_DESKTOP_USER_DATA_DIR: "  " })).toBeUndefined();
-    expect(resolveUserDataDir({ PEN_DESKTOP_USER_DATA_DIR: " /tmp/x " })).toBe("/tmp/x");
+    expect(resolveUserDataDir({ SIDEFORM_LIGHT_USER_DATA_DIR: "  " })).toBeUndefined();
+    expect(resolveUserDataDir({ SIDEFORM_LIGHT_USER_DATA_DIR: " /tmp/x " })).toBe("/tmp/x");
   });
 });
 
@@ -80,11 +80,11 @@ describe("resolveStorageIdentity", () => {
     expect(resolveStorageIdentity({}, appData, mk([], { [legacy]: "x" }), join)).toEqual({ userDataDir: fresh, storageName: DISPLAY_APP_NAME });
   });
   it("env override: its identity file decides the name; the legacy dir itself means the legacy name", () => {
-    const env = { PEN_DESKTOP_USER_DATA_DIR: " /tmp/e2e " };
+    const env = { SIDEFORM_LIGHT_USER_DATA_DIR: " /tmp/e2e " };
     const withFile = mk([], { "/tmp/e2e/storage-identity.json": '{"storageName":"Pineapple Editor"}' });
     expect(resolveStorageIdentity(env, appData, withFile, join)).toEqual({ userDataDir: "/tmp/e2e", storageName: LEGACY_APP_NAME });
     expect(resolveStorageIdentity(env, appData, mk([legacy]), join)).toEqual({ userDataDir: "/tmp/e2e", storageName: DISPLAY_APP_NAME });
-    expect(resolveStorageIdentity({ PEN_DESKTOP_USER_DATA_DIR: legacy }, appData, mk([]), join).storageName).toBe(LEGACY_APP_NAME);
+    expect(resolveStorageIdentity({ SIDEFORM_LIGHT_USER_DATA_DIR: legacy }, appData, mk([]), join).storageName).toBe(LEGACY_APP_NAME);
   });
   it("ignores a corrupt or unknown identity file", () => {
     for (const text of ["not json", '{"storageName":"Evil"}', "null"]) {
@@ -116,8 +116,8 @@ describe("resolveAgentPanelUrl", () => {
     expect(resolveAgentPanelUrl("https://host/pen/")).toBe("https://host/pen/agent");
     expect(resolveAgentPanelUrl("https://host/application")).toBe("https://host/agent");
   });
-  it("follows a PEN_DESKTOP_URL override", () => {
-    const url = resolveEditorUrl({ PEN_DESKTOP_URL: "https://staging.example.com/app?flag=1" });
+  it("follows a SIDEFORM_LIGHT_URL override", () => {
+    const url = resolveEditorUrl({ SIDEFORM_LIGHT_URL: "https://staging.example.com/app?flag=1" });
     expect(resolveAgentPanelUrl(url)).toBe("https://staging.example.com/agent");
   });
 });
@@ -339,10 +339,10 @@ describe("isSettingsPageOn", () => {
 
 describe("isAdBlockDisabledByEnv", () => {
   it("is true only for an explicit on value", () => {
-    expect(isAdBlockDisabledByEnv({ PEN_DESKTOP_NO_ADBLOCK: "1" })).toBe(true);
-    expect(isAdBlockDisabledByEnv({ PEN_DESKTOP_NO_ADBLOCK: " TRUE " })).toBe(true);
-    expect(isAdBlockDisabledByEnv({ PEN_DESKTOP_NO_ADBLOCK: "0" })).toBe(false);
-    expect(isAdBlockDisabledByEnv({ PEN_DESKTOP_NO_ADBLOCK: "" })).toBe(false);
+    expect(isAdBlockDisabledByEnv({ SIDEFORM_LIGHT_NO_ADBLOCK: "1" })).toBe(true);
+    expect(isAdBlockDisabledByEnv({ SIDEFORM_LIGHT_NO_ADBLOCK: " TRUE " })).toBe(true);
+    expect(isAdBlockDisabledByEnv({ SIDEFORM_LIGHT_NO_ADBLOCK: "0" })).toBe(false);
+    expect(isAdBlockDisabledByEnv({ SIDEFORM_LIGHT_NO_ADBLOCK: "" })).toBe(false);
     expect(isAdBlockDisabledByEnv({})).toBe(false);
   });
 });

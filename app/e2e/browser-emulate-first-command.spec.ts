@@ -59,7 +59,7 @@ test.afterAll(async () => {
 interface Env { app: ElectronApplication; editor: Page; exits: string[] }
 
 async function launch(): Promise<Env> {
-  const app = await launchShell({ args: ["."], env: { ...process.env, PEN_DESKTOP_URL: editorBaseUrl } });
+  const app = await launchShell({ args: ["."], env: { ...process.env, SIDEFORM_LIGHT_UI_URL: editorBaseUrl } });
   const exits: string[] = [];
   app.process().on("exit", (code, signal) => exits.push(`${code} ${signal}`));
   const editor = app.canvasPage;

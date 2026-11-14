@@ -73,7 +73,7 @@ export function timelineDone(tl: PanelTimeline, now: number, durationMs = PANEL_
 
 /**
  * Whether shell motion (panel slide, tab strip motion) is allowed. Off for env
- * `PEN_DESKTOP_NO_ANIMATIONS=1` and for the OS "reduce motion" setting.
+ * `SIDEFORM_LIGHT_NO_ANIMATIONS=1` and for the OS "reduce motion" setting.
  */
 export function shellMotionEnabled(envValue: string | undefined, reducedMotion: boolean): boolean {
   return envValue !== "1" && !reducedMotion;

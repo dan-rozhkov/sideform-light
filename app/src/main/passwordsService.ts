@@ -1,4 +1,3 @@
-import { DENIED, handleLoginsAdd, handleLoginsList, type LoginsCaller, type LoginsIpcDeps, type LoginsPort } from "./loginsIpc";
 import { createPasswordsApi, type PasswordsIcons } from "./browser/passwordsApi";
 import type { CredentialStore } from "./browser/credentialStore";
 import type { UITheme } from "./tabManager";
@@ -9,8 +8,8 @@ export interface ServiceEvent {
   senderFrame?: { url?: string } | null;
 }
 
-/** One main window's doc tabs, as `logins:*` sees them. */
-export type DocWindowPort = LoginsPort;
+/** The answer to a sender that is not an attached Passwords tab. */
+export const DENIED = { ok: false, error: "Not allowed." } as const;
 
 /** The slice of a `webContents` the service needs. Kept as a port so it is unit-tested without Electron. */
 export interface PasswordsContents {
@@ -35,7 +34,7 @@ export interface PasswordsServiceDeps {
 
 /**
  * The saved-logins service behind the Passwords tab. App-scoped like the store: index.ts makes one,
- * so the five invoke/handle channels are registered exactly once (`ipcMain.handle` is process-global
+ * so the invoke/handle channels are registered exactly once (`ipcMain.handle` is process-global
  * and throws on a second registration). Each handler answers only webContents that were `attach`ed,
  * i.e. the Passwords tabs of any main window; everything else gets `{ ok: false }`. The renderer never
  * receives a password (see browser/passwordsApi.ts).
@@ -62,25 +61,9 @@ export function createPasswordsService(store: CredentialStore, icons: PasswordsI
   deps.ipcMain.handle("passwords:remove", (e, id) => mutating(e, () => api.remove(id)));
   deps.ipcMain.handle("passwords:never-remove", (e, host) => mutating(e, () => api.removeNever(host)));
 
-  // `logins:*`: the doc tabs' mention picker (loginsIpc.ts). Registered here with the other channels because
-  // handlers are process-global; each window adds its own `DocWindowPort` (`addDocWindow`) and drops it on close.
   const notifyAll = (): void => {
     for (const { contents } of attached.values()) if (!contents.isDestroyed()) contents.sendChanged();
   };
-  const docWindows = new Set<DocWindowPort>();
-  const loginsDeps: LoginsIpcDeps = {
-    api,
-    // The window owning the sender, resolved once per call: it both authorizes and asks.
-    resolvePort: (id, frameUrl) => [...docWindows].find((w) => w.isDocViewer(id, frameUrl)) ?? null,
-    notifyChanged: () => notifyAll(),
-  };
-  const callerOf = (e: ServiceEvent): LoginsCaller => ({
-    senderId: e.sender.id,
-    topFrame: e.senderFrame != null && e.senderFrame === e.sender.mainFrame,
-    frameUrl: e.senderFrame?.url,
-  });
-  deps.ipcMain.handle("logins:list", (e) => handleLoginsList(loginsDeps, callerOf(e)));
-  deps.ipcMain.handle("logins:add", (e, payload) => handleLoginsAdd(loginsDeps, callerOf(e), payload));
 
   const sendTheme = (id: number, theme: UITheme, force: boolean): void => {
     const entry = attached.get(id);
@@ -107,21 +90,13 @@ export function createPasswordsService(store: CredentialStore, icons: PasswordsI
     },
     /** A site icon arrived: every Passwords tab re-reads `passwords:list`. */
     notifyChanged: (): void => notifyAll(),
-    /** Lets the doc tabs of one window use `logins:*`; returns the function that withdraws them (window closed). */
-    addDocWindow(port: DocWindowPort): () => void {
-      docWindows.add(port);
-      return () => void docWindows.delete(port);
-    },
-    /** Removes the seven handlers (app shutdown, or a test); the service is unusable afterwards. */
+    /** Removes the handlers (app shutdown, or a test); the service is unusable afterwards. */
     dispose(): void {
       deps.ipcMain.removeHandler("passwords:list");
       deps.ipcMain.removeHandler("passwords:add");
       deps.ipcMain.removeHandler("passwords:update");
       deps.ipcMain.removeHandler("passwords:remove");
       deps.ipcMain.removeHandler("passwords:never-remove");
-      deps.ipcMain.removeHandler("logins:list");
-      deps.ipcMain.removeHandler("logins:add");
-      docWindows.clear();
       attached.clear();
     },
   };

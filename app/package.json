@@ -1,23 +1,20 @@
 {
-  "name": "pen-editor-desktop",
-  "version": "0.9.8",
-  "description": "Sideform Desktop app",
+  "name": "sideform-light",
+  "version": "0.1.0",
+  "description": "Sideform Light: an agent chat next to a built-in browser",
   "main": "dist/main/index.js",
   "private": true,
   "scripts": {
-    "build:native": "node scripts/build-native.mjs",
     "build:ts": "tsc",
-    "copy-static": "mkdir -p dist/tabbar dist/passwords dist/history dist/omnibox dist/assets dist/assets/app-icons dist/main/mcp && cp src/tabbar/tabbar.html src/tabbar/tabbar.css src/tabbar/empty.html src/tabbar/empty.css src/tabbar/tokens.css dist/tabbar/ && cp src/passwords/passwords.html src/passwords/passwords.css dist/passwords/ && cp src/history/history.html src/history/history.css dist/history/ && cp src/omnibox/omnibox.html src/omnibox/omnibox.css dist/omnibox/ && cp assets/offline.html dist/assets/ && cp assets/app-icons/*.png dist/assets/app-icons/ && cp src/main/mcp/toolManifest.json dist/main/mcp/",
+    "copy-static": "node scripts/copy-static.mjs",
     "build": "npm run build:ts && npm run copy-static",
-    "start": "npm run build:native && npm run build && electron .",
-    "dev": "PEN_DESKTOP_URL=http://localhost:5173/app npm run start",
+    "start": "npm run build && electron .",
+    "dev": "SIDEFORM_LIGHT_SKIP_UI=1 SIDEFORM_LIGHT_UI_URL=http://localhost:5174 npm run start",
     "lint": "tsc --noEmit && tsc --noEmit -p tsconfig.e2e.json",
     "test": "vitest run",
-    "test:e2e": "npm run build && playwright test",
-    "test:e2e:live": "npm run build && playwright test --config playwright.live.config.ts",
-    "test:e2e:bench": "npm run build && playwright test --config playwright.bench.config.ts",
-    "test:e2e:shots": "npm run build && AGENT_SHOTS=1 playwright test --config playwright.bench.config.ts e2e/bench-agent-layout-screens.spec.ts",
-    "dist": "npm run build:native && npm run build && electron-builder --mac"
+    "test:e2e": "SIDEFORM_LIGHT_SKIP_UI=1 npm run build && playwright test",
+    "dist": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win"
   },
   "devDependencies": {
     "@electron/asar": "^3.4.1",
@@ -29,20 +26,12 @@
     "vitest": "^4.1.10"
   },
   "build": {
-    "appId": "com.peneditor.desktop",
+    "appId": "com.sideform.light",
     "afterPack": "./scripts/verify-packaged-deps.cjs",
-    "productName": "Sideform Desktop",
+    "productName": "Sideform Light",
     "directories": {
       "output": "release"
     },
-    "protocols": [
-      {
-        "name": "Sideform",
-        "schemes": [
-          "sideform"
-        ]
-      }
-    ],
     "files": [
       "dist/**",
       "THIRD_PARTY_NOTICES.md"
@@ -55,13 +44,22 @@
       "icon": "assets/app-icons/white.icon",
       "category": "public.app-category.graphics-design",
       "identity": "-",
-      "hardenedRuntime": false,
-      "extraResources": [
+      "hardenedRuntime": false
+    },
+    "win": {
+      "target": [
         {
-          "from": "native/bin/sideform-computer-use",
-          "to": "computer-use/sideform-computer-use"
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
         }
-      ]
+      ],
+      "icon": "assets/app-icons/white.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   },
   "dependencies": {

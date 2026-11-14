@@ -1,8 +1,7 @@
-import { shouldForwardMenuCommand } from "./menuTarget";
 import { captureWithRetry } from "./captureRetry";
 import { normalizePageColor, PAGE_BG_FALLBACK, SAMPLE_PAGE_BG_SCRIPT } from "./pageBackground";
 import path from "node:path";
-import { access, writeFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { app, BaseWindow, View, WebContentsView, Menu, Notification, dialog, ipcMain, nativeTheme, session, shell, systemPreferences, webContents } from "electron";
 import {
   TabManager,
@@ -13,7 +12,7 @@ import {
   type TabsSnapshot,
   type UITheme,
 } from "./tabManager";
-import { buildMenuTemplate, buildNewTabMenuTemplate, buildRecentContextMenuTemplate, buildRecentFilterMenuTemplate, type RecentFilterChoice, buildTabContextMenuTemplate, REVEAL_MENU_ITEM_ID } from "./menu";
+import { buildMenuTemplate, buildTabContextMenuTemplate, REVEAL_MENU_ITEM_ID } from "./menu";
 import { parseTabMenuPayload, revealInFolder, revealMenuLabel, type RevealDirs, type RevealTarget } from "./revealInFolder";
 import {
   buildBrowserToolsMenuTemplate,
@@ -36,10 +35,8 @@ import { createRunBoundary } from "./runBoundary";
 import {
   attachNavigationPolicy,
   attachPanelNavigationPolicy,
-  attachOfflineFallback,
   attachLocalOnlyPolicy,
   attachBrowserTabPolicy,
-  shouldDropMcpRegistration,
   shouldForwardNavigationEvent,
 } from "./navigation";
 import {
@@ -49,67 +46,44 @@ import {
   type BrowserPageHandle,
   isFetchableStylesheetUrl,
 } from "@sideform/browser-agent/controller";
-import { resolveAgentPanelUrl, resolveCanvasTabUrl, INITIAL_TABS, isEnvValueSet } from "./config";
-import { nativeAppsArguments, secureWebPreferences } from "./webPreferences";
+import { resolveAgentPanelUrl, isEnvValueSet } from "./config";
+import { secureWebPreferences } from "./webPreferences";
 import { ADDRESS_ROW_HEIGHT, ISLAND_GAP, ISLAND_RADIUS, TAB_ROW_HEIGHT, agentPanelWidthFor, computeWindowLayout, omniboxBounds, type WindowLayout } from "./layout";
 import { isShownUrl, parseOmniboxShow, parseUrlPayload } from "./omniboxIpc";
 import type { SuggestItem } from "./browser/historySuggest";
 import { historyKey, type HistoryStore } from "./browser/historyStore";
 import type { HistoryService } from "./historyService";
 import type { BrowserSettingsIpc } from "./browserSettingsIpc";
-import type { AppIconIpc } from "./appIconIpc";
 import { awaitSettled, type FixtureBypassRegistry } from "./browser/adBlock";
 
 const FIXTURE_RELEASE_DRAIN_MS = 30_000;
-import { activeTabChanged, isAuthSignInSender, pickAuthReceiver, type AuthTokenPayload, type DesktopAuth } from "./desktopAuth";
 import { AGENT_PANEL_SETTINGS_FILE, readAgentPanelSettings, writeAgentPanelSettings } from "./agentPanelSettings";
 import { isRecord, parseJournalOrigins, parseToken, rawToken } from "./checkpointArgs";
 import { JournalOwners } from "./journalOwners";
 import { FixtureOwners } from "./fixtureOwners";
 import { isBrowserOwner as isBrowserOwnerId, isOrphaningEvent } from "./orphanRelease";
-import { CanvasLinkRouter } from "./canvasLink";
-import { openDocTab } from "./docOpen";
-import { openWorkflowTab } from "./workflowOpen";
-import { addLoginCopy } from "./loginsIpc";
-import { handleDocExportPdf } from "./docPdfExport";
-import { handleDocDelete, handleDocList, handleDocSave, type DocIpcDeps } from "./docIpc";
-import { createDocStore, docDirFor, nodeDocFs, type DocStore } from "./docStore";
-import { handleWorkflowDelete, handleWorkflowList, handleWorkflowSave, type WorkflowIpcDeps } from "./workflowIpc";
-import { createWorkflowStore, nodeWorkflowFs, workflowDirFor, type WorkflowStore } from "./workflowStore";
-import { canvasDirFor, createCanvasStore, type CanvasStore } from "./canvasStore";
-import { handleCanvasDelete, handleCanvasList, handleCanvasRead, handleCanvasSave, type CanvasIpcDeps } from "./canvasIpc";
-import { changedRecentItems, loadRecentItems } from "./recentItems";
-import { deleteConfirmCopy, deleteRecentItems } from "./emptyDelete";
-import { notifyRecentChanged, openRecentItem, parseRecentFilterMenuRequest, parseRecentMenuRequest, recentFor } from "./emptyOpen";
-import { CANVAS_WRITER_GRACE_MS, canvasSenders, flushPage, flushThenClose, pendingCloseFlushes } from "./canvasWriters";
+import { PANEL_SENDER_GRACE_MS, flushThenClose, panelSenders, pendingCloseFlushes } from "./panelSenders";
 import { chatDirFor, createChatStore, type ChatStore } from "./chatStore";
 import { handleChatDelete, handleChatList, handleChatRead, handleChatSave, type ChatIpcDeps } from "./chatIpc";
 import { CHATS_FLUSH_SCRIPT, flushPanelChats, flushQuitWork, hasQuitWork } from "./chatFlush";
 import { openTraceTab } from "./traceOpen";
 import { openSettings } from "./settingsOpen";
-import { handleTraceList, handleTraceListTabs, handleTraceRead, handleTraceSave, type TraceIpcDeps } from "./traceIpc";
+import { handleTraceListTabs, handleTraceRead, handleTraceSave, type TraceIpcDeps } from "./traceIpc";
 import { createTraceStore, nodeTraceFs, TRACE_DIR } from "./traceStore";
 import { FetchRouter } from "./fetchRouting";
 import { BLANK_DOCUMENT_URL, createCommitGate } from "./commitGate";
 import * as fixtureSession from "./fixtureSession";
-import { computerUseDeps } from "./computerUse/service";
-import { hideAllCursorOverlays } from "./computerUse/cursorOverlay";
-import { computerUseAvailable, setNativeCursorEnabled } from "./computerUse/helper";
 import { CURSOR_SETTINGS_FILE, type CursorSettings, readCursorSettings, resolveCursorSettings, writeCursorSettings } from "./cursorSettings";
-import type { McpService, IpcListenerGateway } from "./mcp/service";
-import { MCP_BROWSER_OWNER, createMcpBrowserBridge } from "./mcp/browserBridge";
 import { fillLogin } from "./browser/fillLogin";
 import { releaseAnswer } from "./releaseAnswer";
 import { isLoginBindingCall, promptChoiceFromButton, savePromptCopy, type LoginCapture } from "./browser/loginCapture";
 import { normalizeOrigin, type CredentialStore } from "./browser/credentialStore";
 import type { FaviconCache } from "./browser/faviconCache";
 import type { PasswordsService } from "./passwordsService";
-import { appKey, errorForPlan, leaveApp, openApp, ownedBySender, ownedBySession, planAppCommand, routeAppCommand, withLeftAppNote } from "./appTargets";
-import { appConfirm, appRegistry, cancelWaiters, findUserRunningPids, quitUserApp, reopenApp, reopenWhenGone, validateRequestedApp } from "./appTargetsService";
 import { AGENT_AWAKE_HOLD_MS, MINIMIZED_AGENT_NOTICE_BODY, MINIMIZED_AGENT_NOTICE_TITLE, createTabAgentActivity, isAgentPageCommand } from "./agentActivity";
 import { decideCloseTarget } from "./closeTarget";
 import { focusAfterCollapse, isTabCreationSender, planEmptyViewUpdate, resolveFocusTarget, type EmptyViewState } from "./emptyView";
-import { GLASS_SOLID, adoptPanelTheme, contentBackground, FALLBACK_THEME, glassTint, isPanelDocument, resolveWindowTheme, } from "./windowTheme";
+import { GLASS_SOLID, contentBackground, FALLBACK_THEME, glassTint, isPanelDocument, resolveWindowTheme } from "./windowTheme";
 import { denyAllPermissions } from "./browser/permissions";
 import {
   BrowserSessions,
@@ -121,62 +95,20 @@ import {
   ScopeCounter,
   planSessionCommand,
   parseSessionId,
-  parseAppChat,
 } from "./browserSessions";
-
-/**
- * App-wide, shared by every window: the partitions `qa-0`..`qa-5` that isolated
- * sessions take turns in. The wait for a free slot is tunable for tests.
- */
-// One document store per PROCESS: its rev cache and per-id chains must outlive any window,
-// or a reopened window (macOS dock) could race the closed window's pending writes.
-let processDocStore: DocStore | null = null;
-function getDocStore(): DocStore {
-  processDocStore ??= createDocStore({
-    rootDir: path.join(app.getPath("userData"), docDirFor(isEnvValueSet(process.env.PEN_DESKTOP_URL))),
-    fs: nodeDocFs,
-  });
-  return processDocStore;
-}
-
-// One workflow store per PROCESS, for the same reason.
-let processWorkflowStore: WorkflowStore | null = null;
-function getWorkflowStore(): WorkflowStore {
-  processWorkflowStore ??= createWorkflowStore({
-    rootDir: path.join(app.getPath("userData"), workflowDirFor(isEnvValueSet(process.env.PEN_DESKTOP_URL))),
-    fs: nodeWorkflowFs,
-  });
-  return processWorkflowStore;
-}
-
-// One canvas store per PROCESS, for the same reason.
-let processCanvasStore: CanvasStore | null = null;
-function getCanvasStore(): CanvasStore {
-  processCanvasStore ??= createCanvasStore({
-    rootDir: path.join(app.getPath("userData"), canvasDirFor(isEnvValueSet(process.env.PEN_DESKTOP_URL))),
-  });
-  return processCanvasStore;
-}
 
 // One chat store per PROCESS (the agent panel's chats, chatStore.ts).
 let processChatStore: ChatStore | null = null;
 function getChatStore(): ChatStore {
   processChatStore ??= createChatStore({
-    rootDir: path.join(app.getPath("userData"), chatDirFor(isEnvValueSet(process.env.PEN_DESKTOP_URL))),
+    rootDir: path.join(app.getPath("userData"), chatDirFor(isEnvValueSet(process.env.SIDEFORM_LIGHT_UI_URL))),
   });
   return processChatStore;
 }
 
-/** Where canvases, documents, workflows and traces live on disk (same roots as the stores). */
+/** Where traces live on disk (same root as the store). */
 function revealDirs(): RevealDirs {
-  const userData = app.getPath("userData");
-  const overridden = isEnvValueSet(process.env.PEN_DESKTOP_URL);
-  return {
-    canvases: path.join(userData, canvasDirFor(overridden)),
-    documents: path.join(userData, docDirFor(overridden)),
-    workflows: path.join(userData, workflowDirFor(overridden)),
-    traces: path.join(userData, TRACE_DIR),
-  };
+  return { traces: path.join(app.getPath("userData"), TRACE_DIR) };
 }
 
 /** "Reveal in Finder" for one stored file; rules in revealInFolder.ts. Never throws. */
@@ -189,88 +121,39 @@ function revealStoredFile(target: RevealTarget): Promise<void> {
   });
 }
 
-/** Every window's empty-state view (they all show the same Recent list). */
-const emptyViewContents = new Set<Electron.WebContents>();
-
-/**
- * `canvases:*` handlers: registered ONCE per process (not per window), because a closing canvas tab
- * flushes its last autosave after its window's TabManager and handlers may be gone.
- * Senders come from the process-level registry (canvasWriters.ts). Removed on `will-quit`.
- */
-/** A stored change refreshes the Recent list of every empty view. */
-function recentChanged<T>(result: T): T {
-  if (changedRecentItems(result)) notifyRecentChanged(emptyViewContents);
-  return result;
-}
-
-/** Every main window's TabManager, for the quit flush (index.ts). */
-const liveTabManagers = new Set<TabManager>();
-
-/** True while a canvas tab exists in any window or a tab close is still flushing. */
-export function hasCanvasWork(): boolean {
-  for (const tm of liveTabManagers) if (tm.canvasTabCount() > 0) return true;
-  return pendingCloseFlushes().length > 0;
-}
-
-/** Flushes every canvas tab of every window and waits for tab closes already flushing. */
-export async function flushAllCanvasTabs(): Promise<void> {
-  await Promise.allSettled([...[...liveTabManagers].map((tm) => tm.flushCanvasTabs()), ...pendingCloseFlushes()]);
-}
-
 /** Agent panel webContents of the open windows (their chats are flushed on quit). */
 const livePanels = new Set<Electron.WebContents>();
 
-/** Page URL of each agent panel by webContents id; an entry is honoured only while `canvasSenders` still knows the panel (10 s grace after destroy). */
+/** Page URL of each agent panel by webContents id; an entry is honoured only while `panelSenders` still knows the panel (10 s grace after destroy). */
 const chatPanelUrls = new Map<number, string>();
 
-/** Flush port of a webContents (agent panel or editor tab). */
+/** Flush port of a webContents (the agent panel). */
 function pagePort(wc: Electron.WebContents) {
   return { isDestroyed: () => wc.isDestroyed(), runInPage: (script: string) => wc.executeJavaScript(script, true), close: () => wc.close() };
 }
 
-/** True when the quit has to be held: a canvas tab, a closing tab or an agent panel exists. */
+/** True when the quit has to be held: an agent panel exists or a panel close is still flushing. */
 export function hasQuitFlushWork(): boolean {
-  return hasQuitWork({ hasCanvasWork, panelCount: () => livePanels.size });
+  return hasQuitWork({ hasPendingCloses: () => pendingCloseFlushes().length > 0, panelCount: () => livePanels.size });
 }
 
-/** Flushes canvas tabs and the chats of every agent panel in parallel (bounded per page). */
+/** Flushes the chats of every agent panel and waits for panel closes already flushing (bounded per page). */
 export function flushAllForQuit(): Promise<void> {
   return flushQuitWork({
-    flushCanvasTabs: flushAllCanvasTabs,
+    flushPendingCloses: () => Promise.allSettled(pendingCloseFlushes()),
     flushPanels: () => Promise.allSettled([...livePanels].map((wc) => flushPanelChats(pagePort(wc)))),
   });
 }
 
-let canvasIpcRegistered = false;
-function ensureCanvasIpc(): void {
-  if (canvasIpcRegistered) return;
-  canvasIpcRegistered = true;
-  const deps: CanvasIpcDeps = {
-    store: getCanvasStore(),
-    isPanel: (id) => canvasSenders.isPanel(id),
-    isCanvasWriter: (id) => canvasSenders.isWriter(id),
-  };
-  ipcMain.handle("canvases:list", (event) => handleCanvasList(deps, event.sender.id));
-  ipcMain.handle("canvases:read", (event, id: unknown) => handleCanvasRead(deps, event.sender.id, id));
-  ipcMain.handle("canvases:save", async (event, canvas: unknown) => recentChanged(await handleCanvasSave(deps, event.sender.id, canvas)));
-  ipcMain.handle("canvases:delete", async (event, id: unknown) => recentChanged(await handleCanvasDelete(deps, event.sender.id, id)));
-  app.once("will-quit", () => {
-    ipcMain.removeHandler("canvases:list");
-    ipcMain.removeHandler("canvases:read");
-    ipcMain.removeHandler("canvases:save");
-    ipcMain.removeHandler("canvases:delete");
-  });
-}
-
 let chatIpcRegistered = false;
-/** `chats:*` handlers: registered ONCE per process, like `ensureCanvasIpc` (a closing panel flushes its last save late). Removed on `will-quit`. */
+/** `chats:*` handlers: registered ONCE per process (a closing panel flushes its last save late). Removed on `will-quit`. */
 function ensureChatIpc(): void {
   if (chatIpcRegistered) return;
   chatIpcRegistered = true;
   const deps: ChatIpcDeps = {
     store: getChatStore(),
     panelUrlOf: (id) => {
-      if (!canvasSenders.isPanel(id)) {
+      if (!panelSenders.isPanel(id)) {
         chatPanelUrls.delete(id);
         return undefined;
       }
@@ -290,7 +173,7 @@ function ensureChatIpc(): void {
   });
 }
 
-const partitionPool = new PartitionPool(undefined, Number(process.env.PEN_DESKTOP_SESSION_SLOT_WAIT_MS) || undefined);
+const partitionPool = new PartitionPool(undefined, Number(process.env.SIDEFORM_LIGHT_SESSION_SLOT_WAIT_MS) || undefined);
 
 /** Per-session state of an isolated browser session (see browserSessions.ts). */
 interface SessionCtx {
@@ -320,30 +203,6 @@ export interface HistoryServices {
 const liveTabbarIds = new Set<number>();
 export function isLiveTabbar(senderId: number): boolean {
   return liveTabbarIds.has(senderId);
-}
-
-// Real ipcMain wiring for McpService.registerAppLevelIpc — kept here (not in
-// service.ts, which stays Electron-free for testability, see its header
-// comment) with the channel names written as literals so
-// test/ipcContract.test.ts's mechanical source scan can find them, exactly
-// like the existing tabbar ipcMain.on("tabbar:new", ...) calls below.
-function createMcpIpcGateway(): IpcListenerGateway {
-  const wrapped = new Map<(senderId: number, payload: unknown) => void, (event: Electron.IpcMainEvent, payload: unknown) => void>();
-  return {
-    on(channel, listener) {
-      const w = (event: Electron.IpcMainEvent, payload: unknown) => listener(event.sender.id, payload);
-      wrapped.set(listener, w);
-      if (channel === "mcp:register") ipcMain.on("mcp:register", w);
-      else ipcMain.on("mcp:result", w);
-    },
-    removeListener(channel, listener) {
-      const w = wrapped.get(listener);
-      if (!w) return;
-      wrapped.delete(listener);
-      if (channel === "mcp:register") ipcMain.removeListener("mcp:register", w);
-      else ipcMain.removeListener("mcp:result", w);
-    },
-  };
 }
 
 /** Isolated JS world id for executeJavaScriptIsolated (arbitrary, fixed). */
@@ -385,29 +244,16 @@ function withFrameTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * and the app-level MCP menu status into it.
  */
 export function createMainWindow(
-  editorUrl: string,
-  mcpService: McpService,
+  uiOrigin: string,
   loginServices: LoginServices,
   history: HistoryServices,
-  desktopAuth: DesktopAuth,
   browserSettingsIpc: BrowserSettingsIpc,
-  appIconIpc: AppIconIpc,
   fixtureBypass: FixtureBypassRegistry,
 ): BaseWindow {
-  // Idempotent — see registerAppLevelIpc's own doc comment. Safe to call on
-  // every window (re)creation, including the macOS dock "activate" reopen.
-  mcpService.registerAppLevelIpc(createMcpIpcGateway());
-  const editorOrigin = new URL(editorUrl).origin;
-  // THE one place the URL of a new editor tab is decided: the chat is in the
-  // left panel, so tabs are canvas tabs (`?chat=off`). Every editor-tab creation
-  // path goes through TabManager, which gets only this.
-  const tabEditorUrl = resolveCanvasTabUrl(editorUrl);
-  const offlineFile = path.join(__dirname, "../assets/offline.html");
-
   const win = new BaseWindow({
     width: 1440,
     height: 900,
-    title: "Sideform Desktop",
+    title: "Sideform Light",
     // Put the tab strip in the native title-bar row on macOS while keeping
     // the standard traffic-light controls. Other platforms retain their
     // normal system frame.
@@ -428,7 +274,7 @@ export function createMainWindow(
           // out, which is not what Codex does. A vibrant window is
           // non-opaque, so macOS edges it with a dark 1px line (it comes
           // with the shadow, which we keep); the tab
-          // CONTENT views (editor/browser) are kept opaque so no glass ever
+          // CONTENT views (browser and page tabs) are kept opaque so no glass ever
           // bleeds through page content.
           vibrancy: "under-window" as const,
           visualEffectState: "active" as const,
@@ -446,7 +292,7 @@ export function createMainWindow(
   });
   // Glass + islands (layout.ts): no rim, the window glass shows between the
   // islands. On macOS a plain View at the very bottom paints the glass tint
-  // (translucent editor-theme colour) over the vibrancy; no page, no IPC.
+  // (translucent theme colour) over the vibrancy; no page, no IPC.
   const glassTintView = process.platform === "darwin" ? new View() : null;
   if (glassTintView) win.contentView.addChildView(glassTintView);
   win.contentView.addChildView(tabbarView);
@@ -460,7 +306,7 @@ export function createMainWindow(
   if (process.platform !== "darwin") win.setBackgroundColor(GLASS_SOLID[FALLBACK_THEME]);
   void tabbarView.webContents.loadFile(path.join(__dirname, "../tabbar/tabbar.html"));
 
-  // Tab CONTENT views (editor/browser) must stay opaque no matter what the
+  // Tab CONTENT views (browser/page) must stay opaque no matter what the
   // glass tab bar above is doing — otherwise the desktop behind the window
   // would show through actual page content. A WebContentsView defaults to a
   // white background, which is a visible flash on a dark-theme tab before
@@ -472,50 +318,41 @@ export function createMainWindow(
   const backgroundColorForTheme = (theme: UITheme): string => contentBackground(theme);
 
   // --- agent panel ---
-  // Not a tab: never given to TabManager or mcpService (no mcp access). Its
-  // preload exposes the browser bridge (browser:command, owner-checked by
-  // isBrowserOwner below) and the canvas link (canvas:*). It sits below the
-  // tab bar (see layout.ts); an opaque, theme-matched background like the tab
-  // content views, updated in pushState.
-  const panelUrl = resolveAgentPanelUrl(editorUrl);
+  // Not a tab: never given to TabManager. Its preload exposes the browser bridge (browser:command,
+  // owner-checked by isBrowserOwner below), chat/trace storage and the Settings opener. It sits below the
+  // tab bar (see layout.ts); an opaque, theme-matched background like the tab content views, updated in pushState.
+  const panelUrl = resolveAgentPanelUrl(uiOrigin);
   const agentPanelView = new WebContentsView({
-    webPreferences: secureWebPreferences(path.join(__dirname, "../preload/agentPanel.js"), { additionalArguments: nativeAppsArguments(computerUseAvailable()) }),
+    webPreferences: secureWebPreferences(path.join(__dirname, "../preload/agentPanel.js")),
   });
   win.contentView.addChildView(agentPanelView);
-  ensureCanvasIpc();
   ensureChatIpc();
   {
     const panelId = agentPanelView.webContents.id;
-    canvasSenders.addPanel(panelId);
+    panelSenders.addPanel(panelId);
     chatPanelUrls.set(panelId, panelUrl);
     livePanels.add(agentPanelView.webContents);
     agentPanelView.webContents.once("destroyed", () => {
-      canvasSenders.release(panelId);
+      panelSenders.release(panelId);
       // Same grace as the registry (set after its timer, so it fires after the id is forgotten): a last save still finds the URL, then the entry goes.
-      setTimeout(() => chatPanelUrls.delete(panelId), CANVAS_WRITER_GRACE_MS).unref();
+      setTimeout(() => chatPanelUrls.delete(panelId), PANEL_SENDER_GRACE_MS).unref();
     });
   }
   agentPanelView.setBackgroundColor(backgroundColorForTheme(FALLBACK_THEME));
   agentPanelView.setBorderRadius(ISLAND_RADIUS);
-  // Anything but the panel's own page is not for the panel: other editor
-  // origin pages open as an editor tab (the canvas-tab URL), foreign origins go to
-  // the system browser.
-  attachPanelNavigationPolicy(
-    agentPanelView.webContents,
-    panelUrl,
-    (url) => void shell.openExternal(url),
-    () => void tabs.newTab("editor"),
-  );
-  attachOfflineFallback(agentPanelView.webContents, offlineFile);
+  // Anything but the panel's own page is not for the panel: foreign origins go to the system browser,
+  // everything else is denied.
+  attachPanelNavigationPolicy(agentPanelView.webContents, panelUrl, (url) => void shell.openExternal(url));
   void agentPanelView.webContents.loadURL(panelUrl);
-  // The panel page paints the stored editor theme (`ui-theme`, `.dark` on <html>); its preload
+  const panelWc = () => (!agentPanelView.webContents.isDestroyed() ? agentPanelView.webContents : null);
+  // The panel page paints the stored ui theme (`ui-theme`, `.dark` on <html>); its preload
   // observes that class and sends `panel:theme` (handler `onPanelTheme`, below). adoptPanelTheme
   // (windowTheme.ts) decides whether main follows it.
   // --- empty state: shown in the tab area while the window has no tab ---
-  // The window starts with zero tabs (config.ts INITIAL_TABS) and returns to
-  // zero when the last tab closes. A local page (no remote content) with its
-  // OWN minimal preload (preload/empty.ts): its two buttons send the same events
-  // as the "+" menu. Added after the panel, hidden until pushState sees no active tab.
+  // The window starts with zero tabs and returns to zero when the last tab
+  // closes. A local page (no remote content) with its OWN minimal preload
+  // (preload/empty.ts): its button sends the same event as the "+" button.
+  // Added after the panel, hidden until pushState sees no active tab.
   let emptyState: EmptyViewState = { visible: false, theme: FALLBACK_THEME, sessionTabs: 0 };
   // The placeholder's one state message: it carries the theme and the count of
   // background session tabs (the page shows a note when the count is above 0).
@@ -532,12 +369,8 @@ export function createMainWindow(
       userClosingTab = false;
     }
   };
-  // The last editor theme any tab reported: keeps the chrome stable at zero tabs.
-  let rememberedEditorTheme: UITheme | null = null;
-  // True while `rememberedEditorTheme` came from the agent panel page, not from an editor tab (an editor's own report always wins).
-  let rememberedFromPanel = false;
-  // Doc, trace and Settings tabs report the editor theme like canvas tabs do (same preload), so they count here.
-  const editorTabCount = (s: TabsSnapshot) => s.tabs.filter((t) => t.kind === "editor" || t.kind === "doc" || t.kind === "workflow" || t.kind === "trace" || t.kind === "settings").length;
+  // The theme the agent panel page last reported (`panel:theme`): the window chrome follows it, also at zero tabs.
+  let panelTheme: UITheme | null = null;
   let lastResolvedForTint: UITheme = FALLBACK_THEME;
   let lastOmniboxActiveId: number | null = null;
   // The address-bar suggestion popover: its own view, so it is not clipped to the tab bar's height. Created
@@ -569,8 +402,6 @@ export function createMainWindow(
     webPreferences: secureWebPreferences(path.join(__dirname, "../preload/empty.js")),
   });
   win.contentView.addChildView(emptyView);
-  emptyViewContents.add(emptyView.webContents);
-  emptyView.webContents.once("destroyed", () => emptyViewContents.delete(emptyView.webContents));
   attachLocalOnlyPolicy(emptyView.webContents);
   emptyView.setBackgroundColor(backgroundColorForTheme(FALLBACK_THEME));
   emptyView.setBorderRadius(ISLAND_RADIUS);
@@ -582,32 +413,6 @@ export function createMainWindow(
   emptyView.webContents.on("render-process-gone", () => {
     if (!emptyView.webContents.isDestroyed()) void emptyView.webContents.loadFile(path.join(__dirname, "../tabbar/empty.html"));
   });
-  // --- canvas link: panel <-> canvas tabs, see canvasLink.ts ---
-  // Pure router; this adapts Electron (sender checks, sends, tab actions). The
-  // sends sit here, with literal channel names, for test/ipcContract.test.ts.
-  const panelWc = () => (!agentPanelView.webContents.isDestroyed() ? agentPanelView.webContents : null);
-  const canvasLink = new CanvasLinkRouter({
-      isEditorTab: (id) => tabs.isEditorTab(id),
-      isPanel: (id) => panelWc()?.id === id,
-      sendFromTab: (msg) => {
-        const wc = panelWc();
-        wc?.send("canvas:from-tab", msg);
-      },
-      sendTabs: (list) => {
-        const wc = panelWc();
-        wc?.send("canvas:tabs", list);
-      },
-      sendFromPanel: (id, env) => {
-        const wc = webContents.fromId(id);
-        if (wc && !wc.isDestroyed()) wc.send("canvas:from-panel", env);
-      },
-      openEditorTab: (activate) => {
-        const id = tabs.newTab("editor", undefined, { activate });
-        return tabs.webContentsIdOf(id) as number;
-      },
-      activateTab: (id) => tabs.activateEditorByWebContentsId(id),
-      now: () => performance.timeOrigin + performance.now(),
-    });
   // The last snapshot actually pushed — kept only so shouldFocusAddressBar
   // (tabManager.ts) has a "previous" to compare against. window.ts owns
   // this bit of bookkeeping so the pure predicate itself stays stateless;
@@ -615,8 +420,7 @@ export function createMainWindow(
   let previousSnapshot: TabsSnapshot | null = null;
   // Tab strip's left offset inside the tab bar (= panel's right edge); set by `layout`.
   let tabStripLeft = 0;
-  // Agent panel collapsed (persisted in userData). Only the user's toggle changes it: a canvas
-  // tab opened by the agent or a launch never auto-expands it.
+  // Agent panel collapsed (persisted in userData). Only the user's toggle changes it.
   const agentPanelSettingsPath = path.join(app.getPath("userData"), AGENT_PANEL_SETTINGS_FILE);
   let panelCollapsed = readAgentPanelSettings(agentPanelSettingsPath).collapsed;
   // Panel slide animation (panelAnimation.ts owns the state and the maths; this only owns the timer
@@ -636,7 +440,7 @@ export function createMainWindow(
     } catch {
       /* unsupported platform: animate */
     }
-    return shellMotionEnabled(process.env.PEN_DESKTOP_NO_ANIMATIONS, reduced);
+    return shellMotionEnabled(process.env.SIDEFORM_LIGHT_NO_ANIMATIONS, reduced);
   };
   const currentActiveKind = (): TabsSnapshot["activeKind"] =>
     previousSnapshot ? previousSnapshot.activeKind : tabs.getSnapshot().activeKind;
@@ -711,9 +515,8 @@ export function createMainWindow(
       // Never let a cosmetic colour break a state push.
     }
   };
-  // File > Reveal is enabled while the active tab has a stored file. Toggled in place on the installed menu
-  // (no rebuild), on every state push and on every in-page navigation of a tab (the frontend names a new
-  // canvas or document with history.replaceState, which TabManager does not report).
+  // File > Reveal is enabled while the active tab has a stored file (a trace). Toggled in place on the installed menu
+  // (no rebuild), on every state push and on every navigation of a tab.
   let lastRevealable = false;
   const refreshRevealMenuItem = () => {
     if (win.isDestroyed()) return;
@@ -724,14 +527,6 @@ export function createMainWindow(
   };
   const pushState = (s: TabsSnapshot) => {
     refreshRevealMenuItem();
-    // s.mcpActiveWebContentsId is computed by TabManager itself (see
-    // TabsSnapshot's doc comment / finding 1) — window.ts just forwards it,
-    // rather than tracking "last editor tab" locally, since only TabManager
-    // sees a tab's destruction in time to repoint away from a dying editor
-    // tab before this snapshot goes out.
-    mcpService.setActiveTab(s.mcpActiveWebContentsId);
-    const info = tabs.editorTabsInfo();
-    canvasLink.syncTabs(info.tabs, info.activeWebContentsId);
     // A fresh, empty-URL browser tab (File ▸ New Browser Tab, or switching
     // to one that was never navigated) becoming active must put the caret
     // in the address bar, the way every real browser does on a new tab —
@@ -749,10 +544,7 @@ export function createMainWindow(
     // through here — those must never yank focus away from whatever the
     // user is doing.
     const focusAddressBar = shouldFocusAddressBar(previousSnapshot, s);
-    const tabSwitched = activeTabChanged(previousSnapshot, s);
     previousSnapshot = s;
-    // A held sign-in token may now have an eligible receiver (the newly active tab can be the listening one).
-    if (tabSwitched) desktopAuth.notifyListening();
     const geometry = computeLayout(s.activeKind);
     // Mid-slide the tab bar gets the CURRENT strip offset (tabbar:strip-left then moves it every frame).
     tabStripLeft = animationFrame()?.tabArea.x ?? geometry.tabStripLeft;
@@ -768,10 +560,7 @@ export function createMainWindow(
       addressRowHeight: geometry.addressRowHeight,
       tabRowHeight: TAB_ROW_HEIGHT,
     });
-    const themed = resolveWindowTheme({ activeTheme: s.activeTheme, remembered: rememberedEditorTheme, system: FALLBACK_THEME });
-    rememberedEditorTheme = themed.remembered;
-    if (s.activeTheme !== null) rememberedFromPanel = false;
-    const resolvedTheme = themed.theme;
+    const resolvedTheme = resolveWindowTheme(panelTheme, FALLBACK_THEME);
     if (process.platform !== "darwin") win.setBackgroundColor(GLASS_SOLID[resolvedTheme]);
     lastResolvedForTint = resolvedTheme;
     glassTintView?.setBackgroundColor(glassTint(resolvedTheme, nativeTheme.shouldUseDarkColors).color);
@@ -804,17 +593,16 @@ export function createMainWindow(
     }
     if (focusAddressBar) tabbarView.webContents.focus();
     // Keep a visible browser tab's own blank-canvas background matching the
-    // theme the bar is now showing (glass tab bar work, 2026-09-25) — most
-    // relevant right after tabs.newTab("browser") creates one (its initial
-    // guess at creation time may be wrong) and whenever the editor theme
-    // that drives resolveActiveTheme changes while a browser tab is active.
-    // Editor tabs correct their own background directly off their own
-    // onThemeChanged callback (see createView below) and don't need this.
+    // theme the bar is now showing — most relevant right after
+    // tabs.newTab("browser") creates one (its initial guess at creation time
+    // may be wrong) and whenever the panel's theme changes while a browser tab
+    // is active. Page tabs correct their own background off their own theme
+    // report (see `tab:theme` below) and don't need this.
     if (s.activeKind === "browser") {
       tabs.activeBrowserHandle()?.setBackgroundColor?.(backgroundColorForTheme(resolvedTheme));
     }
-    // The active tab's kind can change (activating a browser tab, or an
-    // editor tab) without a window resize — re-run layout every time the
+    // The active tab's kind can change (activating a browser tab, or a
+    // page tab) without a window resize — re-run layout every time the
     // snapshot changes so the address row's height tracks activeKind
     // (design doc §2). `layout` is defined below `tabs`, but this closure is
     // never invoked until TabManager itself calls onStateChanged, which
@@ -822,11 +610,6 @@ export function createMainWindow(
     // this function — by then `layout` is already assigned.
     applyLayout(geometry);
   };
-  // tabs.setMcpStatus() (below) folds the current MCP status into every
-  // TabsSnapshot pushState already sends — the tab strip's indicator reuses
-  // the existing tabbar:state channel rather than adding a fourth one (see
-  // CLAUDE.md's IPC section and mcp/service.ts's McpService.getStatus()).
-
   // Review finding 3: JS dialogs (`alert`/`confirm`/`prompt`/`beforeunload`)
   // are auto-handled (see createView's debugger "message" listener below)
   // only while an agent browser command is actually running against that
@@ -884,24 +667,14 @@ export function createMainWindow(
   // relevant to whatever the agent is doing next.
   const DIALOG_QUEUE_CAP = 10;
 
+  // Page tabs (trace, Settings) report the theme their page paints; it only colours that tab's own view.
   const themeCallbacks = new Map<number, (theme: UITheme) => void>();
   const titleCallbacks = new Map<number, (title: string) => void>();
-  const onEditorTheme = (event: Electron.IpcMainEvent, theme: unknown) => {
+  const onTabTheme = (event: Electron.IpcMainEvent, theme: unknown) => {
     if (theme !== "light" && theme !== "dark") return;
     themeCallbacks.get(event.sender.id)?.(theme);
   };
-  ipcMain.on("editor:theme", onEditorTheme);
-  const onEditorDocumentTitle = (event: Electron.IpcMainEvent, title: unknown) => {
-    if (typeof title !== "string") return;
-    const normalized = title.trim().slice(0, 200) || "Untitled";
-    titleCallbacks.get(event.sender.id)?.(normalized);
-    // Feeds list_editor_tabs (mcp/service.ts) — keyed by the same
-    // webContents id as everything else in the MCP tab registry, so it
-    // never needs a separate id-translation step the way pushState above
-    // does for TabManager's own sequential ids.
-    mcpService.setTabTitle(event.sender.id, normalized);
-  };
-  ipcMain.on("editor:document-title", onEditorDocumentTitle);
+  ipcMain.on("tab:theme", onTabTheme);
 
   // --- tabs ---
   const fetchRouter = new FetchRouter();
@@ -916,8 +689,8 @@ export function createMainWindow(
   // Assigned once the session helpers exist; createView's handlers call it.
   let closeSessionsOwnedBy: (owner: number, gone?: boolean) => void = () => {};
   const tabs = new TabManager({
-    editorUrl: tabEditorUrl,
-        onStateChanged: pushState,
+    uiOrigin,
+    onStateChanged: pushState,
     createView: (kind: TabKind, sessionId?: string): TabViewHandle => {
       // An isolated session's tab: its own in-memory partition, its own router.
       const sessionCtx = sessionId ? sessions.peek(sessionId)?.ctx : undefined;
@@ -926,7 +699,7 @@ export function createMainWindow(
           ? {
               webPreferences: secureWebPreferences(undefined, {
                 // Dedicated session partition — the security boundary for
-                // the built-in browser (design doc §1): the editor's
+                // the built-in browser (design doc §1): the ui's
                 // cookies are never in it, and whatever the user logs into
                 // here is all the agent can ever reach. Deliberately no
                 // preload: a browser tab must never see `penDesktop`.
@@ -941,7 +714,8 @@ export function createMainWindow(
             ? // The History tab: same shape, its own local page and preload.
               { webPreferences: secureWebPreferences(path.join(__dirname, "../preload/history.js")) }
             : {
-                webPreferences: secureWebPreferences(path.join(__dirname, "../preload/tab.js"), { additionalArguments: nativeAppsArguments(computerUseAvailable()) }),
+                // trace and settings: pages of the bundled ui, with the page tab bridge.
+                webPreferences: secureWebPreferences(path.join(__dirname, "../preload/tab.js")),
               },
       );
       win.contentView.addChildView(view);
@@ -949,10 +723,10 @@ export function createMainWindow(
       // The tab content is an island with rounded corners (radius set once, here).
       view.setBorderRadius(ISLAND_RADIUS);
       const viewId = view.webContents.id;
-      // Opaque by default for both kinds — see backgroundColorForTheme's doc
+      // Opaque by default for every kind — see backgroundColorForTheme's doc
       // comment above. Best guess (system theme) until something more
-      // accurate is known: an editor tab corrects this itself the moment it
-      // reports its own theme (onThemeChanged wiring below); a blank browser
+      // accurate is known: a page tab corrects this itself the moment it
+      // reports its own theme (`tab:theme`, below); a blank browser
       // tab is corrected by pushState once the resolved theme is known.
       view.setBackgroundColor(backgroundColorForTheme(FALLBACK_THEME));
       // A view's background colour is the base behind every page it shows,
@@ -1286,7 +1060,7 @@ export function createMainWindow(
         // it needs no debugger session at all.
         // Network mocks (PageFixture `network`): a browser tab with a debugger
         // joins the router, which enables Fetch on it while routing is active.
-        // Editor tabs never get here.
+        // Page tabs never get here.
         const router = sessionId ? sessionCtx?.router : fetchRouter;
         if (debuggerAttached && router) {
           unregisterFromFetchRouter = router.registerTab(
@@ -1310,18 +1084,16 @@ export function createMainWindow(
         });
       }
 
-      if (kind === "doc" || kind === "workflow" || kind === "trace" || kind === "settings") {
-        // A trace tab is the same kind of plain frontend page (`/trace/<id>`) as a document tab;
-        // so is the Settings tab (`/settings`, default session: its localStorage is the editor's).
-        // A document tab is a plain frontend page (`/doc`): same origin clamp and offline
-        // fallback as a canvas tab, but NOT a canvas tab: no MCP registration, no fixtures,
-        // no canvas link. Its title follows the page title (the page sets document.title and
-        // does not call the preload's setDocumentTitle), so main listens to the event.
-        attachNavigationPolicy(view.webContents, editorOrigin, (url) => void shell.openExternal(url));
-        attachOfflineFallback(view.webContents, offlineFile);
+      if (kind === "trace" || kind === "settings") {
+        // A trace tab (`/trace/<id>`) and the Settings tab (`/settings`, default session: its localStorage is
+        // shared with the panel) are plain pages of the bundled ui, clamped to its origin. The title follows
+        // the page title (the page sets document.title), so main listens to the event. The tab's own view
+        // background follows the theme its page reports (`tab:theme`).
+        attachNavigationPolicy(view.webContents, uiOrigin, (url) => void shell.openExternal(url));
         view.webContents.on("page-title-updated", (_e, title) => {
-          titleCallbacks.get(viewId)?.(title.trim().slice(0, 200) || (kind === "trace" ? "Trace" : kind === "settings" ? "Settings" : kind === "workflow" ? "Workflow" : "Document"));
+          titleCallbacks.get(viewId)?.(title.trim().slice(0, 200) || (kind === "trace" ? "Trace" : "Settings"));
         });
+        themeCallbacks.set(viewId, (theme) => view.setBackgroundColor(backgroundColorForTheme(theme)));
       }
 
       if (kind === "passwords") {
@@ -1387,56 +1159,9 @@ export function createMainWindow(
         void contents.loadFile(path.join(__dirname, "../history/history.html"));
       }
 
-      if (kind === "editor") {
-        // A canvas tab may save its canvas, also while it closes (canvasWriters.ts).
-        canvasSenders.addWriter(viewId);
-        view.webContents.once("destroyed", () => canvasSenders.release(viewId));
-        // Mocks are owned by main; the editor tab that drives the agent releases
-        // them in its renderer `finally`, which never runs on reload/crash/close.
-        const releaseOrphanedFixture = () => {
-          releaseOwnedFixture(viewId);
-          journalOwners.stopOwnedBy(viewId);
-          closeSessionsOwnedBy(viewId);
-        };
-        view.webContents.on("render-process-gone", () => {
-          releaseOrphanedFixture();
-          canvasLink.rendererGone(viewId);
-        });
-        // Orphaned (and, for a registered canvas tab, gone for the panel) once a
-        // reload COMMITS, not at did-start-navigation, which also fires for
-        // navigations that never commit (denied by the policy, 204, downloads).
-        view.webContents.on("did-frame-navigate", (_e, _url, _code, _text, isMainFrame) => {
-          if (isOrphaningEvent({ type: "did-navigate", isMainFrame, isSameDocument: false })) {
-            releaseOrphanedFixture();
-            canvasLink.tabGone(viewId);
-          }
-        });
-        attachNavigationPolicy(view.webContents, editorOrigin, (url) => void shell.openExternal(url));
-        attachOfflineFallback(view.webContents, offlineFile);
-        mcpService.registerTab(viewId, {
-          sendMcpCall: (callId, tool, args) => view.webContents.send("mcp:call", { callId, tool, args }),
-          isDestroyed: () => view.webContents.isDestroyed(),
-        });
-        // A tab's page reload drops whatever registerMcpBridge() call the
-        // previous page made — the new page has to re-register (design doc
-        // §2/§3). Only the main frame counts: an iframe navigating inside the
-        // editor page is not the editor tab itself going away. `isSameDocument`
-        // must also be excluded: Electron fires did-start-navigation for
-        // pushState/replaceState/hash navigation too (same-document, main
-        // frame), and pen-editor is a react-router SPA — an in-app link click
-        // would otherwise be treated as a full page reload, dropping the
-        // registration even though registerMcpBridge() was never re-run (its
-        // module-scoped `teardown` guard makes initDesktopMcpBridge() a no-op
-        // on the next call), permanently killing the bridge until a manual
-        // reload.
-        view.webContents.on("did-start-navigation", (details) => {
-          if (shouldDropMcpRegistration(details)) mcpService.handleTabNavigated(viewId);
-        });
-      } else if (kind === "browser") {
-        // Browser tabs: never registered with the MCP bridge, never get the
-        // editor:* IPC callbacks (there is no preload to send them from
-        // anyway). Popups open as a new browser tab instead of escaping to
-        // the system browser.
+      if (kind === "browser") {
+        // Browser tabs: no preload and no IPC callbacks. Popups open as a new
+        // browser tab instead of escaping to the system browser.
         attachBrowserTabPolicy(view.webContents, (url) => {
           // A popup of a session that is closing is dropped.
           if (sessionId && !sessions.isLive(sessionId)) return;
@@ -1479,7 +1204,7 @@ export function createMainWindow(
           // so a non-agent popup opens without stealing the agent even
           // though it's now the visibly active tab.
           // Load through the popup's OWN handle: a session popup opens in the
-          // background, so the active tab is the editor or the user's browser.
+          // background, so the active tab is the user's own.
           tabs
             .browserTabHandleById(popupId, sessionId)
             ?.loadURL(url)
@@ -1594,7 +1319,7 @@ export function createMainWindow(
         if (shouldForwardNavigationEvent({ isMainFrame })) broadcastNavEvent();
       });
 
-      // The URL policy for browse_capture's stylesheet fetches: public
+      // The URL policy for the controller's stylesheet fetches: public
       // http(s), plus the page's own origin even when it is local (a dev
       // server on localhost), which is no more than the page already reads.
       const stylesheetFetchAllowed = (u: string): boolean => {
@@ -1649,13 +1374,6 @@ export function createMainWindow(
           navEventListeners.clear();
           unregisterFromFetchRouter?.();
           cdpEventListeners.clear();
-          if (kind === "editor") {
-            mcpService.unregisterTab(viewId);
-            releaseOwnedFixture(viewId);
-            journalOwners.stopOwnedBy(viewId);
-            closeSessionsOwnedBy(viewId, true);
-            canvasLink.tabGone(viewId, true);
-          }
           if (debuggerAttached) {
             try {
               view.webContents.debugger.detach();
@@ -1666,26 +1384,11 @@ export function createMainWindow(
             }
           }
           win.contentView.removeChildView(view);
-          if (kind === "editor") {
-            // The page's own unload handlers never get its last save through: run the flush handshake first (canvasWriters.ts).
-            void flushThenClose(pagePort(view.webContents));
-          } else {
-            view.webContents.close();
-          }
+          view.webContents.close();
         },
-        sendMenuCommand: (id) => view.webContents.send("menu:command", id),
         sendSettingsSection: (section) => view.webContents.send("settings:section", section),
-        flushCanvas: kind === "editor" ? () => flushPage(pagePort(view.webContents)) : undefined,
         focus: () => view.webContents.focus(),
         onDocumentTitleChanged: (cb) => titleCallbacks.set(viewId, cb),
-        // Editor tabs only correct their own opaque background here, the
-        // moment they report a real theme — see view.setBackgroundColor's
-        // initial call above and backgroundColorForTheme's doc comment.
-        onThemeChanged: (cb) =>
-          themeCallbacks.set(viewId, (theme) => {
-            view.setBackgroundColor(backgroundColorForTheme(theme));
-            cb(theme);
-          }),
         // A no-op on a browser tab that has navigated — see browserTabBlank.
         setBackgroundColor: (color) => {
           if (kind === "browser" && !browserTabBlank) return;
@@ -1817,10 +1520,8 @@ export function createMainWindow(
             view.webContents.on("dom-ready", onReady);
           }),
         // Full browser use's `screenshot` command (@sideform/browser-agent/controller).
-        // Shared by both tab kinds — capturePage() needs no preload and
-        // works regardless — even though only a browser tab is ever
-        // screenshotted through this bridge (the editor tab has its own
-        // separate `get_screenshot` tool).
+        // capturePage() needs no preload and works regardless — even though
+        // only a browser tab is ever screenshotted through this bridge.
         capture: async () => {
           try {
             // A never-shown view (an isolated-session tab) captures fine on
@@ -2028,13 +1729,13 @@ export function createMainWindow(
       // redundant (tabId is already confirmed to be a browser tab's id, via
       // the `found` check above).
       // A session only repoints its own agent tab: never activate or focus
-      // (the editor keeps the foreground). The shared browser follows the user's focus.
+      // (the active tab keeps the foreground). The shared browser follows the user's focus.
       if (scope !== undefined) tabs.setAgentBrowserTabId(tabId, scope);
       else tabs.activate(tabId);
       return true;
     },
     closePage: async (tabId: number) => {
-      // "close only closes browser tabs" — an editor tab id, a tab of another
+      // "close only closes browser tabs" — a non-browser tab id, a tab of another
       // scope, or any id not currently open, is rejected rather than silently
       // closing the wrong tab.
       const found = tabs.listBrowserTabs(scope).some((t) => t.tabId === tabId);
@@ -2065,7 +1766,7 @@ export function createMainWindow(
       return router.routeRequests(handler, tabs.browserHandle(scope)?.getWebContentsId() ?? null);
     },
     // PageFixture cookies / `fresh`: this scope's partition only — never the
-    // editor session or the default session (see fixtureSession.ts).
+    // default session (see fixtureSession.ts).
     getCookies: (urls) => fixtureSession.getCookies(ses, urls),
     setCookies: (cookies) => fixtureSession.setCookies(ses, cookies),
     resetSession: (origins) =>
@@ -2098,13 +1799,12 @@ export function createMainWindow(
   });
   const browserTarget = makeBrowserTarget(undefined, session.fromPartition("persist:penbrowser"), fetchRouter);
   // Agent cursor on/off: the View menu's saved choice, with the env var
-  // PEN_DESKTOP_BROWSER_CURSOR winning when set. The controller reads the
+  // SIDEFORM_LIGHT_BROWSER_CURSOR winning when set. The controller reads the
   // getter once per command, so a menu change applies from the next command
   // with no restart.
   const cursorSettingsPath = path.join(app.getPath("userData"), CURSOR_SETTINGS_FILE);
   let cursorSettings = readCursorSettings(cursorSettingsPath);
   const effectiveCursor = () => resolveCursorSettings(process.env, cursorSettings);
-  setNativeCursorEnabled(() => effectiveCursor().enabled);
   const updateCursorSettings = (patch: Partial<CursorSettings>) => {
     cursorSettings = { ...cursorSettings, ...patch };
     writeCursorSettings(cursorSettingsPath, cursorSettings);
@@ -2257,23 +1957,18 @@ export function createMainWindow(
       },
       teardown: (s) => teardownSession(id, s),
     });
-  // Orphans: the owner editor tab reloaded, crashed or closed (`gone`: destroyed for good).
+  // Orphans: the owner (the agent panel) reloaded, crashed or closed (`gone`: destroyed for good).
   closeSessionsOwnedBy = (owner: number, gone = false) => {
     for (const id of sessions.idsOwnedBy(owner)) void closeSessionById(id, owner);
-    // Covers every session key of this owner too (and the shared one).
-    void appRegistry.releaseWhere(ownedBySender(owner));
-    // A reloaded or crashed owner is a new chat: its "allow until quit" answers are void.
-    appConfirm.forgetSender(owner);
     if (gone) sessions.forgetOwner(owner);
   };
 
   // Who may send `browser:command`, and whose fixtures/journals/sessions are
-  // released when it goes away: this window's editor tabs and its agent panel.
+  // released when it goes away: this window's agent panel.
   const panelId = agentPanelView.webContents.id;
-  const isBrowserOwner = (id: number): boolean =>
-    isBrowserOwnerId(id, (x) => tabs.isEditorTab(x), panelWc()?.id ?? null);
-  // The panel is never destroyed on its own but reloads and can crash: like an
-  // editor tab, that skips its renderer cleanup, so main releases what it owned.
+  const isBrowserOwner = (id: number): boolean => isBrowserOwnerId(id, panelWc()?.id ?? null);
+  // The panel is never destroyed on its own but reloads and can crash: that
+  // skips its renderer cleanup, so main releases what it owned.
   const releasePanelOrphans = (gone = false) => {
     if (panelId === null) return;
     releaseOwnedFixture(panelId);
@@ -2281,60 +1976,14 @@ export function createMainWindow(
     closeSessionsOwnedBy(panelId, gone);
   };
   agentPanelView.webContents.on("render-process-gone", () => {
-    if (isOrphaningEvent({ type: "render-process-gone" })) {
-      releasePanelOrphans();
-      canvasLink.panelGone();
-    }
+    if (isOrphaningEvent({ type: "render-process-gone" })) releasePanelOrphans();
   });
   agentPanelView.webContents.on("did-frame-navigate", (_e, _url, _code, _text, isMainFrame) => {
-    if (isOrphaningEvent({ type: "did-navigate", isMainFrame, isSameDocument: false })) {
-      releasePanelOrphans();
-      canvasLink.panelGone();
-    }
+    if (isOrphaningEvent({ type: "did-navigate", isMainFrame, isSameDocument: false })) releasePanelOrphans();
   });
-  // The reloaded panel has no list: push it once the page is up.
-  agentPanelView.webContents.on("did-finish-load", () => canvasLink.repush());
-
-  // Commands for an external desktop app (src/main/appTargets.ts). They skip the
-  // built-in browser's tab activity, dialog sweeps and run boundary entirely.
-  const runAppCommand = async (
-    plan: Exclude<ReturnType<typeof planAppCommand>, "passthrough" | "leave">,
-    payload: Record<string, unknown> & { command: string },
-    sender: number,
-    key: string,
-  ): Promise<unknown> => {
-    if (plan === "release") {
-      const { pending } = await appRegistry.release(key);
-      return pending ? { ok: true, pending: true } : { ok: true };
-    }
-    if (plan === "refuse" || plan === "pending" || plan === "gone") return errorForPlan(plan, payload.command, payload.args);
-    if (plan === "launch") {
-      const requested = isRecord(payload.args) ? payload.args.app : undefined;
-      return await openApp(key, requested, {
-        registry: appRegistry,
-        validate: validateRequestedApp,
-        confirm: (target) => appConfirm.confirm(win, target, sender),
-        findRunning: findUserRunningPids,
-        confirmRestart: (target) => appConfirm.confirmRestart(win, target),
-        quit: quitUserApp,
-        reopen: reopenApp,
-        reopenWhenGone,
-        cancelWaiters,
-        computerUse: computerUseDeps(win, sender),
-      });
-    }
-    const running = appRegistry.get(key);
-    if (!running) return errorForPlan("gone", payload.command, payload.args);
-    return await routeAppCommand(running.controller, payload.command, payload.args);
-  };
 
   const onBrowserCommand = async (event: Electron.IpcMainInvokeEvent, payload: unknown) => {
-    // Single source of truth for "which webContents id is an editor tab" —
-    // TabManager.isEditorTab (finding 10). Deliberately not a second,
-    // window.ts-local registry: two independent lists of the same fact can
-    // drift, and TabManager's is already kept correct by newTab/destroy.
-    // The agent panel (flag) is a legitimate owner too: its browser tools run there
-    // (its preload bridge is the same one the editor tabs have).
+    // The agent panel is the only owner: its browser tools run there.
     if (!isBrowserOwner(event.sender.id)) return { error: "Not allowed." };
     if (!isRecord(payload) || typeof payload.command !== "string") {
       return { error: "Malformed browser command." };
@@ -2343,30 +1992,11 @@ export function createMainWindow(
     const parsedSession = parseSessionId(payload);
     if (!parsedSession.ok) return { error: parsedSession.error };
     const sessionId = parsedSession.id;
-    // `chat` only splits the app binding of the shared scope; a session key wins.
-    const parsedChat = sessionId === undefined ? parseAppChat(payload) : { ok: true as const, id: undefined };
-    if (!parsedChat.ok) return { error: parsedChat.error };
-    const key = appKey(sender, sessionId, parsedChat.id);
-    const appPlan = planAppCommand(payload.command, payload.args, appRegistry.state(key), {
-      native: appRegistry.get(key)?.native === true,
-      shared: sessionId === undefined,
-    });
-    // Shared `open({ url })` on a bound app: let the app go, then run the command in the built-in browser.
-    let leftApp: string | undefined;
-    if (appPlan === "leave") {
-      leftApp = await leaveApp(appRegistry, key, { onError: (err) => console.error("desktop app: release before browser open failed", err) });
-    } else if (appPlan !== "passthrough") return await runAppCommand(appPlan, payload as Record<string, unknown> & { command: string }, sender, key);
     if (payload.command === "closeSession") {
       if (sessionId === undefined) return { error: ERR_INVALID_SESSION_ID };
       const owner = sessions.ownerOf(sessionId);
       if (owner !== undefined && owner !== sender) return { error: ERR_SESSION_NOT_OWNED };
-      const closing = closeSessionById(sessionId, sender);
-      const appsGone = appRegistry.releaseWhere(ownedBySession(sender, sessionId));
-      await closing;
-      // Bounded: a new open on this id must not overlap the old app, but a stuck close must not hang the reply.
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([appsGone, new Promise<void>((resolve) => { timer = setTimeout(resolve, 5_000); })]);
-      clearTimeout(timer);
+      await closeSessionById(sessionId, sender);
       return { ok: true };
     }
     // The controller, journal and tab scope this command runs against: one
@@ -2384,8 +2014,7 @@ export function createMainWindow(
       journal = entered.session.ctx.journal;
     }
     try {
-      const result = await runBrowserCommand(payload as Record<string, unknown> & { command: string }, sender, sessionId, controller, journal);
-      return appPlan === "leave" ? withLeftAppNote(result, leftApp) : result;
+      return await runBrowserCommand(payload as Record<string, unknown> & { command: string }, sender, sessionId, controller, journal);
     } finally {
       exitSession?.();
     }
@@ -2462,8 +2091,6 @@ export function createMainWindow(
         // boundary (that would clear the very log it reads).
         case "requests":
           return await controller.requests();
-        case "capture":
-          return await controller.capture(payload.args);
         case "fillLogin": {
           // The model gets only { ok, origin, label, filled, submitted, url?, retried?, sessionEstablished?, note?, stillOnSignInPage? } or a
           // fixed error — never a password, a username or controller text.
@@ -2531,10 +2158,8 @@ export function createMainWindow(
           return releaseAnswer(await (controller.releaseFixture(rawToken(payload.args)) as Promise<unknown>));
         }
         // Checkpoint journal. Args are untrusted: malformed ones are ignored.
-        // The CheckpointResult (cookies/storage) goes back to the calling
-        // editor tab only.
-        // Ownership (which editor tab may stop/read the journal) is decided
-        // in journalOwners.ts; the shared controller is used by all editor tabs.
+        // The CheckpointResult (cookies/storage) goes back to the caller only.
+        // Ownership (who may stop/read the journal) is decided in journalOwners.ts.
         case "startJournal": {
           const parsed = parseJournalOrigins(payload.args);
           if (!parsed.ok) return { error: "invalid origins" };
@@ -2567,16 +2192,6 @@ export function createMainWindow(
     }
   };
   ipcMain.handle("browser:command", onBrowserCommand);
-  // External MCP clients drive this window's shared browser through the same dispatch, as a pseudo-owner
-  // (no IPC sender, no app/session planning). The bridge itself limits which commands pass.
-  const unregisterMcpBrowser = mcpService.registerBrowserHost(
-    win.id,
-    createMcpBrowserBridge((command, args) =>
-      runBrowserCommand({ command, args }, MCP_BROWSER_OWNER, undefined, browserController, journalOwners),
-    ),
-  );
-  const onFocusMcpBrowser = () => mcpService.markBrowserHostActive(win.id);
-  win.on("focus", onFocusMcpBrowser);
   // Panel only: bring the agent's browser tab to the front (a click on a tool chip).
   // Never creates a session or a tab, so it does not go through `browser:command`.
   ipcMain.handle("browser:reveal-agent-tab", (event, payload: unknown): boolean => {
@@ -2588,136 +2203,7 @@ export function createMainWindow(
     return tabs.revealAgentBrowserTab(parsed.id);
   });
 
-  // --- desktop sign-in (desktopAuth.ts) ---
-  // `auth:sign-in`: only an editor tab or the agent panel, top frame, on the editor origin.
-  // Who may use the auth channels: an editor tab or the agent panel, top frame, on the editor origin.
-  const isAuthSender = (event: Electron.IpcMainEvent): boolean =>
-    isAuthSignInSender({
-      senderId: event.sender.id,
-      panelId: panelWc()?.id ?? null,
-      isEditorTab: tabs.isEditorTab(event.sender.id),
-      isMainFrame: event.senderFrame != null && event.senderFrame === event.sender.mainFrame,
-      frameUrl: event.senderFrame?.url,
-      editorOrigin,
-    });
-  const onAuthSignIn = (event: Electron.IpcMainEvent) => {
-    if (isAuthSender(event)) desktopAuth.beginSignIn();
-  };
-  ipcMain.on("auth:sign-in", onAuthSignIn);
-  // `auth:listen` / `auth:unlisten`: a view tells main it has an `auth.onToken` subscriber. A token
-  // is only ever sent to a listening view; with none, desktopAuth holds it and `notifyListening`
-  // delivers it to the first view that starts listening. Ids are dropped on destroy and on a
-  // COMMITTED main-frame cross-document navigation (the new page must call onToken again;
-  // did-start-navigation would also fire for denied navigations, 204s and downloads).
-  const authListeners = new Map<number, () => void>();
-  const dropAuthListener = (id: number) => {
-    authListeners.get(id)?.();
-    authListeners.delete(id);
-  };
-  const onAuthListen = (event: Electron.IpcMainEvent) => {
-    if (!isAuthSender(event)) return;
-    const wc = event.sender;
-    const id = wc.id;
-    if (!authListeners.has(id)) {
-      const onNav = (_e: Electron.Event, _url: string, _code: number, _text: string, isMainFrame: boolean) => {
-        if (isMainFrame) dropAuthListener(id);
-      };
-      // A still-listening view that reaches an eligible document by an in-page navigation (the panel
-      // document check in sendAuthToken) can now take a held token.
-      const onInPage = (_e: Electron.Event, _url: string, isMainFrame: boolean) => {
-        if (isMainFrame) desktopAuth.notifyListening();
-      };
-      const onDestroyed = () => dropAuthListener(id);
-      wc.on("did-frame-navigate", onNav);
-      wc.on("did-navigate-in-page", onInPage);
-      wc.once("destroyed", onDestroyed);
-      authListeners.set(id, () => {
-        if (!wc.isDestroyed()) {
-          wc.removeListener("did-frame-navigate", onNav);
-          wc.removeListener("did-navigate-in-page", onInPage);
-        }
-        wc.removeListener("destroyed", onDestroyed);
-      });
-    }
-    desktopAuth.notifyListening();
-  };
-  const onAuthUnlisten = (event: Electron.IpcMainEvent) => dropAuthListener(event.sender.id);
-  ipcMain.on("auth:listen", onAuthListen);
-  ipcMain.on("auth:unlisten", onAuthUnlisten);
-  // `auth:token`: ONE receiver among LISTENING views. The agent panel if it listens (it is always
-  // mounted, collapsed or not), else the active canvas tab, else any other listening canvas tab.
-  // Every other view learns of the new session from the receiver (the page broadcasts it).
-  const listeningWc = (id: number | null): Electron.WebContents | null => {
-    if (id === null || !authListeners.has(id)) return null;
-    const wc = webContents.fromId(id);
-    return wc && !wc.isDestroyed() ? wc : null;
-  };
-  const sendAuthToken = (payload: AuthTokenPayload): boolean => {
-    const panel = panelWc();
-    const snap = tabs.getSnapshot();
-    const activeWcId = snap.activeKind === "editor" && snap.activeId !== null ? tabs.webContentsIdOf(snap.activeId) : null;
-    let other: Electron.WebContents | null = null;
-    for (const id of authListeners.keys()) {
-      if (id !== panel?.id && tabs.isEditorTab(id) && (other = listeningWc(id))) break;
-    }
-    const target = pickAuthReceiver<Electron.WebContents>({
-      panel: panel && isPanelDocument(panel.getURL(), panelUrl) ? listeningWc(panel.id) : null,
-      activeEditorTab: listeningWc(activeWcId),
-      otherEditorTab: other,
-    });
-    if (!target) return false;
-    target.send("auth:token", payload);
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
-    return true;
-  };
-  desktopAuth.setReceiver(sendAuthToken);
-
-  // --- canvas link IPC ---
-  const onCanvasRegister = (event: Electron.IpcMainEvent) => canvasLink.register(event.sender.id);
-  const onCanvasUnregister = (event: Electron.IpcMainEvent) => canvasLink.unregister(event.sender.id);
-  const onCanvasToPanel = (event: Electron.IpcMainEvent, env: unknown) => canvasLink.toPanel(event.sender.id, env);
-  const onCanvasToTab = (event: Electron.IpcMainEvent, payload: unknown) => canvasLink.toTab(event.sender.id, payload);
-  const onCanvasActivate = (event: Electron.IpcMainEvent, tabId: unknown) => canvasLink.activate(event.sender.id, tabId);
-  ipcMain.on("canvas:register", onCanvasRegister);
-  ipcMain.on("canvas:unregister", onCanvasUnregister);
-  ipcMain.on("canvas:to-panel", onCanvasToPanel);
-  ipcMain.on("canvas:to-tab", onCanvasToTab);
-  ipcMain.on("canvas:activate", onCanvasActivate);
-  ipcMain.handle("canvas:list", (event) => canvasLink.list(event.sender.id));
-  ipcMain.handle("canvas:open", (event, opts: unknown) => canvasLink.open(event.sender.id, opts));
-  // Documents: the agent panel or a trace tab asks to open one; logic in docOpen.ts.
-  ipcMain.handle("doc:open", (event, docId: unknown) =>
-    openDocTab(
-      {
-        isPanel: (id) => panelWc()?.id === id,
-        isTraceTab: (id) => tabs.isTraceViewer(id),
-        isActive: (id) => tabs.isActiveTabWebContents(id),
-        findDocTab: (id) => tabs.findDocTab(id),
-        activate: (tabId, opts) => tabs.activate(tabId, opts),
-        newDocTab: (id, opts) => tabs.newTab("doc", undefined, { docId: id, focus: opts.focus }),
-      },
-      event.sender.id,
-      docId,
-    ),
-  );
-
-  // Workflows (the frontend's `/workflow`): the agent panel asks to open one; logic in workflowOpen.ts.
-  ipcMain.handle("workflow:open", (event, workflowId: unknown) =>
-    openWorkflowTab(
-      {
-        isPanel: (id) => panelWc()?.id === id,
-        findWorkflowTab: (id) => tabs.findWorkflowTab(id),
-        activate: (tabId, opts) => tabs.activate(tabId, opts),
-        newWorkflowTab: (id, opts) => tabs.newTab("workflow", undefined, { workflowId: id, focus: opts.focus }),
-      },
-      event.sender.id,
-      workflowId,
-    ),
-  );
-
-  // Settings: the agent panel or any frontend tab asks for the Settings tab (singleton); logic in settingsOpen.ts.
+  // Settings: the agent panel or a trace/Settings tab asks for the Settings tab (singleton); logic in settingsOpen.ts.
   ipcMain.handle("settings:open", (event, section?: unknown) =>
     openSettings(
       {
@@ -2730,168 +2216,17 @@ export function createMainWindow(
     ),
   );
 
-  // Document storage: the frontend mirrors its localStorage documents to userData; sender rules in docIpc.ts.
-  const docIpc: DocIpcDeps = {
-    store: getDocStore(),
-    isPanel: (id) => panelWc()?.id === id,
-    isEditorTab: (id) => tabs.isEditorTab(id),
-    isDocTab: (id) => tabs.isDocTab(id),
-    isTraceTab: (id) => tabs.isTraceTab(id),
-  };
-  ipcMain.handle("docs:list", (event) => handleDocList(docIpc, event.sender.id));
-  ipcMain.handle("docs:save", async (event, doc: unknown) => recentChanged(await handleDocSave(docIpc, event.sender.id, doc)));
-  ipcMain.handle("docs:delete", async (event, id: unknown) => recentChanged(await handleDocDelete(docIpc, event.sender.id, id)));
-  // Workflow storage: same mirror as documents; sender rules in workflowIpc.ts.
-  const workflowIpc: WorkflowIpcDeps = {
-    store: getWorkflowStore(),
-    isPanel: (id) => panelWc()?.id === id,
-    isWorkflowTab: (id) => tabs.isWorkflowTab(id),
-  };
-  ipcMain.handle("workflows:list", (event) => handleWorkflowList(workflowIpc, event.sender.id));
-  ipcMain.handle("workflows:save", async (event, workflow: unknown) => recentChanged(await handleWorkflowSave(workflowIpc, event.sender.id, workflow)));
-  ipcMain.handle("workflows:delete", async (event, id: unknown) => recentChanged(await handleWorkflowDelete(workflowIpc, event.sender.id, id)));
-  // Empty start "Recent" list: only this window's empty view may ask for it or open a row.
-  ipcMain.handle("empty:recent", (event) =>
-    recentFor(
-      { isEmptyView: (id) => id === emptyView.webContents.id, load: () => loadRecentItems(getDocStore(), getCanvasStore(), getWorkflowStore()) },
-      event.sender.id,
-    ),
-  );
-  const onEmptyOpen = (event: Electron.IpcMainEvent, payload: unknown) => {
-    const result = openRecentItem(
-      {
-        isEmptyView: (id) => id === emptyView.webContents.id,
-        findCanvasTab: (id) => tabs.findCanvasTab(id),
-        findDocTab: (id) => tabs.findDocTab(id),
-        activate: (tabId, opts) => tabs.activate(tabId, opts),
-        newCanvasTab: (id, opts) => tabs.newTab("editor", undefined, { canvasId: id, focus: opts.focus }),
-        newDocTab: (id, opts) => tabs.newTab("doc", undefined, { docId: id, focus: opts.focus }),
-        findWorkflowTab: (id) => tabs.findWorkflowTab(id),
-        newWorkflowTab: (id, opts) => tabs.newTab("workflow", undefined, { workflowId: id, focus: opts.focus }),
-      },
-      event.sender.id,
-      payload,
-    );
-    if (!result.ok) console.error(`empty:open refused: ${result.error}`);
-  };
-  ipcMain.on("empty:open", onEmptyOpen);
-  // Right-click on a Recent row: native menu with Open and the reveal item.
-  const onEmptyRecentMenu = (event: Electron.IpcMainEvent, payload: unknown) => {
-    const req = parseRecentMenuRequest({ isEmptyView: (id) => id === emptyView.webContents.id }, event.sender.id, payload);
-    if (!req.ok) {
-      console.error(`empty:recent-menu refused: ${req.error}`);
-      return;
-    }
-    Menu.buildFromTemplate(
-      buildRecentContextMenuTemplate(revealMenuLabel(process.platform), {
-        open: () => onEmptyOpen(event, { kind: req.kind, id: req.id }),
-        reveal: () => void revealStoredFile({ kind: req.kind, id: req.id }),
-      }),
-    ).popup({ window: win });
-  };
-  ipcMain.on("empty:recent-menu", onEmptyRecentMenu);
-  // Filter button of the Recent header: native menu under the button. Answers the pick, or null when it closed with none.
-  ipcMain.handle("empty:filter-menu", (event, payload: unknown) => {
-    const req = parseRecentFilterMenuRequest({ isEmptyView: (id) => id === emptyView.webContents.id }, event.sender.id, payload);
-    if (!req.ok) {
-      console.error(`empty:filter-menu refused: ${req.error}`);
-      return null;
-    }
-    return new Promise<RecentFilterChoice | null>((resolve) => {
-      let picked: RecentFilterChoice | null = null;
-      let settled = false;
-      const settle = () => {
-        if (settled) return;
-        settled = true;
-        resolve(picked);
-      };
-      // macOS runs the click before the close callback, Windows/Linux may run it after. A click answers at once;
-      // the close callback waits one tick so a late click still wins, and settle() ignores the second call.
-      const useHeaders = process.platform === "darwin" && Number(process.getSystemVersion().split(".")[0]) >= 14;
-      const menu = Menu.buildFromTemplate(
-        buildRecentFilterMenuTemplate({ kinds: req.kinds, modified: req.modified }, useHeaders, (choice) => {
-          picked = choice;
-          settle();
-        }),
-      );
-      // The anchor is in the view's CSS px: zoom scales it, then the view's offset in the window is added.
-      const bounds = emptyView.getBounds();
-      const zoom = emptyView.webContents.getZoomFactor();
-      menu.popup({
-        window: win,
-        x: Math.round(bounds.x + req.x * zoom),
-        y: Math.round(bounds.y + req.y * zoom),
-        callback: () => void setTimeout(settle, 0),
-      });
-    });
-  });
-  // Bulk delete from the Recent list: native confirm, store removals, then the agent panel drops its own copies of the docs.
-  ipcMain.handle("empty:delete", async (event, payload: unknown) => {
-    const result = await deleteRecentItems(
-      {
-        isEmptyView: (id) => id === emptyView.webContents.id,
-        confirm: async (count) => (await dialog.showMessageBox(win, deleteConfirmCopy(count))).response === 0,
-        removeCanvas: (id) => getCanvasStore().remove(id),
-        removeDoc: (id) => getDocStore().remove(id),
-        removeWorkflow: (id) => getWorkflowStore().remove(id),
-        notifyDocsRemoved: (ids) => panelWc()?.send("docs:removed", ids),
-        notifyWorkflowsRemoved: (ids) => panelWc()?.send("workflows:removed", ids),
-      },
-      event.sender.id,
-      payload,
-    );
-    if (!result.ok) console.error(`empty:delete refused: ${result.error}`);
-    else if (result.deleted > 0) notifyRecentChanged(emptyViewContents);
-    return result;
-  });
-  // `docs:export-pdf`: the doc page saves itself as a PDF; rules and flow in docPdfExport.ts.
-  ipcMain.handle("docs:export-pdf", (event, fileName: unknown) =>
-    handleDocExportPdf(
-      {
-        port: { isDocViewer: (id, frameUrl) => tabs.isDocViewer(id, frameUrl) },
-        printToPDF: () => event.sender.printToPDF({ printBackground: true, preferCSSPageSize: true, pageSize: "A4" }),
-        showSaveDialog: async (name) => {
-          const r = await dialog.showSaveDialog(win, {
-            defaultPath: path.join(app.getPath("downloads"), name),
-            filters: [{ name: "PDF", extensions: ["pdf"] }],
-          });
-          return r.canceled || !r.filePath ? undefined : r.filePath;
-        },
-        writeFile: (p, data) => writeFile(p, data),
-      },
-      { senderId: event.sender.id, topFrame: event.senderFrame != null && event.senderFrame === event.sender.mainFrame, frameUrl: event.senderFrame?.url },
-      fileName,
-    ),
-  );
-  // `logins:*` (the doc tabs' @ mention picker) is registered once per process in the passwords service; this window only
-  // lends it this window's doc viewers and its confirm dialog, withdrawn when the window closes (the handlers must not be registered twice).
-  const withdrawDocTabLogins = loginServices.passwords.addDocWindow({
-    isDocViewer: (id, frameUrl) => tabs.isDocViewer(id, frameUrl),
-    confirmAdd: async (info) => {
-      if (win.isDestroyed()) return false;
-      try {
-        const { response } = await dialog.showMessageBox(win, { type: "question", noLink: true, ...addLoginCopy(info) });
-        return response === 0;
-      } catch {
-        return false;
-      }
-    },
-  });
-
   // `browser-settings:*` (Settings page) is registered once per process (index.ts); this window lends its Settings-tab check.
   const withdrawBrowserSettings = browserSettingsIpc.addWindow({ isSettingsViewer: (id, frameUrl) => tabs.isSettingsViewer(id, frameUrl) });
-  const withdrawAppIcon = appIconIpc.addWindow({ isSettingsViewer: (id, frameUrl) => tabs.isSettingsViewer(id, frameUrl) });
 
   // Browse-run traces: stored under userData; sender rules in traceIpc.ts, opening in traceOpen.ts.
   const traceIpc: TraceIpcDeps = {
     store: createTraceStore({ rootDir: path.join(app.getPath("userData"), TRACE_DIR), fs: nodeTraceFs }),
     isPanel: (id) => panelWc()?.id === id,
-    isEditorTab: (id) => tabs.isEditorTab(id),
     isTraceTab: (id) => tabs.isTraceTab(id),
   };
   ipcMain.handle("traces:save", (event, payload: unknown) => handleTraceSave(traceIpc, event.sender.id, payload));
   ipcMain.handle("traces:read", (event, id: unknown, opts?: unknown) => handleTraceRead(traceIpc, event.sender.id, id, opts));
-  ipcMain.handle("traces:list", (event) => handleTraceList(traceIpc, event.sender.id));
   ipcMain.handle("traces:list-tabs", (event) =>
     handleTraceListTabs({ isPanel: (id) => panelWc()?.id === id, listTraceTabs: () => tabs.listTraceTabs() }, event.sender.id),
   );
@@ -2899,12 +2234,11 @@ export function createMainWindow(
     openTraceTab(
       {
         isPanel: (wcId) => panelWc()?.id === wcId,
-        isDocViewer: (wcId, frameUrl) => tabs.isDocViewer(wcId, frameUrl),
         findTraceTab: (traceId) => tabs.findTraceTab(traceId),
         activate: (tabId, opts) => tabs.activate(tabId, opts),
         newTraceTab: (traceId, opts) => tabs.newTab("trace", undefined, { traceId, focus: opts.focus }),
       },
-      { senderId: event.sender.id, topFrame: event.senderFrame != null && event.senderFrame === event.sender.mainFrame, frameUrl: event.senderFrame?.url },
+      event.sender.id,
       id,
     ),
   );
@@ -2968,8 +2302,6 @@ export function createMainWindow(
   // The empty-state view (own preload) may only create tabs.
   const emptyId = emptyView.webContents.id;
   const fromTabbarOrEmpty = (event: Electron.IpcMainEvent) => isTabCreationSender(event.sender.id, tabbarId, emptyId);
-  const onTabbarNew = (e: Electron.IpcMainEvent) => fromTabbarOrEmpty(e) && tabs.newTab("editor");
-  const onTabbarNewDoc = (e: Electron.IpcMainEvent) => fromTabbarOrEmpty(e) && tabs.newTab("doc");
   // Second-pass review finding 3: a user-driven "New Browser Tab" pins the
   // agent to it, the same as any other explicit user action that lands on a
   // browser tab (activate()'s tab-strip click, nextTab/prevTab's cycle) —
@@ -2978,23 +2310,6 @@ export function createMainWindow(
   // agentBrowserTabId untouched.
   const newUserBrowserTab = () => tabs.setAgentBrowserTabId(tabs.newTab("browser"));
   const onTabbarNewBrowser = (e: Electron.IpcMainEvent) => fromTabbarOrEmpty(e) && newUserBrowserTab();
-  // The "+" button's popup. `anchor` is the button's bottom-left corner in
-  // tabbar CSS px, which is window content coordinates too: the tabbar view
-  // sits at (0, 0) at zoom 1.
-  const onTabbarNewMenu = (e: Electron.IpcMainEvent, anchor: unknown) => {
-    if (!fromOurTabbar(e)) return;
-    const at = isRecord(anchor) && typeof anchor.x === "number" && typeof anchor.y === "number"
-      ? { x: Math.round(anchor.x), y: Math.round(anchor.y) }
-      : {};
-    Menu.buildFromTemplate(
-      buildNewTabMenuTemplate({
-        newTab: () => tabs.newTab("editor"),
-        newBrowserTab: newUserBrowserTab,
-        newDocTab: () => void tabs.newTab("doc"),
-        newWorkflowTab: () => void tabs.newTab("workflow"),
-      }),
-    ).popup({ window: win, ...at });
-  };
   // The chrome row's "Browser tools" popup. Viewport choice is kept per tab
   // handle (weakly, so it is forgotten when the tab closes); CDP overrides
   // persist across navigations, so it is deliberately NOT reset on navigate.
@@ -3072,7 +2387,7 @@ export function createMainWindow(
       ),
     ).popup({ window: win, ...at });
   };
-  // Right-click on a tab: native menu with "Reveal in Finder" (disabled without a file) and "Close Tab".
+  // Right-click on a tab: native menu with "Reveal in Finder" (enabled for a trace tab) and "Close Tab".
   const onTabbarTabMenu = (e: Electron.IpcMainEvent, payload: unknown) => {
     if (!fromOurTabbar(e)) return;
     const req = parseTabMenuPayload(payload);
@@ -3092,17 +2407,15 @@ export function createMainWindow(
   };
   const onTabbarActivate = (e: Electron.IpcMainEvent, id: number) =>
     fromOurTabbar(e) && tabs.activate(id);
-  // Agent layout: the panel's preload reports the theme it paints (class `dark` on <html>) on
-  // load and on every change. Accepted only from the panel's own webContents AND its own page
-  // (not the offline fallback); the adoption rule is windowTheme.ts adoptPanelTheme.
+  // The panel's preload reports the theme it paints (class `dark` on <html>) on load and on every
+  // change. Accepted only from the panel's own webContents AND its own page; the window chrome follows it.
   const onPanelTheme = (e: Electron.IpcMainEvent, theme: unknown) => {
     if (e.sender.id !== agentPanelView.webContents.id) return;
     if (!isPanelDocument(e.senderFrame?.url ?? "", panelUrl)) return;
     if (theme !== "light" && theme !== "dark") return;
-    const next = adoptPanelTheme({ remembered: rememberedEditorTheme, fromPanel: rememberedFromPanel }, theme, editorTabCount(tabs.getSnapshot()));
-    rememberedEditorTheme = next.remembered;
-    rememberedFromPanel = next.fromPanel;
-    if (next.changed) pushState(tabs.getSnapshot());
+    if (panelTheme === theme) return;
+    panelTheme = theme;
+    pushState(tabs.getSnapshot());
   };
   const onTabbarTogglePanel = (e: Electron.IpcMainEvent) => {
     if (fromOurTabbar(e)) setPanelCollapsed(!panelCollapsed);
@@ -3188,10 +2501,7 @@ export function createMainWindow(
   ipcMain.on("omnibox:remove", onOmniboxRemove);
   ipcMain.on("omnibox:open-history", onOmniboxOpenHistory);
   ipcMain.on("history:remove-suggestion", onHistoryRemoveSuggestion);
-  ipcMain.on("tabbar:new", onTabbarNew);
   ipcMain.on("tabbar:new-browser", onTabbarNewBrowser);
-  ipcMain.on("tabbar:new-doc", onTabbarNewDoc);
-  ipcMain.on("tabbar:new-menu", onTabbarNewMenu);
   ipcMain.on("tabbar:tools-menu", onTabbarToolsMenu);
   ipcMain.on("tabbar:tab-menu", onTabbarTabMenu);
   ipcMain.on("tabbar:activate", onTabbarActivate);
@@ -3215,9 +2525,7 @@ export function createMainWindow(
   // recreates a window on dock "activate" without quitting the app. Without
   // this, every close/reopen cycle leaks the ipcMain listeners above plus
   // every tab's WebContentsView (renderer process stays alive).
-  liveTabManagers.add(tabs);
   win.on("closed", () => {
-    liveTabManagers.delete(tabs);
     livePanels.delete(agentPanelView.webContents);
     stopPanelTimer();
     liveTabbarIds.delete(tabbarId);
@@ -3227,10 +2535,7 @@ export function createMainWindow(
     ipcMain.removeListener("omnibox:remove", onOmniboxRemove);
     ipcMain.removeListener("omnibox:open-history", onOmniboxOpenHistory);
     ipcMain.removeListener("history:remove-suggestion", onHistoryRemoveSuggestion);
-    ipcMain.removeListener("tabbar:new", onTabbarNew);
     ipcMain.removeListener("tabbar:new-browser", onTabbarNewBrowser);
-    ipcMain.removeListener("tabbar:new-doc", onTabbarNewDoc);
-    ipcMain.removeListener("tabbar:new-menu", onTabbarNewMenu);
     ipcMain.removeListener("tabbar:tools-menu", onTabbarToolsMenu);
     ipcMain.removeListener("tabbar:tab-menu", onTabbarTabMenu);
     ipcMain.removeListener("tabbar:activate", onTabbarActivate);
@@ -3239,52 +2544,18 @@ export function createMainWindow(
     ipcMain.removeListener("tabbar:toggle-panel", onTabbarTogglePanel);
     ipcMain.removeListener("panel:theme", onPanelTheme);
     ipcMain.removeListener("tabbar:navigate", onTabbarNavigate);
-    ipcMain.removeListener("editor:theme", onEditorTheme);
-    withdrawDocTabLogins();
+    ipcMain.removeListener("tab:theme", onTabTheme);
     withdrawBrowserSettings();
-    withdrawAppIcon();
-    ipcMain.removeListener("editor:document-title", onEditorDocumentTitle);
     ipcMain.removeHandler("browser:command");
     ipcMain.removeHandler("browser:reveal-agent-tab");
-    ipcMain.removeListener("auth:sign-in", onAuthSignIn);
-    ipcMain.removeListener("auth:listen", onAuthListen);
-    ipcMain.removeListener("auth:unlisten", onAuthUnlisten);
-    for (const id of [...authListeners.keys()]) dropAuthListener(id);
-    desktopAuth.clearReceiver(sendAuthToken);
-    ipcMain.removeListener("canvas:register", onCanvasRegister);
-    ipcMain.removeListener("canvas:unregister", onCanvasUnregister);
-    ipcMain.removeListener("canvas:to-panel", onCanvasToPanel);
-    ipcMain.removeListener("canvas:to-tab", onCanvasToTab);
-    ipcMain.removeListener("canvas:activate", onCanvasActivate);
-    ipcMain.removeHandler("canvas:list");
-    ipcMain.removeHandler("canvas:open");
-    ipcMain.removeHandler("doc:open");
-    ipcMain.removeHandler("workflow:open");
-    ipcMain.removeHandler("docs:list");
-    ipcMain.removeHandler("docs:save");
-    ipcMain.removeHandler("docs:delete");
-    ipcMain.removeHandler("docs:export-pdf");
-    ipcMain.removeHandler("workflows:list");
-    ipcMain.removeHandler("workflows:save");
-    ipcMain.removeHandler("workflows:delete");
-    ipcMain.removeHandler("empty:recent");
-    ipcMain.removeListener("empty:open", onEmptyOpen);
-    ipcMain.removeListener("empty:recent-menu", onEmptyRecentMenu);
-    ipcMain.removeHandler("empty:delete");
-    ipcMain.removeHandler("empty:filter-menu");
     ipcMain.removeHandler("settings:open");
     ipcMain.removeHandler("traces:save");
     ipcMain.removeHandler("traces:read");
-    ipcMain.removeHandler("traces:list");
     ipcMain.removeHandler("traces:open");
     ipcMain.removeHandler("traces:list-tabs");
-    canvasLink.dispose();
     // The panel's fixture, checkpoint journals and browser sessions die with the window.
     releasePanelOrphans(true);
     nativeTheme.removeListener("updated", onSystemThemeChanged);
-    unsubscribeMcpStatus();
-    unregisterMcpBrowser();
-    mcpService.setOnDemandTabOpener(null);
     agentActivity.dispose();
     agentAwake.dispose();
     win.removeListener("minimize", onMinimize);
@@ -3292,7 +2563,7 @@ export function createMainWindow(
     win.removeListener("blur", hideOmnibox);
     tabs.destroyAll();
     tabbarView.webContents.close();
-    // The panel's pending chat saves get through first (like a canvas tab); a quit waits for this flow too.
+    // The panel's pending chat saves get through first; a quit waits for this flow too.
     void flushThenClose(pagePort(agentPanelView.webContents), { script: CHATS_FLUSH_SCRIPT });
     emptyView.webContents.close();
     omniboxView.webContents.close();
@@ -3302,23 +2573,18 @@ export function createMainWindow(
   });
 
   // --- menu ---
-  // Rebuilt (not just mutated) whenever MCP status changes: a native menu
+  // Rebuilt (not just mutated) whenever something it shows changes: a native menu
   // template has no live-binding mechanism, and Menu.setApplicationMenu is
-  // process-global (the wart CLAUDE.md already documents for this menu) —
-  // fine for the current single-window app, revisit if multi-window support
-  // is ever added.
+  // process-global — fine for the current single-window app, revisit if
+  // multi-window support is ever added.
   const rebuildMenu = () => {
     const menu = Menu.buildFromTemplate(
       buildMenuTemplate(
         {
-        newTab: () => tabs.newTab("editor"),
         newBrowserTab: newUserBrowserTab,
-        newDocTab: () => void tabs.newTab("doc"),
-        newWorkflowTab: () => void tabs.newTab("workflow"),
         openSettings: () => void tabs.openSettingsTab(undefined, { focus: true }),
         openPasswords: () => void tabs.openPasswordsTab({ focus: true }),
         openHistory: () => void tabs.openHistoryTab({ focus: true }),
-        signIn: () => desktopAuth.beginSignIn(),
         closeTab: () => {
           const target = decideCloseTarget({
             activeTabId: tabs.getSnapshot().activeId,
@@ -3328,12 +2594,6 @@ export function createMainWindow(
         closeWindow: () => win.close(),
         nextTab: () => tabs.nextTab(),
         prevTab: () => tabs.prevTab(),
-        forwardToActiveTab: (commandId) => {
-          // Palette commands are editor-only: a doc or browser tab gets nothing.
-          if (!shouldForwardMenuCommand(tabs.getSnapshot().activeKind)) return;
-          tabs.activeHandle()?.sendMenuCommand(commandId);
-        },
-        useThisAppForMcp: () => void mcpService.forcePublish(),
         toggleAgentPanel: () => setPanelCollapsed(!panelCollapsed),
         revealActiveTab: () => {
           const id = tabs.getSnapshot().activeId;
@@ -3347,30 +2607,18 @@ export function createMainWindow(
           // show() makes it visible again.
           if (!enabled) {
             void browserController.hideCursorOverlay();
-            hideAllCursorOverlays();
           }
         },
         },
         { isMac: process.platform === "darwin", appName: app.name, agentPanel: { collapsed: panelCollapsed }, reveal: { label: revealMenuLabel(process.platform), enabled: lastRevealable } },
-        mcpService.getStatus(),
         effectiveCursor(),
       ),
     );
     Menu.setApplicationMenu(menu);
   };
   rebuildMenu();
-  tabs.setMcpStatus(mcpService.getStatus());
-  const unsubscribeMcpStatus = mcpService.onStatusChanged(() => {
-    tabs.setMcpStatus(mcpService.getStatus());
-    rebuildMenu();
-  });
-
-  // An MCP call that finds no editor tab opens a canvas tab in the
-  // background (becomes active from zero tabs without taking focus), then waits for it.
-  mcpService.setOnDemandTabOpener(() => void tabs.newTab("editor", undefined, { activate: false }));
-  for (const kind of INITIAL_TABS) tabs.newTab(kind);
-  // Zero initial tabs emit nothing: push the first snapshot so the empty state
-  // shows (and the panel takes focus). With initial tabs this repeats the last push; pushState diffs.
+  // The window starts with zero tabs and emits nothing: push the first snapshot so the empty state
+  // shows (and the panel takes focus).
   pushState(tabs.getSnapshot());
   return win;
 }

@@ -6,7 +6,7 @@
 //
 // Drives the flow exactly the way e2e/browser-tab.spec.ts does: a stub editor
 // page (its own tiny local server, distinct from the shop) loaded as
-// PEN_DESKTOP_URL, then window.penDesktop.browser.{open,act,snapshot,read}
+// SIDEFORM_LIGHT_UI_URL, then window.penDesktop.browser.{open,act,snapshot,read}
 // over real IPC into a real WebContentsView pointed at the shop server — no
 // LLM, no chat, no network beyond localhost.
 
@@ -63,7 +63,7 @@ function callBrowser<K extends keyof BrowserBridge>(
 test("bench-shop fixture: consent gate, search, hover menu, filters, checkout validation, and order recording", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: editorBaseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: editorBaseUrl },
   });
 
   try {

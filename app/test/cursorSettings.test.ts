@@ -67,19 +67,19 @@ describe("resolveCursorSettings (env vs saved precedence)", () => {
   });
 
   it("env wins and locks the menu item", () => {
-    expect(resolveCursorSettings({ PEN_DESKTOP_BROWSER_CURSOR: "on" }, saved)).toEqual({ enabled: true, enabledLocked: true });
-    expect(resolveCursorSettings({ PEN_DESKTOP_BROWSER_CURSOR: "off" }, { enabled: true })).toEqual({
+    expect(resolveCursorSettings({ SIDEFORM_LIGHT_BROWSER_CURSOR: "on" }, saved)).toEqual({ enabled: true, enabledLocked: true });
+    expect(resolveCursorSettings({ SIDEFORM_LIGHT_BROWSER_CURSOR: "off" }, { enabled: true })).toEqual({
       enabled: false,
       enabledLocked: true,
     });
   });
 
   it("empty or whitespace-only env counts as unset", () => {
-    expect(resolveCursorSettings({ PEN_DESKTOP_BROWSER_CURSOR: "  " }, saved)).toEqual({ enabled: false, enabledLocked: false });
+    expect(resolveCursorSettings({ SIDEFORM_LIGHT_BROWSER_CURSOR: "  " }, saved)).toEqual({ enabled: false, enabledLocked: false });
   });
 
-  it("the removed PEN_DESKTOP_BROWSER_CURSOR_MOTION env var has no effect", () => {
-    expect(resolveCursorSettings({ PEN_DESKTOP_BROWSER_CURSOR_MOTION: "classic" }, saved)).toEqual({
+  it("the removed SIDEFORM_LIGHT_BROWSER_CURSOR_MOTION env var has no effect", () => {
+    expect(resolveCursorSettings({ SIDEFORM_LIGHT_BROWSER_CURSOR_MOTION: "classic" }, saved)).toEqual({
       enabled: false,
       enabledLocked: false,
     });

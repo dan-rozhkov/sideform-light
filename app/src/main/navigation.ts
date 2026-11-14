@@ -1,17 +1,18 @@
 import { decideBrowserNavigation } from "@sideform/browser-agent/controller";
 import type { WebContents } from "electron";
+import { originOf } from "./config";
 
 export type NavigationDecision = "allow" | "external" | "deny";
 
-/** Pure policy: same-origin as editor → allow; other http(s) → external; else deny. */
-export function decideNavigation(targetUrl: string, editorOrigin: string): NavigationDecision {
+/** Pure policy: same-origin as the ui → allow; other http(s) → external; else deny. */
+export function decideNavigation(targetUrl: string, uiOrigin: string): NavigationDecision {
   let url: URL;
   try {
     url = new URL(targetUrl);
   } catch {
     return "deny";
   }
-  if (url.origin === editorOrigin) return "allow";
+  if (originOf(targetUrl) === uiOrigin) return "allow";
   if (url.protocol === "http:" || url.protocol === "https:") return "external";
   return "deny";
 }
@@ -19,30 +20,31 @@ export function decideNavigation(targetUrl: string, editorOrigin: string): Navig
 /** Wires will-navigate + setWindowOpenHandler on a WebContents per the policy. */
 export function attachNavigationPolicy(
   contents: WebContents,
-  editorOrigin: string,
+  uiOrigin: string,
   openExternal: (url: string) => void,
 ): void {
   contents.on("will-navigate", (event, url) => {
-    const decision = decideNavigation(url, editorOrigin);
+    const decision = decideNavigation(url, uiOrigin);
     if (decision === "allow") return;
     event.preventDefault();
     if (decision === "external") openExternal(url);
   });
   contents.setWindowOpenHandler(({ url }) => {
-    if (decideNavigation(url, editorOrigin) === "external") openExternal(url);
-    // Same-origin popups are also denied: the editor is single-window; tabs
+    if (decideNavigation(url, uiOrigin) === "external") openExternal(url);
+    // Same-origin popups are also denied: tabs
     // are created only via the shell UI/menu.
     return { action: "deny" };
   });
 }
 
-export type PanelNavigationDecision = "allow" | "editor-tab" | "external" | "deny";
+export type PanelNavigationDecision = "allow" | "external" | "deny";
 
 /**
  * Pure policy for the agent panel: it may only stay on its own page. Same
  * origin AND the panel path (`panelUrl`'s pathname) or a subpath -> allow;
- * any other same-origin URL (the editor, the gallery) -> open it as an editor
- * tab instead; other http(s) origins -> system browser; everything else deny.
+ * any other URL on the ui origin -> deny (the ui has no other page a panel
+ * link should reach); other http(s) origins -> system browser; everything
+ * else deny.
  */
 export function decidePanelNavigation(targetUrl: string, panelUrl: string): PanelNavigationDecision {
   let url: URL;
@@ -53,9 +55,9 @@ export function decidePanelNavigation(targetUrl: string, panelUrl: string): Pane
   } catch {
     return "deny";
   }
-  if (url.origin === panel.origin) {
+  if (originOf(targetUrl) === originOf(panelUrl)) {
     const base = panel.pathname.replace(/\/+$/, "");
-    return url.pathname === base || url.pathname.startsWith(`${base}/`) ? "allow" : "editor-tab";
+    return url.pathname === base || url.pathname.startsWith(`${base}/`) ? "allow" : "deny";
   }
   if (url.protocol === "http:" || url.protocol === "https:") return "external";
   return "deny";
@@ -66,11 +68,9 @@ export function attachPanelNavigationPolicy(
   contents: WebContents,
   panelUrl: string,
   openExternal: (url: string) => void,
-  openEditorTab: () => void,
 ): void {
   const route = (decision: PanelNavigationDecision, url: string) => {
     if (decision === "external") openExternal(url);
-    else if (decision === "editor-tab") openEditorTab();
   };
   contents.on("will-navigate", (event, url) => {
     const decision = decidePanelNavigation(url, panelUrl);
@@ -118,20 +118,6 @@ export function attachLocalOnlyPolicy(contents: WebContents): void {
 }
 
 /**
- * Whether a `did-start-navigation` event is a real cross-document
- * navigation of the tab's main frame — the only case where the MCP bridge
- * registration should be dropped (see window.ts / mcp/service.ts's
- * handleTabNavigated). Electron fires `did-start-navigation` for
- * same-document navigations too (`pushState`/`replaceState`/hash changes),
- * which `pen-editor` uses as a react-router SPA; those never reload the
- * page's JS, so the existing `registerMcpBridge()` registration is still
- * live and must not be treated as gone.
- */
-export function shouldDropMcpRegistration(details: { isMainFrame: boolean; isSameDocument: boolean }): boolean {
-  return details.isMainFrame && !details.isSameDocument;
-}
-
-/**
  * Whether a `did-start-navigation`/`did-navigate-in-page` event should be
  * forwarded to `@sideform/browser-agent/controller`'s navigation-watch settle (`window.ts`'s
  * `onNavigationEvent`, feeding `armNavigationWatcher`). Both events fire for
@@ -151,18 +137,4 @@ export function shouldDropMcpRegistration(details: { isMainFrame: boolean; isSam
  */
 export function shouldForwardNavigationEvent(details: { isMainFrame: boolean }): boolean {
   return details.isMainFrame;
-}
-
-/** did-fail-load hook: main-frame load failures (except ERR_ABORTED -3) load the offline page. */
-export function attachOfflineFallback(contents: WebContents, offlineFile: string): void {
-  contents.on(
-    "did-fail-load",
-    (_event, errorCode, _errorDescription, validatedURL, isMainFrame) => {
-      if (!isMainFrame || errorCode === -3 /* ERR_ABORTED */) return;
-      // If the offline page itself fails to load (e.g. bad packaged path),
-      // validatedURL is a file: URL — don't re-trigger the fallback or we loop forever.
-      if (validatedURL.startsWith("file:")) return;
-      void contents.loadFile(offlineFile, { query: { target: validatedURL } });
-    },
-  );
 }

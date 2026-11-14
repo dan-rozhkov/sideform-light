@@ -1911,7 +1911,7 @@ interface ReadResult {
 test("built-in browser tab: open, findImages, act (click/type/scroll/back/forward) against a real DOM", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -2094,7 +2094,7 @@ test("built-in browser tab: open, findImages, act (click/type/scroll/back/forwar
 test("human cursor overlay: real, non-blocking, and follows the acted-on element", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -2324,7 +2324,7 @@ test("human cursor overlay: real, non-blocking, and follows the acted-on element
 test("File ▸ New Browser Tab focuses the address bar, and typing+submitting navigates the tab", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -2376,7 +2376,7 @@ test("File ▸ New Browser Tab focuses the address bar, and typing+submitting na
 test("built-in browser tab: browse_act back errors cleanly when there is no history yet", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -2396,7 +2396,7 @@ test("built-in browser tab: browse_act back errors cleanly when there is no hist
 test("built-in browser tab: browse_act reports an error when no browser tab has ever been opened", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -2415,7 +2415,7 @@ test("built-in browser tab: browse_act reports an error when no browser tab has 
 test("browser snapshot: visibility filtering, labels, ops, and password values against a real DOM", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -2582,7 +2582,7 @@ test("browser act click: a bare word matching both a real element tag and a butt
   // element and a button whose visible text is exactly "Details".
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -2619,7 +2619,7 @@ test("browser act click: a bare word matching both a real element tag and a butt
 async function openReachFixture(url: string, readyText: string) {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
   const editorPage = app.canvasPage;
   await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
@@ -2870,7 +2870,7 @@ test("browser snapshot: a non-modal role=dialog banner does not scope the table"
 test("browser snapshot: hard-caps at 120 elements even when more are visible", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -2896,7 +2896,7 @@ test("browser snapshot: hard-caps at 120 elements even when more are visible", a
 test("code review finding 7: scroll containers never push the top document's element count over the hard cap", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -2937,7 +2937,7 @@ test("code review finding 7: scroll containers never push the top document's ele
 test("browser perform: acts by index, and rejects a snapshotId superseded by a newer snapshot", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3014,7 +3014,7 @@ test("browser perform: acts by index, and rejects a snapshotId superseded by a n
 test("second-pass review: a scroll container that is ALSO an interactive element (scrollable textarea) gets one entry, not two, and TYPE_TEXT by its interactive index still works", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3071,7 +3071,7 @@ test("second-pass review: a scroll container that is ALSO an interactive element
 test("evidence of effect ('Addendum 2, 2026-09-19' §1): a no-op click reports changed: false, a main-image swap reports changed: true", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3118,7 +3118,7 @@ test("evidence of effect ('Addendum 2, 2026-09-19' §1): a no-op click reports c
 test("browse-speed contract (2026-09-24): a click that updates a separate status element reports changed: false but pageChanged: true with the new text in appeared", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3154,7 +3154,7 @@ test("browse-speed contract (2026-09-24): a click that updates a separate status
 test("browse-speed contract fix (2026-09-24): a no-op click on a page with a live ticking clock reports pageChanged: false", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3188,7 +3188,7 @@ test("browse-speed contract fix (2026-09-24): a no-op click on a page with a liv
 test("browse-speed contract fix (2026-09-24): removing an element reports pageChanged: false", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3220,7 +3220,7 @@ test("browse-speed contract fix (2026-09-24): removing an element reports pageCh
 test("evidence of effect: perform CLICK by index also carries changed evidence", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3254,7 +3254,7 @@ test("evidence of effect: perform CLICK by index also carries changed evidence",
 test("browse_read: headings/text/links against a real DOM, with caps applied and an error on an unmatched selector", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3358,7 +3358,7 @@ test("browse_read: headings/text/links against a real DOM, with caps applied and
 test("browse_capture: the read fixture comes back as one self-contained HTML document, and a bad element index is a clean error", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3407,7 +3407,7 @@ test("browse_capture: the read fixture comes back as one self-contained HTML doc
 test("browse_capture v2: a linked stylesheet is fetched, its @import inlined, html rules rewritten, unused rules pruned", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3445,7 +3445,7 @@ test("browse_capture v2: a linked stylesheet is fetched, its @import inlined, ht
 test("BROWSE-01: an <img srcset> yields the largest declared candidate, and naturalWidth/naturalHeight are reported alongside rendered size", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3503,7 +3503,7 @@ test("BROWSE-01: an <img srcset> yields the largest declared candidate, and natu
 test("BROWSE-02: labels resolve through a descendant's aria-label and through an enclosing <a>/<button>, with the positional fallback still last", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3579,7 +3579,7 @@ test("BROWSE-02: labels resolve through a descendant's aria-label and through an
 test("browse_open: DOM-ready fix — returns well within the command timeout with loaded: false while a subresource is still stalled, and the page is usable once it catches up", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3637,7 +3637,7 @@ test("browse_open: DOM-ready fix — returns well within the command timeout wit
 test("addendum 3 §2 (upstream PR #58): a click on a control that disables itself is observed only after the handler finishes", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3685,7 +3685,7 @@ test("addendum 3 §2 (upstream PR #58): a click on a control that disables itsel
 test("browse_screenshot hides the agent cursor overlay during capture and restores it after", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3725,7 +3725,7 @@ test("browse_screenshot hides the agent cursor overlay during capture and restor
 test("browse_screenshot: returns a non-empty image, and annotate marks never leak into a later snapshot", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3807,7 +3807,7 @@ test("browse_screenshot: returns a non-empty image, and annotate marks never lea
 test("browse_screenshot: annotate with the loop's snapshotId reuses it, keeps perform valid, and each label touches its own element without covering a neighbour row", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -3935,7 +3935,7 @@ test("browse_screenshot: annotate with the loop's snapshotId reuses it, keeps pe
 test("browse_act: press Enter submits a form, hover triggers :hover/mouseover, and select changes a real <select>", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4007,7 +4007,7 @@ test("browse_act: press Enter submits a form, hover triggers :hover/mouseover, a
 test("browse_tabs: list/switch/close, and a target=_blank popup reports openedTab", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4069,7 +4069,7 @@ test("browse_tabs: list/switch/close, and a target=_blank popup reports openedTa
 test("dialogs: alert() is auto-accepted and reported, without hanging the next command", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4128,7 +4128,7 @@ test("dialogs: alert() is auto-accepted and reported, without hanging the next c
 test("dialogs (finding 3): an alert() the page raises on its own, outside any agent command, is left for the user — not auto-handled", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4190,7 +4190,7 @@ test("dialogs (finding 3): an alert() the page raises on its own, outside any ag
 test("browse_act: press Ctrl+A selects a field's whole contents via CDP's native editing command (finding 2)", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4250,7 +4250,7 @@ test("browse_act: press Ctrl+A selects a field's whole contents via CDP's native
 test("dialogs (finding 1): a dialog raised between commands is resolved and reported by the next command, without hanging it", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4308,7 +4308,7 @@ test("dialogs (finding 1): a dialog raised between commands is resolved and repo
 test("browse_act hover: on a smooth-scroll page, the reported coordinates land on the real (post-scroll) element (finding 4)", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4350,7 +4350,7 @@ test("browse_act hover: on a smooth-scroll page, the reported coordinates land o
 test("Wave 2 reliability: trusted click fires event.isTrusted and a pointerdown-only menu opens", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4394,7 +4394,7 @@ test("Wave 2 reliability: trusted click fires event.isTrusted and a pointerdown-
 test("Wave 2 reliability: trusted typing selects existing content, fires beforeinput (React-compatible), and reports via: \"cdp\"", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4437,7 +4437,7 @@ test("Wave 2 reliability: trusted typing selects existing content, fires beforei
 test("Wave 2 reliability: act scroll / perform SCROLL scroll an inner container the window itself can't move", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4499,7 +4499,7 @@ test("Wave 2 reliability: act scroll / perform SCROLL scroll an inner container 
 test("code review finding 5: a hidden text match no longer short-circuits the selector fallback, and <style>/<script> text is never a click target", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4550,7 +4550,7 @@ test("code review finding 5: a hidden text match no longer short-circuits the se
 test("Wave 3 reliability: open shadow root — click a shadow button by index and read includes shadow text", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4588,7 +4588,7 @@ test("Wave 3 reliability: open shadow root — click a shadow button by index an
 test("Wave 3 reliability: same-origin iframe — click a frame button by index", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4625,7 +4625,7 @@ test("Wave 3 reliability: same-origin iframe — click a frame button by index",
 test("Wave 3 reliability: cross-origin (OOPIF) iframe — click a frame button by index and read includes its text", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4665,7 +4665,7 @@ test("Wave 3 reliability: cross-origin (OOPIF) iframe — click a frame button b
 test("Wave 3 reliability: a console error from a throwing click handler is surfaced on a command result", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {
@@ -4716,7 +4716,7 @@ test("Wave 3 reliability: a console error from a throwing click handler is surfa
 test("Wave 3 reliability: botCheck is true on a page that looks like a challenge wall", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {

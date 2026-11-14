@@ -26,7 +26,7 @@ test.afterAll(() => new Promise<void>((r) => server.close(() => r())));
 test("the window has a left /agent panel; tabs still work", async () => {
   const app = await electron.launch({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: `${baseUrl}/app?q=1` },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: `${baseUrl}/app?q=1` },
   });
 
   const agentPage =

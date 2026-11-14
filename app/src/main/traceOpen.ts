@@ -4,37 +4,23 @@ import { isValidTraceId } from "./config";
 export interface TraceOpenDeps {
   /** True only for this window's agent panel webContents. */
   isPanel(webContentsId: number): boolean;
-  /** The doc viewer check of this window (the same port `logins:*` and `docs:export-pdf` use). */
-  isDocViewer(webContentsId: number, frameUrl: string | undefined): boolean;
   /** The id of the open trace tab showing this trace, or null. */
   findTraceTab(traceId: string): number | null;
   activate(tabId: number, opts: { focus: boolean }): void;
-  /** Opens (and shows, with keyboard focus only when `focus`) a trace tab at `/trace/<id>?src=local&chat=off`; returns its tab id. */
+  /** Opens (and shows, with keyboard focus only when `focus`) a trace tab at `/trace/<id>?src=local`; returns its tab id. */
   newTraceTab(traceId: string, opts: { focus: boolean }): number;
-}
-
-/** Who invoked `traces:open`: the sender id, whether the frame is the top frame, and that frame's own URL. */
-export interface TraceOpenCaller {
-  senderId: number;
-  topFrame: boolean;
-  frameUrl: string | undefined;
 }
 
 export type TraceOpenResult = { ok: true } | { ok: false; error: string };
 
 /**
- * `traces:open` (invoke). Two senders:
- * - the agent panel: agent-initiated, so the tab is shown without taking keyboard focus;
- * - the TOP frame of a doc tab that still shows the doc page (same rule as `docs:export-pdf`): a click on a
- *   `/trace/<id>` link in a document, so the tab is shown WITH focus.
- * An open tab for the trace is activated; otherwise a new trace tab opens. Never throws.
+ * `traces:open` (invoke), from the agent panel only: agent-initiated, so the tab is shown without taking
+ * keyboard focus. An open tab for the trace is activated; otherwise a new trace tab opens. Never throws.
  */
-export function openTraceTab(deps: TraceOpenDeps, caller: TraceOpenCaller, traceId: unknown): TraceOpenResult {
-  const fromPanel = deps.isPanel(caller.senderId);
-  const fromDoc = !fromPanel && caller.topFrame && deps.isDocViewer(caller.senderId, caller.frameUrl);
-  if (!fromPanel && !fromDoc) return { ok: false, error: "traces:open is only allowed from the agent panel or a document tab" };
+export function openTraceTab(deps: TraceOpenDeps, senderId: number, traceId: unknown): TraceOpenResult {
+  if (!deps.isPanel(senderId)) return { ok: false, error: "traces:open is only allowed from the agent panel" };
   if (!isValidTraceId(traceId)) return { ok: false, error: "invalid trace id" };
-  const focus = fromDoc;
+  const focus = false;
   try {
     const existing = deps.findTraceTab(traceId);
     if (existing !== null) deps.activate(existing, { focus });

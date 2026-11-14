@@ -15,10 +15,9 @@ describe("isOrphaningEvent", () => {
 });
 
 describe("isBrowserOwner", () => {
-  it("editor tabs and the live panel own; a null panel never matches", () => {
-    const tab = (id: number) => id === 5;
-    expect(isBrowserOwner(5, tab, null)).toBe(true);
-    expect(isBrowserOwner(7, tab, 7)).toBe(true);
-    expect(isBrowserOwner(7, tab, null)).toBe(false);
+  it("only the live panel owns; a null panel never matches", () => {
+    expect(isBrowserOwner(7, 7)).toBe(true);
+    expect(isBrowserOwner(5, 7)).toBe(false);
+    expect(isBrowserOwner(7, null)).toBe(false);
   });
 });

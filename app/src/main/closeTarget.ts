@@ -9,11 +9,7 @@ export function decideCloseTarget(input: { activeTabId: number | null }): CloseT
   return { kind: "none" };
 }
 
-/**
- * macOS `activate` (dock click) reopens a main window when none is left. Windows that are not
- * main windows (the agent cursor overlay) must not count: with only those left the app would
- * otherwise stay without an editor. `isOtherWindow` says which windows to ignore.
- */
-export function shouldReopenMainWindow<T>(windows: readonly T[], isOtherWindow: (w: T) => boolean): boolean {
-  return windows.every(isOtherWindow);
+/** macOS `activate` (dock click) reopens a main window when none is left. */
+export function shouldReopenMainWindow(windows: readonly unknown[]): boolean {
+  return windows.length === 0;
 }

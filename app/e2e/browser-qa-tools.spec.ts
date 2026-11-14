@@ -93,7 +93,7 @@ function cmd(editor: Page, method: string, ...args: unknown[]): Promise<Res> {
 interface Env { app: ElectronApplication; editor: Page; tabbar: Page; site: Page }
 
 async function launch(): Promise<Env> {
-  const app = await launchShell({ args: ["."], env: { ...process.env, PEN_DESKTOP_URL: editorBaseUrl } });
+  const app = await launchShell({ args: ["."], env: { ...process.env, SIDEFORM_LIGHT_UI_URL: editorBaseUrl } });
   const editor = app.canvasPage;
   await expect(editor.locator("#ready")).toHaveText("stub-editor");
   const tabbar =

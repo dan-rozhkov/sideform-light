@@ -6,7 +6,7 @@ export interface ChatIpcDeps {
   store: Pick<ChatStore, "list" | "read" | "save" | "remove">;
   /**
    * The panel page URL of an agent panel webContents of this process, or undefined for any other sender.
-   * An id stays known for a grace period after the panel is destroyed (canvasWriters.ts), so a last save lands.
+   * An id stays known for a grace period after the panel is destroyed (panelSenders.ts), so a last save lands.
    */
   panelUrlOf(webContentsId: number): string | undefined;
 }

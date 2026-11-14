@@ -6,11 +6,12 @@
 // could otherwise silently pick up geolocation, notifications,
 // clipboard-read, or media devices with no prompt at all (finding 6).
 //
-// Electron-free and injected, same style as mcp/dispatcher.ts and
-// @sideform/browser-agent/controller — `target` stands in for the real
-// `Session` so this is unit-testable under plain Node/vitest.
-// window.ts/index.ts wire the real `session.fromPartition("persist:penbrowser")`
-// into it exactly once (not per tab — see index.ts).
+// Electron-free and injected, like @sideform/browser-agent/controller —
+// `target` stands in for the real `Session` so this is unit-testable under
+// plain Node/vitest. index.ts wires the real `session.fromPartition("persist:penbrowser")`
+// into it exactly once (not per tab), and the DEFAULT session (the ui pages:
+// agent panel, trace, settings) into `restrictPermissions` with the one
+// permission those pages need.
 
 export interface PermissionHandlerTarget {
   setPermissionRequestHandler(
@@ -26,9 +27,17 @@ export interface PermissionHandlerTarget {
   ): void;
 }
 
+/** Grants only the permissions in `allowed`; denies every other request and check, regardless of requesting origin. */
+export function restrictPermissions(target: PermissionHandlerTarget, allowed: readonly string[]): void {
+  target.setPermissionRequestHandler((_webContents, permission, callback) => callback(allowed.includes(permission)));
+  target.setPermissionCheckHandler((_webContents, permission) => allowed.includes(permission));
+}
+
 /** Denies every permission request and check outright, regardless of
  * permission type or requesting origin. */
 export function denyAllPermissions(target: PermissionHandlerTarget): void {
-  target.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  target.setPermissionCheckHandler(() => false);
+  restrictPermissions(target, []);
 }
+
+/** The only permission the ui pages (default session) may use: a sanitized clipboard write (the copy buttons). */
+export const UI_ALLOWED_PERMISSIONS = ["clipboard-sanitized-write"] as const;

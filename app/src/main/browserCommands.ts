@@ -14,7 +14,6 @@ export const BROWSER_COMMANDS = [
   "read",
   "screenshot",
   "tabs",
-  "capture",
   "applyFixture",
   "releaseFixture",
   "clearActEmulation",
@@ -23,7 +22,6 @@ export const BROWSER_COMMANDS = [
   "stopJournal",
   "captureCheckpoint",
   "requests",
-  "releaseApp",
 ] as const;
 
 export type BrowserCommandName = (typeof BROWSER_COMMANDS)[number];
@@ -39,7 +37,6 @@ export const PAGE_DRIVING_COMMANDS: ReadonlySet<string> = new Set<BrowserCommand
   "read",
   "screenshot",
   "tabs",
-  "capture",
   "applyFixture",
   "fillLogin",
 ]);

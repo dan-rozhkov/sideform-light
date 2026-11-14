@@ -5,22 +5,12 @@ import * as path from "node:path";
 export interface BrowserSettings {
   /** Block ads and trackers in the shared browser partition (see "Ad and tracker blocking"). */
   adBlock: boolean;
-  /**
-   * Lets MCP clients drive the shared browser through the `browse_*` tools (McpService gates every call on it).
-   * OFF by default: any local MCP client could otherwise drive the user's logged-in browser.
-   */
-  mcpBrowser: boolean;
-  /**
-   * Ask before the agent launches or attaches to a NORMAL-risk desktop app. OFF by default (no dialog). High-risk apps
-   * always ask, blocked apps stay blocked, and the restart confirm is always a dialog.
-   */
-  askAppAccess: boolean;
 }
 
 export const BROWSER_SETTINGS_FILE = "browser-settings.json";
 
 export function defaultBrowserSettings(): BrowserSettings {
-  return { adBlock: true, mcpBrowser: false, askAppAccess: false };
+  return { adBlock: true };
 }
 
 /** The ONE key list (read, patch parsing, change compare). A new setting only needs to join the defaults above. */

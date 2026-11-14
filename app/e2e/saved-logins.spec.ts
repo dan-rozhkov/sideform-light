@@ -60,7 +60,7 @@ test.afterAll(() => new Promise<void>((r) => server.close(() => r())));
 test("saved logins: fillLogin error path and the save prompt via the isolated-world binding", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
 
   try {

@@ -11,13 +11,10 @@ describe("decideCloseTarget (global Close Tab)", () => {
 });
 
 describe("shouldReopenMainWindow (macOS activate)", () => {
-  const isOverlay = (w: string) => w === "overlay";
-  it("reopens when no window is left, or only non-main windows are", () => {
-    expect(shouldReopenMainWindow([], isOverlay)).toBe(true);
-    expect(shouldReopenMainWindow(["overlay"], isOverlay)).toBe(true);
+  it("reopens when no window is left", () => {
+    expect(shouldReopenMainWindow([])).toBe(true);
   });
-  it("does not reopen while a main window exists", () => {
-    expect(shouldReopenMainWindow(["main"], isOverlay)).toBe(false);
-    expect(shouldReopenMainWindow(["overlay", "main"], isOverlay)).toBe(false);
+  it("does not reopen while a window exists", () => {
+    expect(shouldReopenMainWindow(["main"])).toBe(false);
   });
 });

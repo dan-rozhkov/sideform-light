@@ -22,7 +22,7 @@ test.afterAll(() => new Promise<void>((r) => server.close(() => r())));
 test("tabs can be dragged to a new position; a tiny move is a click; an inactive tab can be dragged", async () => {
   const app = await electron.launch({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: `${baseUrl}/app`, PEN_DESKTOP_NO_ANIMATIONS: "1" },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: `${baseUrl}/app`, SIDEFORM_LIGHT_NO_ANIMATIONS: "1" },
   });
   try {
     const tabbar: Page =

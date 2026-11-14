@@ -6,14 +6,13 @@ type SuggestionItem = { url: string; title: string; lastVisitedAt: number };
 
 const api = {
   isMac: process.platform === "darwin",
-  newTab: () => ipcRenderer.send("tabbar:new"),
-  /** Opens the native "+" popup (editor vs browser tab) anchored at window coordinates. */
-  openNewTabMenu: (anchor: { x: number; y: number }) => ipcRenderer.send("tabbar:new-menu", anchor),
+  /** The "+" button: a new browser tab. */
+  newTab: () => ipcRenderer.send("tabbar:new-browser"),
   /** Opens the native "Browser tools" popup (viewport / DevTools / zoom) anchored at window coordinates. */
   openToolsMenu: (anchor: { x: number; y: number }) => ipcRenderer.send("tabbar:tools-menu", anchor),
-  /** Agent layout: show/hide the agent panel (the sidebar button). */
+  /** Show/hide the agent panel (the sidebar button). */
   togglePanel: () => ipcRenderer.send("tabbar:toggle-panel"),
-  /** Right-click on a tab: opens the native tab menu (reveal file, close) at window coordinates. */
+  /** Right-click on a tab: opens the native tab menu (reveal a trace file, close) at window coordinates. */
   openTabMenu: (id: number, anchor: { x: number; y: number }) => ipcRenderer.send("tabbar:tab-menu", { id, x: anchor.x, y: anchor.y }),
   activateTab: (id: number) => ipcRenderer.send("tabbar:activate", id),
   closeTab: (id: number) => ipcRenderer.send("tabbar:close", id),

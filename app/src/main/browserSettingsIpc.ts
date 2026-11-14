@@ -29,7 +29,7 @@ export interface BrowserSettingsIpc {
   dispose(): void;
 }
 
-/** Top frame of a Settings tab (of any window) that still shows the settings page on the editor origin. */
+/** Top frame of a Settings tab (of any window) that still shows the settings page on the ui origin. */
 export function isSettingsSender(ports: Iterable<SettingsWindowPort>, event: BrowserSettingsEvent): boolean {
   const frame = event.senderFrame;
   if (frame == null || frame !== event.sender.mainFrame) return false;

@@ -29,7 +29,7 @@ setTimeout(() => { const u = new URL(location.href); if (!u.searchParams.get("ca
 test.afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
 test("reveal item: disabled without a file tab, enabled after replaceState, click reveals the stored file", async () => {
-  const app = await electron.launch({ args: ["."], env: { ...process.env, PEN_DESKTOP_URL: `${baseUrl}/app` } });
+  const app = await electron.launch({ args: ["."], env: { ...process.env, SIDEFORM_LIGHT_UI_URL: `${baseUrl}/app` } });
   try {
     const find = async (pred: (u: string) => boolean): Promise<Page> =>
       app.windows().find((p) => pred(p.url())) ?? (await app.waitForEvent("window", { predicate: (p) => pred(p.url()) }));

@@ -28,7 +28,7 @@ test.afterAll(() => new Promise<void>((r) => server.close(() => r())));
 test("launches, opens a canvas tab with the editor, exposes the menu bridge", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl },
   });
   expect(await app.evaluate(({ app: electronApp }) => electronApp.getName())).toBe("Sideform Desktop");
 

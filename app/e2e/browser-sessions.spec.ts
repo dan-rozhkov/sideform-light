@@ -77,7 +77,7 @@ const livePages = (app: ElectronApplication) => app.windows().filter((p) => !p.i
 const pagesAt = (app: ElectronApplication, prefix: string) => livePages(app).filter((p) => p.url().startsWith(prefix));
 
 async function launch(env: Record<string, string> = {}): Promise<{ app: ElectronApplication; editor: Page }> {
-  const app = await launchShell({ args: ["."], env: { ...process.env, PEN_DESKTOP_URL: editorBaseUrl, ...env } });
+  const app = await launchShell({ args: ["."], env: { ...process.env, SIDEFORM_LIGHT_UI_URL: editorBaseUrl, ...env } });
   const editor = app.canvasPage;
   await expect(editor.locator("#ready")).toHaveText("stub-editor");
   return { app, editor };
@@ -248,7 +248,7 @@ test("a popup of a session tab stays in that session", async () => {
 });
 
 test("invalid session ids are rejected; the pool has 6 slots: a 7th command waits, then errors or takes a freed, wiped slot", async () => {
-  const { app, editor } = await launch({ PEN_DESKTOP_SESSION_SLOT_WAIT_MS: "800" });
+  const { app, editor } = await launch({ SIDEFORM_LIGHT_SESSION_SLOT_WAIT_MS: "800" });
   try {
     for (const bad of ["", "a b", "../x", "x".repeat(65)]) {
       expect(await call(editor, bad, "snapshot"), JSON.stringify(bad)).toEqual({ error: "invalid session id" });

@@ -1,5 +1,5 @@
 import type { BrowserPageHandle, BrowserTabInfo } from "@sideform/browser-agent/controller";
-import { canvasIdOfUrl, docIdOfUrl, isValidCanvasId, isValidDocId, resolveCanvasTabUrl, isDocPageOn, isWorkflowPageOn, isSettingsPageOn, isValidSettingsSection, isValidTraceId, isValidWorkflowId, resolveDocTabUrl, resolveSettingsTabUrl, resolveTraceTabUrl, resolveWorkflowTabUrl, traceIdOfUrl, workflowIdOfUrl } from "./config";
+import { isSettingsPageOn, isValidSettingsSection, isValidTraceId, resolveSettingsTabUrl, resolveTraceTabUrl, traceIdOfUrl } from "./config";
 export type UITheme = "light" | "dark";
 
 /** How a tab becomes the active one. `focus: false` shows it without moving keyboard focus into it. */
@@ -17,34 +17,13 @@ export function decideActivationFocus(requestedActivate: boolean | undefined): b
   return requestedActivate !== false;
 }
 
-// Mirrors src/main/mcp/service.ts's McpStatus — defined here (rather than
-// imported from mcp/service.ts) so this module stays free of any dependency
-// on the MCP bridge; service.ts is the one that imports this type. "off"
-// means no local MCP server is running at all (should not normally happen
-// once the app has started); "not-published" means our server is up but a
-// different local process already owns the handshake file; "listening"
-// means our server is the one a plugin/agent will discover; "error" means
-// something that should have worked (binding the loopback server, writing
-// the handshake file) failed outright — this must render as visibly as
-// "not-published" (never as hidden "off"), since the status surface is the
-// only diagnostic a packaged user has (finding 1/3).
-export type McpStatus = "listening" | "not-published" | "off" | "error";
-
 /**
- * Two kinds of tab. "editor" is the original (and default) kind — a
- * WebContentsView loading the deployed pen-editor frontend, with the
- * `preload/tab.js` bridge, MCP registration, and title/theme IPC callbacks
- * wired the way they always have been. "browser" is the built-in browser tab
- * (design doc `2026-09-18-builtin-browser-design.md`) — a plain web page with
- * no preload at all, never registered with the MCP bridge, whose title/url
- * are learned from real navigation events instead of the editor's own IPC
- * channels. "doc" is a markdown document tab (the frontend's `/doc`): the
- * same preload, default session and title/theme callbacks as "editor", but it
- * is NOT a canvas tab: never in the canvas link, the MCP active tab or
- * `lastEditorWebContentsId`. "workflow" is the same kind of tab for the frontend's
- * `/workflow` page (stored on disk by workflowStore.ts, like documents).
+ * Kinds of tab. "browser" is the built-in browser tab: a plain web page with no preload at all, whose
+ * title/url are learned from real navigation events. "trace" and "settings" are pages of the bundled ui
+ * (`/trace/<id>`, `/settings`) with the `preload/tab.js` bridge; "passwords" and "history" are local
+ * shell pages with their own preloads.
  */
-export type TabKind = "editor" | "browser" | "doc" | "workflow" | "trace" | "settings" | "passwords" | "history";
+export type TabKind = "browser" | "trace" | "settings" | "passwords" | "history";
 
 /** The navigation state a browser tab reports back into its TabState. */
 export interface BrowserNavState {
@@ -73,23 +52,12 @@ export interface TabViewHandle {
    */
   setViewMode?(mode: ViewMode): void;
   destroy(): void;
-  sendMenuCommand(commandId: string): void;
   /** Settings tabs only: tells the open page to switch to a section (no reload). */
   sendSettingsSection(section: string): void;
   focus(): void;
-  /** Editor tabs only: runs the canvas flush handshake in the page (`window.penCanvasFlush`), bounded, never rejects. */
-  flushCanvas?(): Promise<void>;
-  /** Editor tabs only — wired by TabManager only for kind "editor". */
+  /** Page tabs (trace, settings) only: the page title changed. */
   onDocumentTitleChanged(cb: (title: string) => void): void;
-  /** Editor tabs only — wired by TabManager only for kind "editor". */
-  onThemeChanged(cb: (theme: UITheme) => void): void;
-  /**
-   * The webContents id backing this tab — a different id space from
-   * TabManager's own sequential `id` (TabsSnapshot.activeId etc). Needed by
-   * window.ts to translate "the currently active tab" into the id
-   * mcp/service.ts's tab registry is actually keyed by (see
-   * McpService.registerTab/setActiveTab, both keyed by webContents.id).
-   */
+  /** The webContents id backing this tab — a different id space from TabManager's own sequential `id`. */
   getWebContentsId(): number;
   /**
    * Optional: sets the view's own background colour — used by window.ts's
@@ -122,8 +90,7 @@ export interface TabViewHandle {
   executeJavaScript(code: string): Promise<unknown>;
   /** Isolated-world variant (see BrowserPageHandle.executeJavaScriptIsolated). */
   executeJavaScriptIsolated?(code: string): Promise<unknown>;
-  /** Fetch a stylesheet for browse_capture outside the page's CORS (see
-   * BrowserPageHandle.fetchText). Browser tabs only. */
+  /** Fetch a stylesheet outside the page's CORS (see BrowserPageHandle.fetchText). Browser tabs only. */
   /** URL policy for fetchText (see BrowserPageHandle.isFetchAllowed). */
   isFetchAllowed?(url: string): boolean;
   fetchText?(url: string, opts: { timeoutMs: number; maxBytes: number; signal?: AbortSignal }): Promise<{ status: number; text: string; contentType?: string }>;
@@ -267,29 +234,6 @@ export type BrowserTabHandle = TabViewHandle;
 export type { BrowserTabInfo };
 
 /**
- * Which webContents id `McpService.setActiveTab` should be told about, given
- * the currently active tab's kind (finding 1). Browser tabs are deliberately
- * never `registerTab()`'d with the MCP bridge (design doc §1) — so if this
- * just forwarded the active tab's webContents id unconditionally, activating
- * a browser tab would point `McpService` at an id it never registered,
- * `getActiveTab()` would return null, and every un-targeted `tools/call`
- * would answer "No editor tab is open" even while an editor tab is still
- * open in another tab strip slot. The fix: report the active webContents id
- * only while an *editor* tab is active, and keep pointing at whichever
- * editor tab was last active otherwise — never null it out, which would
- * regress un-targeted calls made while the user is simply reading a browser
- * tab.
- */
-export function resolveMcpActiveTab(
-  activeKind: TabKind | null,
-  activeWebContentsId: number | null,
-  lastEditorTabId: number | null,
-): number | null {
-  if (activeKind === "editor") return activeWebContentsId;
-  return lastEditorTabId;
-}
-
-/**
  * True exactly when `next` is the push that should move OS/DOM focus into
  * the tab bar's address input — the moment a browser tab with no URL yet
  * (a fresh File ▸ New Browser Tab, or switching to one that was already
@@ -338,23 +282,6 @@ export interface TabsSnapshot {
   activeId: number | null;
   /** null when there are no tabs at all (never happens in steady state — see newTab's "never leave zero tabs" rule). */
   activeKind: TabKind | null;
-  activeTheme: UITheme | null;
-  mcpStatus: McpStatus;
-  /**
-   * The webContents id `McpService.setActiveTab` should be told about —
-   * `resolveMcpActiveTab` applied to this manager's own up-to-date state
-   * (see that function's doc comment). Computed here, not in window.ts,
-   * because only TabManager sees a tab's destruction (closeTab calls
-   * `view.destroy()` itself) in time to repoint away from a dying editor
-   * tab before this snapshot goes out — window.ts just forwards the value
-   * (finding 1: `lastEditorWebContentsId` used to live in window.ts as a
-   * `let`, updated only from pushState, so closing the active editor tab
-   * next to a browser tab left it pointing at a webContents id that was
-   * about to be destroyed; `unregisterTab` would then null out
-   * `McpService`'s active tab even though another editor tab was still
-   * open elsewhere in the strip).
-   */
-  mcpActiveWebContentsId: number | null;
   /**
    * The browser tabs the agent is driving right now (agent-cursor icon). A tab
    * is in the set from `setAgentTabWorking(id, true)` until it is cleared or
@@ -379,7 +306,7 @@ export interface TabsSnapshot {
   tabStripLeft?: number;
   /** The agent panel is collapsed (sidebar toggle state). Filled in by window.ts. */
   panelCollapsed?: boolean;
-  /** Shell motion allowed (false: PEN_DESKTOP_NO_ANIMATIONS=1 or OS reduced motion). Filled in by window.ts. */
+  /** Shell motion allowed (false: SIDEFORM_LIGHT_NO_ANIMATIONS=1 or OS reduced motion). Filled in by window.ts. */
   motion?: boolean;
 }
 
@@ -388,13 +315,6 @@ interface TabEntry {
   title: string;
   kind: TabKind;
   view: TabViewHandle;
-  theme: UITheme | null;
-  /** Doc tabs only: the document id the tab was opened with (`doc:open`). */
-  docId?: string;
-  /** The stored canvas an editor tab was opened with (the live URL's `canvas` param wins once known). */
-  canvasId?: string;
-  /** Workflow tabs only: the workflow id the tab was opened with (`workflow:open`). */
-  workflowId?: string;
   /** Trace tabs only: the trace id the tab was opened with (`traces:open`). */
   traceId?: string;
   url?: string;
@@ -406,8 +326,7 @@ interface TabEntry {
 }
 
 /**
- * Owns the ordered list of tabs — editor tabs (the original kind) and
- * browser tabs (see design doc `2026-09-18-builtin-browser-design.md`). Pure
+ * Owns the ordered list of tabs: browser tabs and the page tabs (trace, settings, passwords, history). Pure
  * logic — Electron's WebContentsView is injected via `createView` so this is
  * unit-testable.
  */
@@ -415,16 +334,6 @@ export class TabManager {
   private tabs: TabEntry[] = [];
   private activeId: number | null = null;
   private nextId = 1;
-  private mcpStatus: McpStatus = "off";
-  /**
-   * The webContents id of the last *editor* tab that was active — feeds
-   * `mcpActiveWebContentsId` in the snapshot via `resolveMcpActiveTab`.
-   * Updated whenever an editor tab becomes active (`setActive`), and
-   * repointed at another surviving editor tab (or nulled) the moment the
-   * tab it points at is closed (`closeTab`), before that closed tab's view
-   * is ever destroyed — see the doc comment on `TabsSnapshot.mcpActiveWebContentsId`.
-   */
-  private lastEditorWebContentsId: number | null = null;
   /** Browser tabs the agent is working in (icon targets; see agentActivity.ts). */
   private readonly agentWorkingTabs = new Set<number>();
   /** Browser tabs kept rendering in the background (see resolveViewMode). Not tab-bar state. */
@@ -441,7 +350,7 @@ export class TabManager {
    * `attachBrowserTabPolicy` callback) sets this to the new tab, so the very
    * next browser command targets it even if the *active* tab in the strip
    * hasn't visibly changed yet. `tabs({action:"switch"|"new"})` also set
-   * this. Cleared (not repointed, unlike `lastEditorWebContentsId`) when the
+   * this. Cleared when the
    * tab it points at closes — there is no equivalent of "another editor tab
    * is still open" fallback need here, since `browserHandle()`'s own
    * fallback rule already covers "no explicit agent tab".
@@ -459,22 +368,22 @@ export class TabManager {
   constructor(
     private readonly opts: {
       createView: (kind: TabKind, session?: string) => TabViewHandle;
-      editorUrl: string;
+      /** Origin of the bundled ui (`app://sideform`, or the dev server): page tabs load from it. */
+      uiOrigin: string;
       onStateChanged: (s: TabsSnapshot) => void;
     },
   ) {}
 
   /**
    * `opts.activate: false` creates the tab in the background: it is hidden and
-   * never becomes active, the agent's pin is untouched (the canvas link's
-   * background `canvas:open`). Isolated session tabs always open that way.
+   * never becomes active, the agent's pin is untouched. Isolated session tabs always open that way.
    * Exception: with NO active tab (the zero-tab state), a non-session tab
    * becomes active even when requested in the background, so the window never
    * holds tabs with none active (keyboard cycling, close and MCP need one).
    * That tab is shown without taking keyboard focus (`ActivationOptions`).
-   * `opts.focus: false` makes a normally activated tab visible without taking keyboard focus (`doc:open`).
+   * `opts.focus: false` makes a normally activated tab visible without taking keyboard focus (`traces:open`).
    */
-  newTab(kind: TabKind = "editor", session?: string, opts: { activate?: boolean; docId?: string; canvasId?: string; workflowId?: string; traceId?: string; section?: string; focus?: boolean } = {}): number {
+  newTab(kind: TabKind = "browser", session?: string, opts: { activate?: boolean; traceId?: string; section?: string; focus?: boolean } = {}): number {
     // A trace tab is always opened for one trace (`traces:open`): no id, no tab (and no view is created).
     if (kind === "trace" && !isValidTraceId(opts.traceId)) throw new Error("trace tab needs a valid trace id");
     const id = this.nextId++;
@@ -482,13 +391,9 @@ export class TabManager {
     const entry: TabEntry = {
       id,
       session: kind === "browser" ? session : undefined,
-      title: kind === "browser" ? "New Tab" : kind === "doc" ? "Document" : kind === "workflow" ? "Workflow" : kind === "trace" ? "Trace" : kind === "settings" ? "Settings" : kind === "passwords" ? "Passwords" : kind === "history" ? "History" : "Untitled",
+      title: kind === "browser" ? "New Tab" : kind === "trace" ? "Trace" : kind === "settings" ? "Settings" : kind === "passwords" ? "Passwords" : "History",
       kind,
       view,
-      theme: null,
-      docId: kind === "doc" ? opts.docId : undefined,
-      canvasId: kind === "editor" ? opts.canvasId : undefined,
-      workflowId: kind === "workflow" ? opts.workflowId : undefined,
       traceId: kind === "trace" ? opts.traceId : undefined,
       url: kind === "browser" ? "" : undefined,
       canGoBack: kind === "browser" ? false : undefined,
@@ -501,43 +406,20 @@ export class TabManager {
       // `this.tabs`: record it, and let the push that adds the tab carry it.
       if (this.tabs.includes(entry)) this.emit();
     });
-    if (kind === "editor" || kind === "doc" || kind === "workflow" || kind === "trace" || kind === "settings") {
+    if (kind === "trace" || kind === "settings") {
       view.onDocumentTitleChanged((title) => {
         entry.title = title;
         this.emit();
       });
-      view.onThemeChanged((theme) => {
-        if (entry.theme === theme) return;
-        entry.theme = theme;
-        // Deliberately unconditional, not gated on `id === this.activeId` —
-        // an inactive editor tab's theme changing (typically the tab last
-        // pointed to by `lastEditorWebContentsId`, while a browser tab is
-        // active) must still push a fresh snapshot, since
-        // `resolveActiveTheme` above re-derives the reported theme from that
-        // tab's live `entry.theme` on every `getSnapshot()` call.
-        this.emit();
-      });
-      const target =
-        kind === "doc"
-          ? resolveDocTabUrl(this.opts.editorUrl, opts.docId)
-          : kind === "workflow"
-            ? resolveWorkflowTabUrl(this.opts.editorUrl, opts.workflowId)
-            : kind === "trace"
-            ? resolveTraceTabUrl(this.opts.editorUrl, opts.traceId as string)
-            : kind === "settings"
-              ? resolveSettingsTabUrl(this.opts.editorUrl, opts.section)
-              : kind === "editor" && isValidCanvasId(opts.canvasId)
-                ? resolveCanvasTabUrl(this.opts.editorUrl, opts.canvasId)
-                : this.opts.editorUrl;
+      const target = kind === "trace" ? resolveTraceTabUrl(this.opts.uiOrigin, opts.traceId as string) : resolveSettingsTabUrl(this.opts.uiOrigin, opts.section);
       view.loadURL(target).catch((err) => {
         console.error(`TabManager: ${kind} tab failed to load`, err);
       });
     } else if (kind === "passwords" || kind === "history") {
       // The Passwords and History tabs are LOCAL pages (src/passwords/, src/history/, own preloads): window.ts loads
-      // them when it creates the view. Fixed title; no title/theme callbacks, so they are not editor theme sources.
+      // them when it creates the view. Fixed title.
     } else if (kind === "browser") {
-      // Browser tabs get their own url/title updates (design doc §1) — no
-      // document-title/theme IPC callbacks, since there is no preload to
+      // Browser tabs get their own url/title updates — there is no preload to
       // send them. A fresh browser tab loads nothing until
       // BrowserController navigates it (browse_open).
       view.onNavigationStateChanged((s) => {
@@ -554,7 +436,7 @@ export class TabManager {
     const background = isSessionTab || (opts.activate === false && this.activeId !== null);
     if (background) {
       // An isolated session's tab (or an explicit background open) opens in the
-      // BACKGROUND: the editor keeps focus and the active tab. The user can click it to watch.
+      // BACKGROUND: the active tab keeps focus. The user can click it to watch.
       this.applyViewMode(entry);
       this.emit();
     } else {
@@ -570,16 +452,6 @@ export class TabManager {
     const idx = this.tabs.findIndex((t) => t.id === id);
     if (idx === -1) return;
     const [closed] = this.tabs.splice(idx, 1);
-    if (closed.kind === "editor" && this.lastEditorWebContentsId === closed.view.getWebContentsId()) {
-      // The tab lastEditorWebContentsId was pointing at is the one being
-      // destroyed — repoint to another surviving editor tab, or null if
-      // none remain. Must happen before setActive/emit below and before
-      // closed.view.destroy() at the bottom of this method, so the
-      // snapshot (and McpService, via window.ts's pushState) never see a
-      // dead webContents id (finding 1).
-      const other = this.tabs.find((t) => t.kind === "editor");
-      this.lastEditorWebContentsId = other ? other.view.getWebContentsId() : null;
-    }
     if (this.agentBrowserTabId === id) this.agentBrowserTabId = null;
     for (const [sid, tid] of this.sessionAgentTabIds) if (tid === id) this.sessionAgentTabIds.delete(sid);
     this.agentWorkingTabs.delete(id);
@@ -646,7 +518,7 @@ export class TabManager {
   }
 
   /** The browser tab the user is LOOKING at, or null when the active tab is
-   * an editor tab. Not `browserHandle()`: that one prefers the agent's pinned
+   * not a browser tab. Not `browserHandle()`: that one prefers the agent's pinned
    * tab, which can be a hidden tab (a popup from a non-agent tab becomes the
    * active one without repointing the agent) — the address row's back/
    * forward/reload/URL entry must drive what the row is showing, never a
@@ -799,101 +671,16 @@ export class TabManager {
     for (const t of this.tabs.filter((x) => x.kind === "browser" && x.session === session)) this.closeTab(t.id);
   }
 
-  /** Editor tabs in strip order, for the canvas link (webContents ids, current titles). */
-  editorTabsInfo(): { tabs: { webContentsId: number; title: string }[]; activeWebContentsId: number | null } {
-    const active = this.tabs.find((t) => t.id === this.activeId);
-    return {
-      tabs: this.tabs.filter((t) => t.kind === "editor").map((t) => ({ webContentsId: t.view.getWebContentsId(), title: t.title })),
-      activeWebContentsId: active?.kind === "editor" ? active.view.getWebContentsId() : null,
-    };
-  }
-
   /**
-   * The id of the open document tab showing `docId`, or null. The live URL
-   * wins (the person may have navigated inside the tab); the id the tab was
-   * opened with only counts while the view reports no URL yet.
+   * The stored file behind a tab, for "Reveal in Finder": a trace id, resolved like `findTraceTab` (live URL
+   * first). Null for an unknown tab and a kind with no file (browser, settings, passwords, history). The id is not
+   * validated here; `revealTargetFor` does that.
    */
-  findDocTab(docId: string): number | null {
-    for (const t of this.tabs) {
-      if (t.kind !== "doc") continue;
-      const live = t.view.getURL();
-      if ((live ? docIdOfUrl(live) : t.docId) === docId) return t.id;
-    }
-    return null;
-  }
-
-  /** The id of the open canvas (editor) tab showing `canvasId`, or null. The live URL wins, like `findDocTab`
-   * (the frontend adds `canvas=<id>` to a new canvas tab by `history.replaceState`). */
-  findCanvasTab(canvasId: string): number | null {
-    for (const t of this.tabs) {
-      if (t.kind !== "editor") continue;
-      const live = t.view.getURL();
-      // The live URL wins; without a `canvas` param (a new canvas the frontend has not named yet, or a
-      // navigation that dropped it) fall back to the id the tab was opened with.
-      const liveId = live ? canvasIdOfUrl(live) : null;
-      if ((liveId ?? t.canvasId) === canvasId) return t.id;
-    }
-    return null;
-  }
-
-  /**
-   * The stored file behind a tab, for "Reveal in Finder": a canvas, document, workflow or trace id, resolved with the
-   * same rules as `findCanvasTab` / `findDocTab` / `findTraceTab` (live URL first). Null for an unknown tab,
-   * a kind with no file (browser, settings, passwords, history) and a tab with no id yet (`new=1` doc,
-   * canvas the frontend has not named). The id is not validated here; `revealTargetFor` does that.
-   */
-  fileTargetOf(tabId: number): { kind: "canvas" | "doc" | "workflow" | "trace"; id: string } | null {
+  fileTargetOf(tabId: number): { kind: "trace"; id: string } | null {
     const t = this.tabs.find((x) => x.id === tabId);
-    if (!t) return null;
-    const live = t.view.getURL();
-    let id: string | null | undefined;
-    if (t.kind === "editor") id = (live ? canvasIdOfUrl(live) : null) ?? t.canvasId;
-    // The doc page's own URL decides (a `new=1` page has no file yet); anything else (the offline fallback page)
-    // falls back to the opened id, since the file is still on disk.
-    else if (t.kind === "doc") id = live && this.isOnDocPage(live) ? docIdOfUrl(live) : t.docId;
-    // Same as docs: on the workflow page its URL decides (no id = the empty state, no file); off it (offline fallback) the opened id.
-    else if (t.kind === "workflow") id = live && this.isOnWorkflowPage(live) ? workflowIdOfUrl(live) : t.workflowId;
-    else if (t.kind === "trace") id = traceIdOfUrl(live) ?? t.traceId;
-    else return null;
-    const valid =
-      t.kind === "trace" ? isValidTraceId(id) : t.kind === "doc" ? isValidDocId(id) : t.kind === "workflow" ? isValidWorkflowId(id) : isValidCanvasId(id);
-    return valid && id ? { kind: t.kind === "editor" ? "canvas" : t.kind, id } : null;
-  }
-
-  private isOnDocPage(url: string): boolean {
-    try {
-      return isDocPageOn(url, new URL(this.opts.editorUrl).origin);
-    } catch {
-      return false;
-    }
-  }
-
-  private isOnWorkflowPage(url: string): boolean {
-    try {
-      return isWorkflowPageOn(url, new URL(this.opts.editorUrl).origin);
-    } catch {
-      return false;
-    }
-  }
-
-  /** Number of canvas (editor) tabs. */
-  canvasTabCount(): number {
-    return this.tabs.filter((t) => t.kind === "editor").length;
-  }
-
-  /** Runs the flush handshake in every canvas tab, in parallel. Never rejects. */
-  async flushCanvasTabs(): Promise<void> {
-    await Promise.allSettled(this.tabs.filter((t) => t.kind === "editor").map((t) => t.view.flushCanvas?.() ?? Promise.resolve()));
-  }
-
-  /** The id of the open workflow tab showing `workflowId` (live URL wins, like `findDocTab`), or null. */
-  findWorkflowTab(workflowId: string): number | null {
-    for (const t of this.tabs) {
-      if (t.kind !== "workflow") continue;
-      const live = t.view.getURL();
-      if ((live ? workflowIdOfUrl(live) : t.workflowId) === workflowId) return t.id;
-    }
-    return null;
+    if (!t || t.kind !== "trace") return null;
+    const id = traceIdOfUrl(t.view.getURL()) ?? t.traceId;
+    return id && isValidTraceId(id) ? { kind: "trace", id } : null;
   }
 
   /** The id of the open Settings tab (a singleton), or null. */
@@ -940,17 +727,17 @@ export class TabManager {
     return existingId;
   }
 
-  /** True when the webContents is an editor, doc, trace or Settings tab: a tab that loads a frontend page with the tab preload. Browser, Passwords and History tabs are not. */
+  /** True when the webContents is a trace or Settings tab: a tab that loads a ui page with the tab preload. Browser, Passwords and History tabs are not. */
   isPageTab(webContentsId: number): boolean {
-    return this.tabs.some((t) => t.kind !== "browser" && t.kind !== "passwords" && t.kind !== "history" && t.view.getWebContentsId() === webContentsId);
+    return this.tabs.some((t) => (t.kind === "trace" || t.kind === "settings") && t.view.getWebContentsId() === webContentsId);
   }
 
-  /** The id of the open trace tab showing `traceId`, or null. The live URL wins, like `findDocTab`. */
+  /** The id of the open trace tab showing `traceId`, or null. The live URL wins. */
   findTraceTab(traceId: string): number | null {
     for (const t of this.tabs) {
       if (t.kind !== "trace") continue;
       const live = t.view.getURL();
-      // Fall back to the opened id when the live URL has none (offline fallback page, redirect).
+      // Fall back to the opened id when the live URL has none (a redirect).
       if ((traceIdOfUrl(live) ?? t.traceId) === traceId) return t.id;
     }
     return null;
@@ -973,44 +760,12 @@ export class TabManager {
     return this.tabs.some((t) => t.kind === "trace" && t.view.getWebContentsId() === webContentsId);
   }
 
-  /** True when the webContents is one of this window's workflow tabs. */
-  isWorkflowTab(webContentsId: number): boolean {
-    return this.tabs.some((t) => t.kind === "workflow" && t.view.getWebContentsId() === webContentsId);
-  }
-
-  /** True when the webContents is one of this window's doc (Markdown) tabs. */
-  isDocTab(webContentsId: number): boolean {
-    return this.tabs.some((t) => t.kind === "doc" && t.view.getWebContentsId() === webContentsId);
-  }
-
   /**
-   * True when the webContents is a doc tab that still shows the doc page (`/doc` on the editor origin), judged on BOTH
-   * the view's URL and `frameUrl` (the sender frame's own document URL), not a page it navigated to.
-   */
-  isDocViewer(webContentsId: number, frameUrl: string | undefined): boolean {
-    let origin: string;
-    try {
-      origin = new URL(this.opts.editorUrl).origin;
-    } catch {
-      return false;
-    }
-    return (
-      isDocPageOn(frameUrl, origin) &&
-      this.tabs.some((t) => t.kind === "doc" && t.view.getWebContentsId() === webContentsId && isDocPageOn(t.view.getURL(), origin))
-    );
-  }
-
-  /**
-   * True when the webContents is a Settings tab that still shows the settings page (`/settings` on the editor origin),
+   * True when the webContents is a Settings tab that still shows the settings page (`/settings` on the ui origin),
    * judged on BOTH the view's URL and `frameUrl` (the sender frame's own document URL).
    */
   isSettingsViewer(webContentsId: number, frameUrl: string | undefined): boolean {
-    let origin: string;
-    try {
-      origin = new URL(this.opts.editorUrl).origin;
-    } catch {
-      return false;
-    }
+    const origin = this.opts.uiOrigin;
     return (
       isSettingsPageOn(frameUrl, origin) &&
       this.tabs.some((t) => t.kind === "settings" && t.view.getWebContentsId() === webContentsId && isSettingsPageOn(t.view.getURL(), origin))
@@ -1034,22 +789,12 @@ export class TabManager {
     return this.tabs.find((t) => t.id === id)?.view.getWebContentsId() ?? null;
   }
 
-  /** Activates the editor tab with this webContents id (no-op for anything else). */
-  activateEditorByWebContentsId(webContentsId: number): void {
-    const tab = this.tabs.find((t) => t.kind === "editor" && t.view.getWebContentsId() === webContentsId);
-    if (tab) this.activate(tab.id);
-  }
-
-  isEditorTab(webContentsId: number): boolean {
-    return this.tabs.some((t) => t.kind === "editor" && t.view.getWebContentsId() === webContentsId);
-  }
-
   /**
    * Tab strip drag-to-reorder: puts tab `id` right before tab `beforeId` (null = at the end) in the
    * list order, which is also the order of `getSnapshot().tabs` (background session tabs included).
    * Anchored on an id, not an index, so a tab opened or closed meanwhile cannot misplace it.
    * Unknown ids, `beforeId === id`, an unknown `beforeId` and an unchanged position are no-ops
-   * (no state push). Activation, focus, agent pins and the MCP active tab are untouched; Ctrl+Tab
+   * (no state push). Activation, focus and agent pins are untouched; Ctrl+Tab
    * cycles this same list, so it follows.
    */
   moveTab(id: number, beforeId: number | null): void {
@@ -1068,7 +813,6 @@ export class TabManager {
 
   getSnapshot(): TabsSnapshot {
     const active = this.tabs.find((t) => t.id === this.activeId);
-    const activeWebContentsId = active?.view.getWebContentsId() ?? null;
     return {
       tabs: this.tabs.map(({ id, title, kind, url, canGoBack, canGoForward, loading }) => ({
         id,
@@ -1081,50 +825,8 @@ export class TabManager {
       })),
       activeId: this.activeId,
       activeKind: active?.kind ?? null,
-      activeTheme: this.resolveActiveTheme(active),
-      mcpStatus: this.mcpStatus,
-      mcpActiveWebContentsId: resolveMcpActiveTab(active?.kind ?? null, activeWebContentsId, this.lastEditorWebContentsId),
       agentTabIds: [...this.agentWorkingTabs].filter((id) => this.isLiveBrowserTab(id)),
     };
-  }
-
-  /**
-   * The theme the tab bar/chrome row should render for the currently active
-   * tab (glass tab bar work, 2026-09-25). An editor tab always reports its
-   * own theme directly. A browser tab has none of its own — falling back to
-   * `null` here used to mean "switching to a browser tab flips the bar to
-   * the system theme", which visibly clashed against a dark-theme editor tab
-   * right next to it. Instead: the theme of the most-recently-*active*
-   * editor tab (`lastEditorWebContentsId`, already tracked for the MCP
-   * routing above and kept live-accurate the same way — see `setActive`/
-   * `closeTab`), falling back to any other editor tab with a known theme,
-   * then finally `null` (window.ts falls back to the system theme from
-   * there). Looking the entry up fresh here (rather than caching a theme
-   * value) means a *theme change* on that editor tab — which can happen
-   * while a browser tab is active, `onThemeChanged` below emits regardless
-   * of which tab is active — is picked up by the very next snapshot.
-   */
-  private resolveActiveTheme(active: TabEntry | undefined): UITheme | null {
-    if (active?.kind === "editor" || active?.kind === "doc" || active?.kind === "workflow" || active?.kind === "trace" || active?.kind === "settings") return active.theme;
-    const lastEditor = this.tabs.find(
-      (t) => t.kind === "editor" && t.view.getWebContentsId() === this.lastEditorWebContentsId,
-    );
-    if (lastEditor?.theme) return lastEditor.theme;
-    const anyEditorWithTheme = this.tabs.find((t) => (t.kind === "editor" || t.kind === "doc" || t.kind === "workflow" || t.kind === "trace" || t.kind === "settings") && t.theme !== null);
-    return anyEditorWithTheme?.theme ?? null;
-  }
-
-  /**
-   * Reports the desktop MCP bridge's publish status (see mcp/service.ts)
-   * into the snapshot the tab bar renders — the tab strip's only diagnostic,
-   * since a packaged app has no terminal. TabManager does not know anything
-   * about MCP itself; window.ts is the one wiring service status changes
-   * here, the same way it wires editor theme/title callbacks above.
-   */
-  setMcpStatus(status: McpStatus): void {
-    if (status === this.mcpStatus) return;
-    this.mcpStatus = status;
-    this.emit();
   }
 
   /** `area` is the rect for tab views, computed by layout.ts (which owns all
@@ -1198,7 +900,6 @@ export class TabManager {
     for (const tab of this.tabs) this.applyViewMode(tab);
     const active = this.tabs.find((t) => t.id === id);
     if (opts.focus !== false) active?.view.focus();
-    if (active?.kind === "editor") this.lastEditorWebContentsId = active.view.getWebContentsId();
     this.emit();
   }
 

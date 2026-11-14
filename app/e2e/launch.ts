@@ -73,7 +73,7 @@ export async function launchShell(options: LaunchOptions, { canvasTab = true }: 
   reportCrashes(app);
   const tabbar = await waitForShellViews(app);
   if (!canvasTab) return app;
-  const base = String(options.env?.PEN_DESKTOP_URL ?? process.env.PEN_DESKTOP_URL ?? "");
+  const base = String(options.env?.SIDEFORM_LIGHT_UI_URL ?? process.env.SIDEFORM_LIGHT_UI_URL ?? "");
   const waiting = app.waitForEvent("window", { predicate: (p) => isCanvasPage(p.url(), base), timeout: 60_000 });
   waiting.catch(() => undefined);
   // The tab bar's own "+" path (renderer → `tabbar:new`), so no main-process code runs here.

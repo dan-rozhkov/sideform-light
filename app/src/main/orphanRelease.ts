@@ -3,11 +3,10 @@
 
 /**
  * Who may send `browser:command` and own fixtures / journals / sessions: this
- * window's editor tabs and its agent panel (agent layout). `panelId` is null
- * when there is no panel or it is destroyed.
+ * window's agent panel. `panelId` is null when there is no panel or it is destroyed.
  */
-export function isBrowserOwner(id: number, isEditorTab: (id: number) => boolean, panelId: number | null): boolean {
-  return isEditorTab(id) || (panelId !== null && id === panelId);
+export function isBrowserOwner(id: number, panelId: number | null): boolean {
+  return panelId !== null && id === panelId;
 }
 
 export type OrphanEvent =
@@ -16,7 +15,7 @@ export type OrphanEvent =
 
 /**
  * Whether an event on the agent panel orphans what it owned (its shared
- * fixture, journals, isolated sessions) and for a canvas tab means "gone". The
+ * fixture, journals, isolated sessions). The
  * panel is never destroyed on its own; it reloads and can crash, and either
  * skips its renderer cleanup. Only a COMMITTED main-frame navigation counts
  * (`did-frame-navigate`, which carries `isMainFrame`; it never fires for

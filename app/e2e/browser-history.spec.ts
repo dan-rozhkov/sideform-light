@@ -37,7 +37,7 @@ test.afterAll(async () => {
 test("browser history: omnibox suggestions, filter, pick, History tab list and remove", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl, PEN_DESKTOP_USER_DATA_DIR: userData },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl, SIDEFORM_LIGHT_USER_DATA_DIR: userData },
   });
   const pageErrors: string[] = [];
   try {
@@ -123,7 +123,7 @@ test("browser history: omnibox suggestions, filter, pick, History tab list and r
 test("browser history: removing a row with the popover x keeps the popover open with the typed text", async () => {
   const app = await launchShell({
     args: ["."],
-    env: { ...process.env, PEN_DESKTOP_URL: baseUrl, PEN_DESKTOP_USER_DATA_DIR: mkdtempSync(path.join(tmpdir(), "pen-desktop-history-e2e-x-")) },
+    env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl, SIDEFORM_LIGHT_USER_DATA_DIR: mkdtempSync(path.join(tmpdir(), "pen-desktop-history-e2e-x-")) },
   });
   try {
     await expect(app.canvasPage.locator("#ready")).toHaveText("Stub Editor");

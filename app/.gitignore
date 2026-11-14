@@ -3,4 +3,3 @@ dist/
 release/
 test-results/
 .DS_Store
-native/bin/
