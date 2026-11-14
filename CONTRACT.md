@@ -1,0 +1,85 @@
+# Sideform Light — integration contract (v1)
+
+Sideform Light is a browser-only cut of Sideform Desktop. One window: agent chat
+on the left, browser tabs on the right. The agent can drive several isolated
+browser sessions in parallel. There is NO canvas, NO documents, NO workflows,
+NO showcase, NO accounts/sign-in, NO computer use (desktop apps), NO desktop MCP
+bridge.
+
+Kept: agent chat (model picker, chat history on disk), browser tabs + address
+row + omnibox, browse_agent with parallel isolated sessions, saved logins
+(Passwords tab, fillLogin), History tab, ad blocking, trace tabs, QA
+(assert, fixtures, checkpoint journal), Settings (appearance + browser only).
+
+## Layout
+
+- `app/` — Electron shell (from pen-editor-desktop 87a9d1c). CommonJS, `npm test`, `npm run lint`, `npm run build`.
+- `ui/` — Vite + React app (from pen-editor 6ff39bbd), reduced to the agent panel, the trace page and a small settings page. Built into `ui/dist` and bundled into the Electron app. **No frontend is loaded from the network.**
+- Backend: the existing `pen-editor-backend`. Light talks to it ONLY for agent requests (list below).
+
+## Local origin: `app://sideform`
+
+The shell registers a privileged scheme BEFORE `app.ready`:
+
+```ts
+protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
+```
+
+and serves `ui/dist` with `protocol.handle("app", ...)` on the default session:
+
+- host must be `sideform`; any other host → 404.
+- path that maps to an existing file inside the ui dist dir → that file (correct MIME). Path traversal outside the dir → 404.
+- any other path (no file) → `index.html` (SPA fallback).
+- response header `Content-Security-Policy`: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' <backend origin>; frame-src 'none'; object-src 'none'; base-uri 'none'`.
+
+Packaged app: ui dist is copied to `app/dist/ui` by `app`'s build (`copy-static`), path resolved relative to `__dirname` of main. Dev override: env `SIDEFORM_LIGHT_UI_URL` (e.g. `http://localhost:5174`) makes the shell load pages from the Vite dev server instead; then the page origin is that URL's origin and all origin checks use it.
+
+Pages (paths are identical on `app://sideform` and on the dev server):
+
+| Page | URL | Preload |
+|---|---|---|
+| Agent panel | `app://sideform/agent` | `preload/agentPanel` (`window.penAgentPanel`) |
+| Trace tab | `app://sideform/trace/<id>?src=local` | `preload/tab` (`window.penDesktop`) |
+| Settings tab | `app://sideform/settings?section=<appearance|browser>` | `preload/tab` |
+
+Local shell HTML (tab bar, empty start, passwords, history, omnibox) stays on `file://` as today.
+
+`ui` routing: `BrowserRouter` with basename `/` (history API works on a standard scheme). Routes: `/agent`, `/trace/:id`, `/settings`, anything else → `/agent`.
+
+## Backend
+
+- Base URL: build-time `VITE_DESIGN_AGENT_BACKEND_URL`, default `http://localhost:3001` (the local backend). The shell's CSP `connect-src` uses the same origin; the shell reads it from env `SIDEFORM_LIGHT_BACKEND_URL` (default `http://localhost:3001`). Both must agree; the ui build and the app build read the same value.
+- Endpoints Light uses (nothing else): `POST /api/chat`, `GET /api/models`, `POST /api/browse/step`, `POST /api/browse/plan`, `POST /api/browse/locate`, `POST /api/browse/judge`. No auth, no cookies (`credentials: "omit"`), no PostHog, no memory, no user skills, no Mobbin, no cloud browser, no cloud traces, no uploads.
+- Identity: anonymous `pen.userId` from localStorage, sent as `userId` in the body as today.
+- Agent mode: the main chat sends `agentMode: "browser"` (NEW mode in pen-editor-backend). The nested browse_agent chat keeps sending `agentMode: "browse"` as today.
+- `clientCapabilities` sent by Light: `{ desktopBrowser: true, browser: "desktop", browseQa: true, browseIsolation: true, browseAssert: true, traceTabs: true }` and NOTHING about canvas/docs/workflows/apps/native apps (`canvasTabs`, `docTabs`, `workflowTabs`, `browseApps`, `browseNativeApps` are absent or false).
+
+### Backend mode `browser` (pen-editor-backend)
+
+- Added to `AGENT_MODES`. A system prompt for a browser assistant (no design/canvas wording): it uses `browse_agent` for web tasks, may run several `browse_agent` calls in parallel with isolated sessions, uses `ask_user` when it must ask, `analyze_image` for images, `trace_*` to read past runs.
+- Tool set for the main model: `browse_agent`, `ask_user`, `analyze_image`, `trace_list`, `trace_read` (and `trace_frame` if it exists and needs no canvas). Exactly the browse tools the existing "edits" mode would offer for these capabilities — but NO canvas/design/doc/workflow/prototype/image-generation/vector/repo/showcase tools, no `get_guidelines`/style guides, no canvasContext.
+- canvasContext is ignored in this mode. Memory and user skills: OFF in v1 (behave as in `browse`).
+- Model: the normal chat model (`CHAT_MODEL` / the picked model), NOT the browse subagent model.
+
+## penAgentPanel API (preload/agentPanel.ts) — v1 shape
+
+```ts
+window.penAgentPanel = {
+  version: 3,
+  browser,            // makeBrowser(): open, act, findImages, snapshot, perform, assert, read, screenshot, tabs,
+                      // applyFixture, releaseFixture, clearActEmulation, fillLogin, startJournal, stopJournal,
+                      // captureCheckpoint, requests, isolated(sessionId), closeSession(sessionId), revealAgentTab
+                      // REMOVED: capture, launchApp, releaseApp, nativeApps, forChat
+  chats,              // list, read, save, remove
+  traces,             // save, open, listTabs, read
+  settings,           // open(section?: "appearance" | "browser")
+}
+```
+
+`window.penDesktop` (preload/tab.ts, trace + settings tabs only): theme reporting, `traces` (read), `settings.open`, `browserSettings` (`get`/`set` of `{ adBlock }`). No canvas, docs, workflows, logins (doc @mention), appIcon, auth, MCP, browser bridge.
+
+Settings sections: `"appearance" | "browser"` only. Browser settings shape: `{ adBlock: boolean }` (`mcpBrowser` and `askAppAccess` removed).
+
+## Branding
+
+Product name `Sideform Light`, appId `com.sideform.light`, userData dir name `Sideform Light` (must not collide with Sideform Desktop's data). Package names: `sideform-light` (app), `sideform-light-ui` (ui). Version 0.1.0 for both.
