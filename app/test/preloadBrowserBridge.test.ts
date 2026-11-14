@@ -4,7 +4,7 @@ import path from "node:path";
 
 // The agent panel's preload owns the one browser bridge (the trace/settings tab preload has none, see
 // ipcContract.test.ts). Its shape is pinned here: the contract's `browser` member list, with nothing of the removed
-// desktop-app, capture or chat-binding surface.
+// desktop-app or chat-binding surface.
 
 const src = readFileSync(path.join(__dirname, "../src/preload/agentPanel.ts"), "utf8");
 
@@ -23,7 +23,7 @@ describe("agent panel browser bridge", () => {
       [
         "open", "act", "findImages", "snapshot", "perform", "assert", "read", "screenshot", "tabs",
         "applyFixture", "releaseFixture", "clearActEmulation", "fillLogin",
-        "startJournal", "stopJournal", "captureCheckpoint", "requests",
+        "startJournal", "stopJournal", "captureCheckpoint", "requests", "capture",
       ].sort(),
     );
   });
@@ -40,8 +40,7 @@ describe("agent panel browser bridge", () => {
     expect(src).toContain('contextBridge.exposeInMainWorld("penAgentPanel", { version: 3, browser, chats, traces, settings });');
   });
 
-  it("carries no desktop-app surface (launchApp, releaseApp, nativeApps, forChat, capture)", () => {
+  it("carries no desktop-app surface (launchApp, releaseApp, nativeApps, forChat)", () => {
     for (const gone of ["launchApp", "releaseApp", "nativeApps", "forChat", "--sideform-native-apps"]) expect(src, gone).not.toContain(gone);
-    expect(src).not.toMatch(/\bcapture:/);
   });
 });

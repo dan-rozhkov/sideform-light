@@ -114,11 +114,11 @@ describe("preload/agentPanel.ts (penAgentPanel v3)", () => {
   it("browser has the contract commands, isolated, closeSession and revealAgentTab; no desktop-app members", () => {
     const methods = [
       "open", "act", "findImages", "snapshot", "perform", "assert", "read", "screenshot", "tabs",
-      "applyFixture", "releaseFixture", "clearActEmulation", "fillLogin", "startJournal", "stopJournal", "captureCheckpoint", "requests",
+      "applyFixture", "releaseFixture", "clearActEmulation", "fillLogin", "startJournal", "stopJournal", "captureCheckpoint", "requests", "capture",
     ];
     for (const m of methods) expect(typeof exposedApi.browser[m], m).toBe("function");
     for (const m of ["isolated", "closeSession", "revealAgentTab"]) expect(typeof exposedApi.browser[m], m).toBe("function");
-    for (const gone of ["capture", "launchApp", "releaseApp", "nativeApps", "forChat"]) expect(exposedApi.browser[gone], gone).toBeUndefined();
+    for (const gone of ["launchApp", "releaseApp", "nativeApps", "forChat"]) expect(exposedApi.browser[gone], gone).toBeUndefined();
   });
 
   it("the shared browser sends no session key", async () => {
@@ -131,7 +131,7 @@ describe("preload/agentPanel.ts (penAgentPanel v3)", () => {
     const iso = exposedApi.browser.isolated("run-1");
     const methods = [
       "open", "act", "findImages", "snapshot", "perform", "assert", "read", "screenshot", "tabs",
-      "applyFixture", "releaseFixture", "clearActEmulation", "fillLogin", "startJournal", "stopJournal", "captureCheckpoint", "requests",
+      "applyFixture", "releaseFixture", "clearActEmulation", "fillLogin", "startJournal", "stopJournal", "captureCheckpoint", "requests", "capture",
     ];
     for (const m of methods) expect(typeof iso[m], m).toBe("function");
     for (const m of methods) {

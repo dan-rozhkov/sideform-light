@@ -48,6 +48,11 @@ const makeBrowser = (scope?: { session: unknown }) => {
       call({ command: "screenshot", args }),
     tabs: (args: Record<string, unknown>): Promise<unknown> =>
       call({ command: "tabs", args }),
+    // The page as self-contained HTML. Light uses it only for trace DOM snapshots
+    // (`{ forTrace: true }`, @sideform/browser-agent traceDomSource). Same "no validation
+    // here, main is the trust boundary" shape as every command above.
+    capture: (args?: Record<string, unknown>): Promise<unknown> =>
+      call({ command: "capture", args }),
     // PageFixture. `opts` (an AbortSignal) cannot cross IPC and is dropped;
     // main gates the fixture and passes allowNetworkMocks: true (desktop
     // allows mocks, scoped to browser tabs through CDP Fetch).

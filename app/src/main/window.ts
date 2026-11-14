@@ -46,7 +46,7 @@ import {
   type BrowserPageHandle,
   isFetchableStylesheetUrl,
 } from "@sideform/browser-agent/controller";
-import { resolveAgentPanelUrl, isEnvValueSet } from "./config";
+import { resolveAgentPanelUrl, resolveUiOrigin } from "./config";
 import { secureWebPreferences } from "./webPreferences";
 import { ADDRESS_ROW_HEIGHT, ISLAND_GAP, ISLAND_RADIUS, TAB_ROW_HEIGHT, agentPanelWidthFor, computeWindowLayout, omniboxBounds, type WindowLayout } from "./layout";
 import { isShownUrl, parseOmniboxShow, parseUrlPayload } from "./omniboxIpc";
@@ -63,7 +63,7 @@ import { JournalOwners } from "./journalOwners";
 import { FixtureOwners } from "./fixtureOwners";
 import { isBrowserOwner as isBrowserOwnerId, isOrphaningEvent } from "./orphanRelease";
 import { PANEL_SENDER_GRACE_MS, flushThenClose, panelSenders, pendingCloseFlushes } from "./panelSenders";
-import { chatDirFor, createChatStore, type ChatStore } from "./chatStore";
+import { chatDirForUiOrigin, createChatStore, type ChatStore } from "./chatStore";
 import { handleChatDelete, handleChatList, handleChatRead, handleChatSave, type ChatIpcDeps } from "./chatIpc";
 import { CHATS_FLUSH_SCRIPT, flushPanelChats, flushQuitWork, hasQuitWork } from "./chatFlush";
 import { openTraceTab } from "./traceOpen";
@@ -101,7 +101,7 @@ import {
 let processChatStore: ChatStore | null = null;
 function getChatStore(): ChatStore {
   processChatStore ??= createChatStore({
-    rootDir: path.join(app.getPath("userData"), chatDirFor(isEnvValueSet(process.env.SIDEFORM_LIGHT_UI_URL))),
+    rootDir: path.join(app.getPath("userData"), chatDirForUiOrigin(resolveUiOrigin(process.env))),
   });
   return processChatStore;
 }
@@ -2091,6 +2091,9 @@ export function createMainWindow(
         // boundary (that would clear the very log it reads).
         case "requests":
           return await controller.requests();
+        // Read-only page capture; the agent panel uses it for the trace DOM snapshot (`forTrace`).
+        case "capture":
+          return await controller.capture(payload.args);
         case "fillLogin": {
           // The model gets only { ok, origin, label, filled, submitted, url?, retried?, sessionEstablished?, note?, stillOnSignInPage? } or a
           // fixed error — never a password, a username or controller text.

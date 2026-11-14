@@ -220,12 +220,12 @@ describe("browser:command commands", () => {
     expect([...sentByPanel].sort()).toEqual([...list, "closeSession"].sort());
   });
 
-  it("the panel's bridge carries the session scope and has no desktop-app, capture or chat-binding members", () => {
+  it("the panel's bridge carries the session scope and has no desktop-app or chat-binding members", () => {
     expect(panelPreload).toContain("...scope");
     expect(panelPreload).toContain("isolated: (sessionId: string) => makeBrowser({ session: sessionId })");
     for (const gone of ["forChat", "launchApp", "releaseApp", "nativeApps"]) expect(panelPreload, gone).not.toContain(gone);
-    expect(panelPreload).not.toMatch(/\bcapture:/);
-    expect(panelPreload).not.toContain('command: "capture"');
+    // `capture` is back: the trace DOM snapshot (traceDomSource) needs it.
+    expect(panelPreload).toContain('command: "capture"');
   });
 
   it("the tab preload (trace and settings pages) has no browser bridge at all", () => {
