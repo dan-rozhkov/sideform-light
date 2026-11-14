@@ -1,0 +1,4 @@
+interface:
+  display_name: "Auto"
+  short_description: "Автопилот sideform-light: от задачи до отчёта"
+  default_prompt: "Используй $auto для выполнения задачи в sideform-light по полному workflow проекта."
