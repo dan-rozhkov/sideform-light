@@ -15,6 +15,15 @@ Get the installer from the [latest release](https://github.com/dan-rozhkov/sidef
 Your data (saved logins, history, chats, traces) stays on your computer. The app sends only agent
 requests to the Sideform backend.
 
+## Windows
+
+Sideform Light 0.1.1 on Windows 11, installed from the release `.exe` on a GitHub Actions runner
+(`.github/workflows/windows-smoke.yml`). The agent ran two browser sessions in parallel through the production backend.
+
+![Sideform Light on Windows: start](docs/screenshots/windows-start.png)
+
+![Sideform Light on Windows: the agent answer](docs/screenshots/windows-agent-answer.png)
+
 ## Layout
 
 - `app/` — the Electron shell (tabs, browser, passwords, history, ad blocking). See `app/README.md`.
