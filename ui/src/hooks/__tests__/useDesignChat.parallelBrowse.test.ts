@@ -22,8 +22,8 @@ let fetchMock: ReturnType<typeof vi.fn>;
 
 function install(isolated: boolean) {
   const stub = async () => ({});
-  window.penDesktop = {
-    onMenuCommand: () => () => {},
+  window.penAgentPanel = {
+    version: 3,
     browser: { open: stub, act: stub, findImages: stub, read: stub, snapshot: stub, perform: stub, ...(isolated ? { isolated: () => ({}) } : {}) },
   } as never;
 }
@@ -52,7 +52,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (saved) toolHandlers.browse_agent = saved;
-  delete window.penDesktop;
+  delete window.penAgentPanel;
   vi.unstubAllGlobals();
 });
 

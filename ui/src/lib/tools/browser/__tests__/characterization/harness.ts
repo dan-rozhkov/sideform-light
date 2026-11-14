@@ -50,7 +50,7 @@ const ALL_METHODS: BridgeMethod[] = [
 ];
 
 /**
- * Builds a fake `window.penDesktop.browser`. Each method consumes its script
+ * Builds a fake `window.penAgentPanel.browser`. Each method consumes its script
  * in order; once exhausted it repeats the LAST step (so `[x]` means "always
  * x"); a method with no script resolves `{}`. A step may be a plain value, a
  * `throws(err)`, or a function receiving the call's arguments (it may return
@@ -82,9 +82,9 @@ export function makeBridge(script: BridgeScript = {}, omit: BridgeMethod[] = [])
   };
 }
 
-/** Installs the bridge as `window.penDesktop.browser`. */
+/** Installs the bridge as `window.penAgentPanel.browser`. */
 export function installBridge(bridge: RecordingBridge): RecordingBridge {
-  window.penDesktop = { onMenuCommand: () => () => {}, browser: bridge.browser };
+  window.penAgentPanel = { version: 3, browser: bridge.browser };
   return bridge;
 }
 
@@ -174,7 +174,7 @@ export const FOUND = (index: number, extra: Record<string, unknown> = {}) => ({
 
 /** Standard afterEach for these suites. */
 export function resetEnvironment(): void {
-  delete window.penDesktop;
+  delete window.penAgentPanel;
   vi.useRealTimers();
   vi.unstubAllGlobals();
   // The browse_task action cache persists to real localStorage.

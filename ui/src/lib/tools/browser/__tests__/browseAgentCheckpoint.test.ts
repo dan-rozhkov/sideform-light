@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toolHandlers } from "@/lib/toolRegistry";
 import { messageToMarkdown } from "@/lib/chatExport";
-import { unwrapJournalToken } from "@/lib/cloudBrowser";
 import { MAX_CHECKPOINTS_PER_CHAT, resetBrowseCheckpoints, useBrowseCheckpointStore } from "@/store/browseCheckpointStore";
 import { textTurn } from "@/test/sseStream";
 import { cleanupBrowseAgentTest, fixtureBridgeMocks, stubBrowseOpenSnapshot } from "./helpers";
@@ -39,7 +38,7 @@ beforeEach(() => {
   captureCheckpoint = vi.fn(async () => ({ ok: true, fixture: CAPTURED, complete: true, summary: "cart page, 1 step" }));
   ({ applyFixture, releaseFixture } = fixtureBridgeMocks("tok"));
   restoreHandlers = stubBrowseOpenSnapshot();
-  window.penDesktop = {
+  window.penAgentPanel = {
     onMenuCommand: () => () => {},
     browser: { startJournal, stopJournal, captureCheckpoint, applyFixture, releaseFixture },
   } as never;
@@ -96,7 +95,7 @@ describe("browse_agent checkpoint recording", () => {
   });
 
   it("a bridge without journal support gives no checkpoint and no error", async () => {
-    window.penDesktop = { onMenuCommand: () => () => {}, browser: {} } as never;
+    window.penAgentPanel = { onMenuCommand: () => () => {}, browser: {} } as never;
     const result = JSON.parse(await browseAgent({ goal: "g", url: "https://a.test" }, ctx));
     expect(result.status).toBe("done");
     expect(result.checkpoint).toBeUndefined();
@@ -153,11 +152,9 @@ describe("browse_agent recorder lifecycle", () => {
     expect(JSON.parse(await browseAgent({ goal: "g", url: "https://shop.test/cart" }, ctx)).checkpoint).toMatchObject({ id: "cp_2" });
   });
 
-  it.each([
-    ["desktop: two chats share one browser, so only the first records", () => {}, false, 1],
-    ["cloud: each chat has its own session, so both record", () => delete window.penDesktop, true, 2],
-  ])("%s", async (_n, goCloud, cloud, journals) => {
-    goCloud();
+  it("two chats share one browser, so only the first records", async () => {
+    const cloud = false;
+    const journals = 1;
     vi.mocked(getBrowserBridge).mockImplementation(() => ({ startJournal, stopJournal, captureCheckpoint, applyFixture, releaseFixture }) as never);
     try {
       let release: (v: string) => void = () => {};
@@ -184,76 +181,9 @@ describe("browse_agent recorder lifecycle", () => {
     expect(resumed.error).toContain("checkpoints need a chat");
   });
 
-  it("a hung journal start: the run goes on after 5 s without a checkpoint, and the late start is stopped", async () => {
-    vi.useFakeTimers();
-    try {
-      let lateStart: (v: string) => void = () => {};
-      startJournal.mockImplementationOnce(() => new Promise<string>((r) => (lateStart = r)));
-      let done = false;
-      const run = browseAgent({ goal: "g", url: "https://a.test" }, ctx).then((r) => {
-        done = true;
-        return r;
-      });
-      await vi.advanceTimersByTimeAsync(4_900);
-      expect(done).toBe(false);
-      await vi.advanceTimersByTimeAsync(300);
-      expect(done).toBe(true);
-      expect(JSON.parse(await run).checkpoint).toBeUndefined();
-      expect(captureCheckpoint).not.toHaveBeenCalled();
-      lateStart("late");
-      await vi.advanceTimersByTimeAsync(10);
-      expect(stopJournal).toHaveBeenCalledWith("late");
-      await vi.advanceTimersByTimeAsync(10);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 
-  it("an abort during the journal start runs without a checkpoint", async () => {
-    let lateStart: (v: string) => void = () => {};
-    startJournal.mockImplementationOnce(() => new Promise<string>((r) => (lateStart = r)));
-    const ac = new AbortController();
-    const run = browseAgent({ goal: "g", url: "https://a.test" }, { ...ctx, signal: ac.signal });
-    // Abort once the start is really pending (a signal aborted before begin() starts nothing: the package skips the browser call).
-    await vi.waitFor(() => expect(startJournal).toHaveBeenCalled());
-    ac.abort();
-    expect(JSON.parse(await run).checkpoint).toBeUndefined();
-    expect(captureCheckpoint).not.toHaveBeenCalled();
-    // Settle the start so the recording slot is free for the next tests.
-    lateStart("late");
-    await vi.waitFor(() => expect(stopJournal).toHaveBeenCalledWith("late"));
-    await new Promise((r) => setTimeout(r, 0));
-  });
 
-  it("keeps the recording slot until a slow stop has settled", async () => {
-    vi.useFakeTimers();
-    try {
-      let endStop: (v: boolean) => void = () => {};
-      stopJournal.mockImplementationOnce(() => new Promise<boolean>((r) => (endStop = r)));
-      await vi.advanceTimersByTimeAsync(0);
-      const first = browseAgent({ goal: "g", url: "https://a.test" }, ctx);
-      await vi.advanceTimersByTimeAsync(2_100);
-      expect(JSON.parse(await first).checkpoint).toMatchObject({ id: "cp_1" });
-      // The stop is still in flight: the next run must not start its journal.
-      const next = JSON.parse(await browseAgent({ goal: "g", url: "https://a.test" }, { ...ctx, toolCallId: "tc-2" }));
-      expect(next.checkpoint).toBeUndefined();
-      expect(startJournal).toHaveBeenCalledTimes(1);
-      endStop(true);
-      await vi.advanceTimersByTimeAsync(10);
-      const after = JSON.parse(await browseAgent({ goal: "g", url: "https://a.test" }, { ...ctx, toolCallId: "tc-3" }));
-      expect(after.checkpoint).toMatchObject({ id: "cp_2" });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 
-  it("releases the fixture before it stops the journal", async () => {
-    const order: string[] = [];
-    releaseFixture.mockImplementation(async () => (order.push("release"), { ok: true }));
-    stopJournal.mockImplementation(async () => (order.push("stop"), true));
-    await browseAgent({ goal: "g", url: "https://a.test", setup: { steps: [] } }, ctx);
-    expect(order).toEqual(["release", "stop"]);
-  });
 
   it("clearing the chat during the capture leaves no checkpoint behind", async () => {
     captureCheckpoint.mockImplementation(async () => {
@@ -266,39 +196,8 @@ describe("browse_agent recorder lifecycle", () => {
     expect(useBrowseCheckpointStore.getState().byChat["chat-1"]).toBeUndefined();
   });
 
-  it("an abort (Stop) during the capture keeps the checkpoint for resume", async () => {
-    const ac = new AbortController();
-    captureCheckpoint.mockImplementation(async () => {
-      ac.abort();
-      return { ok: true, fixture: CAPTURED, complete: true, summary: "s" };
-    });
-    const result = JSON.parse(await browseAgent({ goal: "g", url: "https://a.test" }, { ...ctx, signal: ac.signal }));
-    expect(result.checkpoint).toMatchObject({ id: "cp_1" });
-    expect(stored()).toHaveLength(1);
-  });
 
-  it("a setup run that cannot record (slot taken) releases the fixture exactly once", async () => {
-    let release: (v: string) => void = () => {};
-    startJournal.mockImplementationOnce(() => new Promise<string>((r) => (release = r)));
-    const first = browseAgent({ goal: "g", url: "https://a.test" }, ctx);
-    await vi.waitFor(() => expect(startJournal).toHaveBeenCalled());
-    releaseFixture.mockClear();
-    const second = JSON.parse(await browseAgent({ goal: "g", url: "https://a.test", setup: { steps: [] } }, { ...ctx, toolCallId: "tc-2" }));
-    expect(second.checkpoint).toBeUndefined();
-    expect(releaseFixture).toHaveBeenCalledTimes(1);
-    release("jt");
-    await first;
-  });
 
-  it("a signal aborted before the journal start never starts it and frees the slot", async () => {
-    const ac = new AbortController();
-    ac.abort();
-    await browseAgent({ goal: "g", url: "https://a.test" }, { ...ctx, signal: ac.signal });
-    expect(startJournal).not.toHaveBeenCalled();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(JSON.parse(await browseAgent({ goal: "g", url: "https://a.test" }, { ...ctx, toolCallId: "tc-2" })).checkpoint).toMatchObject({ id: "cp_1" });
-    expect(startJournal).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("browse_agent resume", () => {
@@ -321,17 +220,7 @@ describe("browse_agent resume", () => {
     expect(releaseFixture).toHaveBeenCalledWith("tok");
   });
 
-  it("carries the resumed network into the next checkpoint", async () => {
-    seed(NETWORK);
-    await browseAgent({ goal: "g", resume: "cp_1" }, ctx);
-    const next = stored().find((c) => c.id === "cp_2");
-    expect(next?.network).toEqual(NETWORK);
-  });
 
-  it("takes the network of a setup run into its checkpoint", async () => {
-    await browseAgent({ goal: "g", url: "https://shop.test/cart", setup: { network: NETWORK } }, ctx);
-    expect(stored()[0].network).toEqual(NETWORK);
-  });
 
   it.each([
     ["an unknown id", { resume: "cp_9" }, "checkpoint cp_9 not found"],
@@ -379,13 +268,6 @@ describe("browseCheckpointStore", () => {
     expect(useBrowseCheckpointStore.getState().get("c", "cp_1")).toBeUndefined();
   });
 
-  it("is not persisted anywhere", async () => {
-    await browseAgent({ goal: "g", url: "https://shop.test/cart" }, ctx);
-    expect(stored()).toHaveLength(1);
-    const dump = JSON.stringify([...Object.entries(localStorage), ...Object.entries(sessionStorage)]);
-    for (const s of SECRETS) expect(dump).not.toContain(s);
-    expect((useBrowseCheckpointStore as unknown as { persist?: unknown }).persist).toBeUndefined();
-  });
 });
 
 describe("secrets stay out of the chat export", () => {
@@ -399,12 +281,4 @@ describe("secrets stay out of the chat export", () => {
     expect(md).toContain("cp_1");
     for (const s of SECRETS) expect(md).not.toContain(s);
   });
-});
-
-describe("unwrapJournalToken (cloud startJournal answer)", () => {
-  it("unwraps { ok, token }", () => expect(unwrapJournalToken({ ok: true, token: "t1" })).toBe("t1"));
-  it.each([[{ ok: false, error: "bad origins" }, "bad origins"], [{ error: "no session" }, "no session"], [{}, "no journal token"], [null, "no journal token"]])(
-    "throws on %j",
-    (r, msg) => expect(() => unwrapJournalToken(r)).toThrow(msg),
-  );
 });

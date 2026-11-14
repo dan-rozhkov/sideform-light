@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { summarizeTrace, traceFrame, traceList, traceOpen, traceRead } from "../traceTools";
+import { summarizeTrace, traceFrame, traceList, traceRead } from "../traceTools";
 import { getAgentPanelTraceTabsBridge } from "@/lib/agentPanel";
-import { useSceneStore } from "@/store/sceneStore";
-import { resetStores } from "@/test/fixtures";
 import { sampleTrace, sampleTraceJson, sampleTraceWithExtrasJson } from "@/components/trace/__fixtures__/sampleTrace";
 
 type Traces = NonNullable<NonNullable<Window["penAgentPanel"]>["traces"]>;
@@ -48,49 +46,6 @@ describe("trace_list", () => {
     expect(await run(traceList)).toEqual({ error: "no shell" });
     setTraces({ listTabs: async () => { throw new Error("boom"); }, read: async () => ({ error: "x" }) });
     expect(await run(traceList)).toEqual({ error: "boom" });
-  });
-});
-
-describe("trace_open", () => {
-  const stored = { trace: { id: "t1" } } as never;
-  const setup = (read: Traces["read"], open: Traces["open"]) => {
-    setTraces({ listTabs: async () => ({ tabs: [] }), read, open });
-  };
-
-  it("errors without a bridge and on a blank id", async () => {
-    expect((await run(traceOpen, { traceId: "t1" })).error).toMatch(/not available/);
-    const open = vi.fn(async () => ({ ok: true }));
-    setup(async () => stored, open);
-    expect((await run(traceOpen, { traceId: "  " })).error).toMatch(/traceId is required/);
-    expect((await run(traceOpen, {})).error).toMatch(/traceId is required/);
-    expect(open).not.toHaveBeenCalled();
-  });
-
-  it("does not open when the trace is not stored", async () => {
-    const open = vi.fn(async () => ({ ok: true }));
-    setup(async () => ({ error: "trace file is corrupt" }), open);
-    expect(await run(traceOpen, { traceId: "t1" })).toEqual({ error: "trace file is corrupt" });
-    setup((async () => ({})) as unknown as Traces["read"], open);
-    expect((await run(traceOpen, { traceId: "t1" })).error).toMatch(/No trace with this id is stored/);
-    expect(open).not.toHaveBeenCalled();
-  });
-
-  it("opens a stored trace", async () => {
-    const read = vi.fn(async () => stored);
-    const open = vi.fn(async () => ({ ok: true }));
-    setup(read, open);
-    expect(await run(traceOpen, { traceId: " t1 " })).toEqual({ traceId: "t1", opened: true });
-    expect(read).toHaveBeenCalledWith("t1", { frames: false });
-    expect(open).toHaveBeenCalledWith("t1");
-  });
-
-  it("returns the open error, a fixed text, and a thrown message", async () => {
-    setup(async () => stored, async () => ({ ok: false, error: "no window" }));
-    expect(await run(traceOpen, { traceId: "t1" })).toEqual({ error: "no window" });
-    setup(async () => stored, async () => ({ ok: false }));
-    expect((await run(traceOpen, { traceId: "t1" })).error).toMatch(/could not be opened/);
-    setup(async () => stored, async () => { throw new Error("boom"); });
-    expect(await run(traceOpen, { traceId: "t1" })).toEqual({ error: "boom" });
   });
 });
 
@@ -243,8 +198,6 @@ describe("trace_frame", () => {
   };
   const call = async (args: Record<string, unknown>) => JSON.parse(await (traceFrame as (a: Record<string, unknown>) => Promise<string>)(args));
 
-  beforeEach(() => resetStores());
-
   it("reads with frames on and returns the frame in browse_screenshot's image shape", async () => {
     const read = withTrace();
     const out = await call({ traceId: "t1", frameId: 1 });
@@ -252,7 +205,6 @@ describe("trace_frame", () => {
     expect(out).toMatchObject({ traceId: "t1", frameId: 1, kind: "step", stepIndex: 2, width: 640, height: 400 });
     expect(out.imageData).toMatch(/^data:image\//);
     expect(out).not.toHaveProperty("placedNodeId");
-    expect(Object.keys(useSceneStore.getState().nodesById)).toHaveLength(0);
   });
 
   it("accepts the frame id as a numeric string", async () => {
@@ -260,28 +212,8 @@ describe("trace_frame", () => {
     expect((await call({ traceId: "t1", frameId: "5" })).kind).toBe("final");
   });
 
-  it("places the frame on the canvas as an image rect when asked", async () => {
-    withTrace();
-    const out = await call({ traceId: "t1", frameId: 0, placeOnCanvas: true, x: 40, y: 60 });
-    expect(out.placedNodeId).toEqual(expect.any(String));
-    expect(out.placedAt).toEqual({ x: 40, y: 60, width: 640, height: 400 });
-    const node = useSceneStore.getState().nodesById[out.placedNodeId] as { type: string; width: number };
-    expect(node).toMatchObject({ type: "rect", width: 640 });
-  });
 
-  it("names the placed node with the step the frame belongs to, when it has one", async () => {
-    withTrace();
-    const out = await call({ traceId: "t1", frameId: 1, placeOnCanvas: true });
-    expect(out.stepIndex).toBe(2);
-    expect(useSceneStore.getState().nodesById[out.placedNodeId].name).toBe("Trace frame 1 · step 2");
-  });
 
-  it("names the placed node without a step suffix when the frame has no stepIndex", async () => {
-    withTrace();
-    const out = await call({ traceId: "t1", frameId: 5, placeOnCanvas: true });
-    expect(out).not.toHaveProperty("stepIndex");
-    expect(useSceneStore.getState().nodesById[out.placedNodeId].name).toBe("Trace frame 5");
-  });
 
   it("errors on an unknown frame id and points at trace_read", async () => {
     withTrace();
@@ -297,18 +229,6 @@ describe("trace_frame", () => {
     expect(await call({ traceId: "t1", frameId: 1 })).toEqual({ error: "gone" });
   });
 
-  it("reports a failed placement next to the image", async () => {
-    withTrace();
-    const { setPlaceNodeRedirect } = await import("@/lib/tools/browser/placeOnCanvas");
-    setPlaceNodeRedirect(async () => { throw new Error("canvas refused"); });
-    try {
-      const out = await call({ traceId: "t1", frameId: 0, placeOnCanvas: true });
-      expect(out.imageData).toBeDefined();
-      expect(out.placeError).toBe("canvas refused");
-    } finally {
-      setPlaceNodeRedirect(null);
-    }
-  });
 
   it("returns an imageUrl for a frame stored as a URL", async () => {
     const json = sampleTraceJson() as { frames: { src: string }[] };

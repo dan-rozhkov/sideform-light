@@ -4,8 +4,8 @@ import { BROWSER_NOT_AVAILABLE_ERROR } from "@/lib/tools/browser/shared";
 import { bridgeWith, j, resetEnvironment, snap, throws } from "./harness";
 
 // The web build would otherwise fall back to the cloud bridge.
-vi.mock("@/lib/cloudBrowser", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/cloudBrowser")>()),
+vi.mock("@/lib/tools/browser/bridge", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/tools/browser/bridge")>()),
   cloudBrowserBridge: undefined,
   getCloudBrowserBridge: () => undefined,
 }));
@@ -226,14 +226,14 @@ describe("browse_act: snapshot attachment rules", () => {
 
 describe("browse_act: bridge failure modes", () => {
   it("returns the not-available error when there is no bridge, with no calls possible", async () => {
-    expect(window.penDesktop).toBeUndefined();
+    expect(window.penAgentPanel).toBeUndefined();
     expect(await browseAct({ action: "click", target: "x" })).toBe(NOT_AVAILABLE);
     expect(await browseAct({ action: "click", target: "x", element: "y" })).toBe(NOT_AVAILABLE);
     expect(await browseAct({ action: "click", element: "y" }, { sessionId: "chat-1" })).toBe(NOT_AVAILABLE);
   });
 
   it("returns the not-available error for a shell with no browser surface", async () => {
-    window.penDesktop = { onMenuCommand: () => () => {} };
+    window.penAgentPanel = { version: 3 };
     expect(await browseAct({ action: "back" })).toBe(NOT_AVAILABLE);
   });
 

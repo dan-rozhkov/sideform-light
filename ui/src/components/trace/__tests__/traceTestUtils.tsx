@@ -17,7 +17,21 @@ export function renderTrace(url = "/trace/sample-trace-1") {
   );
 }
 
-export const answer = (response: Partial<Response>) => vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response)));
+/** Installs a `penDesktop.traces.read` that answers like the given HTTP-style response (the trace page reads local traces only). */
+export const answer = (response: Partial<Response>) => {
+  window.penDesktop = {
+    traces: {
+      read: async () => {
+        if (!response.ok) return { error: response.status === 404 ? "Trace not found" : `The shell answered ${response.status}.` };
+        try {
+          return { trace: await response.json!() } as never;
+        } catch {
+          return { trace: "not a trace" } as never;
+        }
+      },
+    },
+  };
+};
 export const serveSample = () => answer({ ok: true, status: 200, json: async () => sampleTraceJson() });
 export const serveExtras = () => answer({ ok: true, status: 200, json: async () => sampleTraceWithExtrasJson() });
 export const serveDoms = () => answer({ ok: true, status: 200, json: async () => sampleTraceWithDomsJson() });

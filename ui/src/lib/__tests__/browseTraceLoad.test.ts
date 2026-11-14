@@ -7,35 +7,11 @@ afterEach(() => {
   delete (window as { penDesktop?: unknown }).penDesktop;
 });
 
-const stubFetch = (response: Partial<Response> | Error) =>
-  vi.stubGlobal("fetch", vi.fn(() => (response instanceof Error ? Promise.reject(response) : Promise.resolve(response))));
-
 describe("traceSourceFromParam", () => {
-  it("defaults to the cloud", () => {
+  it("is always local: Light has no cloud traces", () => {
     expect(traceSourceFromParam("local")).toBe("local");
-    expect(traceSourceFromParam("cloud")).toBe("cloud");
-    expect(traceSourceFromParam(null)).toBe("cloud");
-  });
-});
-
-describe("loadBrowseTrace (cloud)", () => {
-  it("loads and validates a trace", async () => {
-    stubFetch({ ok: true, status: 200, json: async () => sampleTraceJson() });
-    const result = await loadBrowseTrace("sample-trace-1", "cloud");
-    expect(result).toMatchObject({ ok: true, trace: { id: "sample-trace-1" } });
-    expect(vi.mocked(fetch).mock.calls[0]![0]).toContain("/api/browse/traces/sample-trace-1");
-  });
-
-  it.each([
-    [{ ok: false, status: 404 }, "not-found"],
-    [{ ok: false, status: 400 }, "not-found"],
-    [{ ok: false, status: 500 }, "error"],
-    [{ ok: true, status: 200, json: async () => ({ format: "other" }) }, "invalid"],
-    [{ ok: true, status: 200, json: async () => Promise.reject(new Error("bad json")) }, "invalid"],
-    [new Error("offline"), "error"],
-  ])("maps %j to %s", async (response, reason) => {
-    stubFetch(response as Partial<Response> | Error);
-    expect(await loadBrowseTrace("x", "cloud")).toMatchObject({ ok: false, reason });
+    expect(traceSourceFromParam("cloud")).toBe("local");
+    expect(traceSourceFromParam(null)).toBe("local");
   });
 });
 

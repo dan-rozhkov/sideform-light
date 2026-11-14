@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearOpenCodeKey } from "@/lib/opencodeKey";
 import { toolHandlers, type ToolHandler } from "@/lib/toolRegistry";
 import { sse } from "@/test/sseStream";
 import { setPenDesktop, stubBrowser } from "./helpers";
@@ -53,14 +52,13 @@ describe("browse_agent repro (Playwright export)", () => {
   beforeEach(() => {
     saved = Object.fromEntries(stubbed.map((n) => [n, toolHandlers[n]]));
     toolHandlers.browse_open = async () => JSON.stringify({ ok: true });
-    clearOpenCodeKey();
   });
   afterEach(() => {
     for (const n of stubbed) {
       if (saved[n]) toolHandlers[n] = saved[n];
       else delete toolHandlers[n];
     }
-    delete window.penDesktop;
+    delete window.penAgentPanel;
     vi.unstubAllGlobals();
   });
 
@@ -81,7 +79,7 @@ describe("browse_agent repro (Playwright export)", () => {
     const { act, assert } = bridge();
     const save = vi.fn(async () => ({ id: "local-1" }));
     setPenDesktop(stubBrowser({ act, assert }));
-    window.penDesktop!.traces = { save, read: async () => ({ error: "n/a" }) };
+    window.penAgentPanel!.traces = { save, open: async () => ({ ok: true }), read: async () => ({ error: "n/a" }) };
     const captured = script();
     await browseAgent({ goal: "g", qa: true, url: "https://shop.test" }, ctx);
     expect(act).toHaveBeenCalledWith(expect.objectContaining({ repro: true }));

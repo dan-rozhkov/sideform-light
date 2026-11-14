@@ -11,8 +11,8 @@ import {
 } from "@/lib/tools/browser/shared";
 import { bridgeWith, j, resetEnvironment, snap, throws, type BridgeMethod } from "./harness";
 
-vi.mock("@/lib/cloudBrowser", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/cloudBrowser")>()),
+vi.mock("@/lib/tools/browser/bridge", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/tools/browser/bridge")>()),
   cloudBrowserBridge: undefined,
   getCloudBrowserBridge: () => undefined,
 }));
@@ -114,7 +114,7 @@ describe("browse_snapshot", () => {
   it("reports a rejecting snapshot and the missing bridge", async () => {
     bridgeWith({ snapshot: [throws(new Error("dead"))] });
     expect(await browseSnapshot({})).toBe(j({ error: "dead" }));
-    delete window.penDesktop;
+    delete window.penAgentPanel;
     expect(await browseSnapshot({})).toBe(NOT_AVAILABLE);
   });
 });
@@ -202,7 +202,7 @@ for (const [name, handler, method] of plainForwarders) {
       bridgeWith({ [method]: [throws(new Error("kaput")), throws(null)] });
       expect(await handler({})).toBe(j({ error: "kaput" }));
       expect(await handler({})).toBe(j({ error: "Built-in browser command failed." }));
-      delete window.penDesktop;
+      delete window.penAgentPanel;
       expect(await handler({})).toBe(NOT_AVAILABLE);
     });
   });

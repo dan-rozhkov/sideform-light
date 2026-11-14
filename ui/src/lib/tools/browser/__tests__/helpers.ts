@@ -6,10 +6,10 @@ import { useBrowseAgentPhaseStore } from "@/store/browseAgentPhaseStore";
 // (browseTask.test.ts, browserTools.test.ts). Extracted to keep
 // check:dup:tests under its ratchet baseline — see CLAUDE.md -> Testing.
 
-export type PenDesktopBrowser = NonNullable<NonNullable<typeof window.penDesktop>["browser"]>;
+export type PenDesktopBrowser = NonNullable<NonNullable<typeof window.penAgentPanel>["browser"]>;
 
 /**
- * Builds a `window.penDesktop.browser` stub with every method defaulted to a
+ * Builds a `window.penAgentPanel.browser` stub with every method defaulted to a
  * no-op resolved value. Pass `overrides` for the methods a test cares about,
  * and `defaultSnapshot` when the suite wants `snapshot()` to resolve to
  * something other than `{}` by default (most browseTask.test.ts scenarios
@@ -30,12 +30,9 @@ export function stubBrowser(
   };
 }
 
-/** Installs a browser stub as `window.penDesktop.browser` and returns it. */
+/** Installs a browser stub as `window.penAgentPanel.browser` and returns it. */
 export function setPenDesktop(browser: PenDesktopBrowser): PenDesktopBrowser {
-  window.penDesktop = {
-    onMenuCommand: () => () => {},
-    browser,
-  };
+  window.penAgentPanel = { version: 3, browser };
   return browser;
 }
 
@@ -97,7 +94,7 @@ export function stubBrowseOpenSnapshot(): () => void {
 /** Undoes what the fixture/checkpoint suites install: bridge, fetch stubs, phase store. */
 export function cleanupBrowseAgentTest(restoreHandlers: () => void): void {
   restoreHandlers();
-  delete window.penDesktop;
+  delete window.penAgentPanel;
   vi.unstubAllGlobals();
   useBrowseAgentPhaseStore.setState({ phases: {} });
 }

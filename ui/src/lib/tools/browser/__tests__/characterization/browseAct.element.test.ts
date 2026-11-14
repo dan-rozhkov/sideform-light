@@ -3,8 +3,8 @@ import { browseAct } from "@/lib/tools/browser/browseAct";
 import { BROWSER_NOT_AVAILABLE_ERROR } from "@/lib/tools/browser/shared";
 import { bridgeWith, FOUND, j, resetEnvironment, snap, snapThenFail, stubLocate, throws } from "./harness";
 
-vi.mock("@/lib/cloudBrowser", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/cloudBrowser")>()),
+vi.mock("@/lib/tools/browser/bridge", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/tools/browser/bridge")>()),
   cloudBrowserBridge: undefined,
   getCloudBrowserBridge: () => undefined,
 }));

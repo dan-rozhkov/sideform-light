@@ -52,14 +52,6 @@ describe("TraceSwitcher", () => {
     expect(list).toHaveBeenCalledTimes(1);
   });
 
-  it("puts no check on a cloud trace with the same id", async () => {
-    bridge(async () => ({ traces }));
-    renderSwitcher("cloud", "/trace/t1");
-    openMenu();
-    const item = await screen.findByRole("menuitem", { name: /First goal/ });
-    expect(item.querySelector("svg")).toBeNull();
-  });
-
   it("opens another trace as local, keeps chat=off and drops step", async () => {
     bridge(async () => ({ traces }));
     renderSwitcher();

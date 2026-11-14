@@ -1,16 +1,13 @@
 import type { BrowseTrace } from "@sideform/browser-agent/agent/session";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { listDocs, readDoc } from "@/lib/docs/docStore";
 import { sampleTrace } from "../__fixtures__/sampleTrace";
 import { TraceActionsMenu } from "../TraceActionsMenu";
-import { TraceHeader } from "../TraceHeader";
 
 const mocks = vi.hoisted(() => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), loading: vi.fn(() => "progress"), dismiss: vi.fn() }), exportTrace: vi.fn() }));
 vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/lib/browseTraceFile", async (original) => ({ ...(await original<object>()), exportBrowseTrace: mocks.exportTrace }));
 
-const noResult = { ...sampleTrace, answer: undefined, qa: undefined };
 const withRepro: BrowseTrace = {
   ...sampleTrace,
   repro: { setup: {} },
@@ -49,92 +46,6 @@ describe("TraceActionsMenu", () => {
     mocks.toast.error.mockClear();
     mocks.toast.loading.mockClear();
     mocks.exportTrace.mockReset();
-  });
-
-  describe("Open result", () => {
-    it("is hidden without result text", () => {
-      renderMenu(noResult);
-      openMenu();
-      expect(item("Open result")).toBeNull();
-    });
-
-    it("is hidden on desktop shells without docs.open", () => {
-      setDesktop({ onMenuCommand: () => () => {} });
-      renderMenu(sampleTrace);
-      openMenu();
-      expect(item("Open result")).toBeNull();
-    });
-
-    it("shows the result in the run details only when the menu cannot open it", () => {
-      const header = () => render(<TraceHeader trace={sampleTrace} detailsOpen onToggleDetails={() => {}} />);
-      const { unmount } = header();
-      fireEvent.click(screen.getByRole("button", { name: /^Run details/ }));
-      expect(screen.getByText("Duration")).toBeTruthy();
-      expect(screen.queryByText(/Result:/)).toBeNull();
-      unmount();
-      setDesktop({ onMenuCommand: () => () => {} });
-      header();
-      fireEvent.click(screen.getByRole("button", { name: /^Run details/ }));
-      expect(screen.getByText(/Result:/).closest("p")?.textContent).toContain("The trial button is missing on the pricing page.");
-    });
-
-    it("creates a document and opens /doc?id= on the web, and reuses it the second time", () => {
-      const open = vi.spyOn(window, "open").mockReturnValue(null);
-      renderMenu(sampleTrace);
-      choose("Open result");
-      const [doc] = listDocs();
-      expect(listDocs()).toHaveLength(1);
-      expect(doc!.title).toMatch(/^Result · Check that a visitor/);
-      expect(open).toHaveBeenCalledWith(`/doc?id=${doc!.id}`, "_blank", "noopener");
-      choose("Open result");
-      expect(listDocs()).toHaveLength(1);
-      expect(open).toHaveBeenCalledTimes(2);
-      expect(open).toHaveBeenLastCalledWith(`/doc?id=${doc!.id}`, "_blank", "noopener");
-    });
-
-    it("makes a new document when the remembered one is gone", () => {
-      vi.spyOn(window, "open").mockReturnValue(null);
-      renderMenu(sampleTrace);
-      choose("Open result");
-      const first = listDocs()[0]!.id;
-      localStorage.removeItem(`pen.docs.doc.${first}`);
-      choose("Open result");
-      expect(readDoc(first).kind).toBe("missing");
-      expect(localStorage.getItem(`pen.trace.resultDoc.${sampleTrace.id}`)).not.toBe(first);
-    });
-
-    it("opens the document through the desktop bridge", () => {
-      const docsOpen = vi.fn(async () => ({ ok: true }));
-      const open = vi.spyOn(window, "open").mockReturnValue(null);
-      setDesktop({ docs: { open: docsOpen } });
-      renderMenu(sampleTrace);
-      choose("Open result");
-      expect(docsOpen).toHaveBeenCalledWith(listDocs()[0]!.id);
-      expect(open).not.toHaveBeenCalled();
-    });
-
-    it("shows a toast when storage is blocked", () => {
-      vi.spyOn(console, "error").mockImplementation(() => {});
-      const setItem = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
-        throw new Error("full");
-      });
-      renderMenu(sampleTrace);
-      choose("Open result");
-      setItem.mockRestore();
-      expect(mocks.toast.error).toHaveBeenCalledWith(expect.stringMatching(/full/i));
-    });
-
-    it.each([
-      ["answers an error", async () => ({ ok: false, error: "No such tab" }), "No such tab"],
-      ["rejects", async () => Promise.reject(new Error("ipc")), "The document could not be opened."],
-    ])("shows a toast when the desktop bridge %s, after the menu closed", async (_name, docsOpen, message) => {
-      vi.spyOn(console, "error").mockImplementation(() => {});
-      setDesktop({ docs: { open: vi.fn(docsOpen) } });
-      renderMenu(sampleTrace);
-      choose("Open result");
-      await waitFor(() => expect(mocks.toast.error).toHaveBeenCalledWith(message));
-      expect(item("Open result")).toBeNull();
-    });
   });
 
   describe("Download trace", () => {

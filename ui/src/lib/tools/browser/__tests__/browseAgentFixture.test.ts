@@ -25,7 +25,7 @@ let releaseFixture: ReturnType<typeof vi.fn>;
 let restoreHandlers: () => void;
 
 function installBridge(extra: Record<string, unknown> = {}) {
-  window.penDesktop = {
+  window.penAgentPanel = {
     onMenuCommand: () => () => {},
     browser: { applyFixture, releaseFixture, ...extra },
   } as never;
@@ -107,7 +107,7 @@ describe("browse_agent setup (page fixture)", () => {
   });
 
   it("setup_failed when the bridge cannot apply fixtures", async () => {
-    window.penDesktop = { onMenuCommand: () => () => {}, browser: {} } as never;
+    window.penAgentPanel = { onMenuCommand: () => () => {}, browser: {} } as never;
     const result = JSON.parse(await browseAgent({ goal: "g", url: "https://a.test", setup: SETUP }, ctx));
     expect(result.status).toBe("setup_failed");
     expect(result.setupStage).toBeUndefined();
@@ -115,7 +115,7 @@ describe("browse_agent setup (page fixture)", () => {
   });
 
   it("refuses network mocks when the bridge cannot release them", async () => {
-    window.penDesktop = { onMenuCommand: () => () => {}, browser: { applyFixture } } as never;
+    window.penAgentPanel = { onMenuCommand: () => () => {}, browser: { applyFixture } } as never;
     const setup = { network: [{ url: "https://api.test/*" }] };
     const result = JSON.parse(await browseAgent({ goal: "g", url: "https://a.test", setup }, ctx));
     expect(result).toMatchObject({ status: "setup_failed", setupStage: "network" });
@@ -171,33 +171,6 @@ describe("browse_agent setup (page fixture)", () => {
     expect(useBrowseAgentPhaseStore.getState().phases).toEqual({});
   });
 
-  it("cloud bridge: forwards both commands", async () => {
-    delete window.penDesktop;
-    const urls: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input instanceof Request ? input.url : input);
-        if (url.includes("/api/chat")) return textTurn("fine");
-        urls.push(url.slice(url.indexOf("/api/browser")));
-        const cmd = JSON.parse(String(init?.body)).args;
-        const result =
-          url.includes("applyFixture")
-            ? { ok: true, summary: "2 mocks", fixtureToken: "ct", received: cmd.fixture.network.length }
-            : { ok: true };
-        return new Response(JSON.stringify({ result, handle: "h" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }),
-    );
-    const setup = { network: [{ url: "https://api.test/a" }, { url: "https://api.test/b" }] };
-    await browseAgent({ goal: "g", url: "https://a.test", setup }, { sessionId: "chat-cloud", toolCallId: "tc-c" });
-    expect(urls.filter((u) => u.includes("Fixture"))).toEqual([
-      "/api/browser/cmd/applyFixture",
-      "/api/browser/cmd/releaseFixture",
-    ]);
-  });
 
   it("aborted before the apply landed: no setupApplied", async () => {
     stubFetch();

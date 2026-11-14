@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TracePage from "@/routes/TracePage";
-import { frameId, openTab, renderTrace, serveExtras, serveSample, stepButton } from "./traceTestUtils";
+import { answer, frameId, openTab, renderTrace, serveExtras, serveSample, stepButton } from "./traceTestUtils";
 
 // The Step tab, the Before / After switch, the log filters, the request list and the step deep link.
 
@@ -18,7 +18,7 @@ const text = () => openPanel().textContent ?? "";
 describe("trace inspector", () => {
   beforeEach(() => {
     serveSample();
-    window.history.replaceState(null, "", "/trace/sample-trace-1?src=cloud");
+    window.history.replaceState(null, "", "/trace/sample-trace-1?src=local");
   });
   afterEach(() => {
     cleanup();
@@ -74,7 +74,7 @@ describe("trace inspector", () => {
       await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"url"')));
       fireEvent.click(stepButton(4));
       fireEvent.click(screen.getByRole("button", { name: "Copy link to this step" }));
-      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(expect.stringMatching(/\/trace\/sample-trace-1\?src=cloud&step=4$/)));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(expect.stringMatching(/\/trace\/sample-trace-1\?src=local&step=4$/)));
     });
 
     it("keeps the chosen tab when another step is selected", async () => {
@@ -214,17 +214,17 @@ describe("trace inspector", () => {
 
   describe("deep link", () => {
     it("opens on the step named by ?step= and keeps the address in step with the selection", async () => {
-      window.history.replaceState(null, "", "/trace/sample-trace-1?src=cloud&step=3");
-      const fetchSpy = vi.fn(() => Promise.resolve({ ok: true, status: 200, json: async () => (await import("@/components/trace/__fixtures__/sampleTrace")).sampleTraceJson() } as Response));
-      vi.stubGlobal("fetch", fetchSpy);
-      await open("/trace/sample-trace-1?src=cloud&step=3");
+      window.history.replaceState(null, "", "/trace/sample-trace-1?src=local&step=3");
+      const readSpy = vi.fn(async () => ({ trace: (await import("@/components/trace/__fixtures__/sampleTrace")).sampleTraceJson() as never }));
+      window.penDesktop = { traces: { read: readSpy } };
+      await open("/trace/sample-trace-1?src=local&step=3");
       expect(stepButton(3).getAttribute("aria-current")).toBe("step");
       expect(frameId()).toBe("1");
       fireEvent.click(stepButton(6));
-      expect(window.location.search).toBe("?src=cloud&step=6");
+      expect(window.location.search).toBe("?src=local&step=6");
       fireEvent.keyDown(window, { key: "ArrowLeft" });
-      expect(window.location.search).toBe("?src=cloud&step=5");
-      expect(fetchSpy).toHaveBeenCalledTimes(1); // the selection never reloads the trace
+      expect(window.location.search).toBe("?src=local&step=5");
+      expect(readSpy).toHaveBeenCalledTimes(1); // the selection never reloads the trace
     });
 
     it("does not carry ?step= over to the next trace", async () => {
@@ -251,16 +251,17 @@ describe("trace inspector", () => {
     it("ignores a step that does not exist and leaves a plain address alone until the selection moves", async () => {
       await open("/trace/sample-trace-1?step=99");
       expect(stepButton(1).getAttribute("aria-current")).toBe("step");
-      expect(window.location.search).toBe("?src=cloud");
+      expect(window.location.search).toBe("?src=local");
       fireEvent.click(stepButton(2));
-      expect(window.location.search).toBe("?src=cloud&step=2");
+      expect(window.location.search).toBe("?src=local&step=2");
     });
   });
 });
 
 function answerNoSteps() {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ...(((await import("@/components/trace/__fixtures__/sampleTrace")).sampleTraceJson()) as object), steps: [], frames: [] }) })),
-  );
+  answer({
+    ok: true,
+    status: 200,
+    json: async () => ({ ...((await import("@/components/trace/__fixtures__/sampleTrace")).sampleTraceJson() as object), steps: [], frames: [] }),
+  });
 }

@@ -1,10 +1,9 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
 import { ToolCallIndicator } from "../ToolCallIndicator";
-import { ChatSessionIdContext } from "../ChatSessionContext";
-import { revealToolTab } from "@/lib/canvasLink/revealToolTab";
+import { revealToolTab } from "@/lib/revealToolTab";
 
-vi.mock("@/lib/canvasLink/revealToolTab", () => ({ revealToolTab: vi.fn(async () => {}) }));
+vi.mock("@/lib/revealToolTab", () => ({ revealToolTab: vi.fn(async () => {}) }));
 
 afterEach(() => cleanup());
 
@@ -19,7 +18,7 @@ interface ToolPartFixture {
 
 function toolPart(overrides: Partial<ToolPartFixture> = {}): ToolPartFixture {
   return {
-    type: "tool-get_variables",
+    type: "tool-browse_open",
     toolCallId: "call-1",
     state: "input-available",
     input: { foo: "bar" },
@@ -30,13 +29,8 @@ function toolPart(overrides: Partial<ToolPartFixture> = {}): ToolPartFixture {
 describe("<ToolCallIndicator />", () => {
   it("renders the friendly display name for a known tool", () => {
     render(<ToolCallIndicator part={toolPart()} />);
-    // get_variables → "Get Variables" via toolDisplayNames
-    expect(screen.getByText("Get Variables")).toBeTruthy();
-  });
-
-  it("renders a readable label for load_skill", () => {
-    render(<ToolCallIndicator part={toolPart({ type: "tool-load_skill" })} />);
-    expect(screen.getByText("Load skill")).toBeTruthy();
+    // browse_open → "Open Browser" via toolDisplayNames
+    expect(screen.getByText("Open Browser")).toBeTruthy();
   });
 
   it("falls back to the raw tool name when unmapped", () => {
@@ -105,7 +99,7 @@ describe("<ToolCallIndicator />", () => {
       />
     );
     // The header button carries the display name.
-    fireEvent.click(screen.getByText("Get Variables"));
+    fireEvent.click(screen.getByText("Open Browser"));
     expect(screen.getByText("Input")).toBeTruthy();
     expect(screen.getByText("Output")).toBeTruthy();
     // Serialized JSON appears in <pre> blocks.
@@ -119,7 +113,7 @@ describe("<ToolCallIndicator />", () => {
         part={toolPart({ state: "output-error", errorText: "kaboom" })}
       />
     );
-    fireEvent.click(screen.getByText("Get Variables"));
+    fireEvent.click(screen.getByText("Open Browser"));
     expect(screen.getByText("kaboom")).toBeTruthy();
   });
 
@@ -173,7 +167,7 @@ describe("<ToolCallIndicator />", () => {
       <ToolCallIndicator
         part={{
           type: "dynamic-tool",
-          toolName: "mobbin_search_screens",
+          toolName: "analyze_image",
           toolCallId: "call-2",
           state: "output-available",
           input: {},
@@ -181,8 +175,8 @@ describe("<ToolCallIndicator />", () => {
         }}
       />
     );
-    // mapped display name for mobbin_search_screens
-    expect(screen.getByText("Searching screens")).toBeTruthy();
+    // mapped display name for analyze_image
+    expect(screen.getByText("Analyze Image")).toBeTruthy();
     expect(screen.getByText("Done")).toBeTruthy();
   });
 
@@ -196,7 +190,7 @@ describe("<ToolCallIndicator />", () => {
         })}
       />
     );
-    fireEvent.click(screen.getByText("Get Variables"));
+    fireEvent.click(screen.getByText("Open Browser"));
     const pres = container.querySelectorAll("pre");
     expect(pres.length).toBe(2);
     const inputPre = pres[0];
@@ -208,7 +202,7 @@ describe("<ToolCallIndicator />", () => {
       <ToolCallIndicator part={toolPart({ type: "tool-browse_open", input: { url: "https://a.test/x?q=1#h" } })} />,
     );
     expect(screen.getByText("a.test/x")).toBeTruthy();
-    rerender(<ToolCallIndicator part={toolPart({ input: { url: "https://a.test/x" } })} />);
+    rerender(<ToolCallIndicator part={toolPart({ type: "tool-ask_user", input: { url: "https://a.test/x" } })} />);
     expect(screen.queryByText("a.test/x")).toBeNull();
   });
 
@@ -234,7 +228,7 @@ describe("<ToolCallIndicator />", () => {
       />,
     );
     expect(screen.queryByText("pane-one")).toBeNull();
-    fireEvent.click(screen.getByText("Get Variables"));
+    fireEvent.click(screen.getByText("Open Browser"));
     const labels = Array.from(container.querySelectorAll("div.uppercase")).map((el) => el.textContent);
     expect(labels).toEqual(["Setup", "Stage", "Input", "Output"]);
     expect(screen.getByText("pane-two")).toBeTruthy();
@@ -247,7 +241,7 @@ describe("<ToolCallIndicator />", () => {
     );
     expect(screen.getByText("Error")).toBeTruthy();
     expect(screen.queryByText("Done")).toBeNull();
-    fireEvent.click(screen.getByText("Get Variables"));
+    fireEvent.click(screen.getByText("Open Browser"));
     expect(screen.getByText("tab closed")).toBeTruthy();
   });
 
@@ -258,7 +252,7 @@ describe("<ToolCallIndicator />", () => {
       />,
     );
     expect(screen.getByText("Error")).toBeTruthy();
-    fireEvent.click(screen.getByText("Get Variables"));
+    fireEvent.click(screen.getByText("Open Browser"));
     expect(screen.getByText("boom")).toBeTruthy();
   });
 
@@ -285,14 +279,10 @@ describe("<ToolCallIndicator />", () => {
 
 describe("<ToolCallIndicator /> tab reveal", () => {
   it("reveals the call's tab and still toggles the details", () => {
-    render(
-      <ChatSessionIdContext.Provider value="chat-1">
-        <ToolCallIndicator part={toolPart({ output: "ok", state: "output-available" })} />
-      </ChatSessionIdContext.Provider>
-    );
+    render(<ToolCallIndicator part={toolPart({ output: "ok", state: "output-available" })} />);
     expect(screen.queryByText("Input")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Get Variables/ }));
-    expect(revealToolTab).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "chat-1", toolCallId: "call-1", toolName: "get_variables" }));
+    fireEvent.click(screen.getByRole("button", { name: /Open Browser/ }));
+    expect(revealToolTab).toHaveBeenCalledWith(expect.objectContaining({ toolCallId: "call-1", toolName: "browse_open" }));
     expect(screen.getByText("Input")).toBeTruthy();
   });
 });

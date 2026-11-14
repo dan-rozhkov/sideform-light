@@ -56,7 +56,7 @@ let isolated: ReturnType<typeof vi.fn>;
 let closeSession: ReturnType<typeof vi.fn>;
 
 function install(withIsolated = true) {
-  window.penDesktop = {
+  window.penAgentPanel = {
     onMenuCommand: () => () => {},
     browser: { ...shared, ...(withIsolated ? { isolated, closeSession } : {}) },
   } as never;
@@ -114,7 +114,7 @@ describe("browse_agent isolated QA run", () => {
       return JSON.stringify(entries);
     });
     Object.assign(iso, { requests });
-    window.penDesktop = { ...window.penDesktop, traces: { save, read: async () => ({ error: "n/a" }) } } as never;
+    window.penAgentPanel = { ...window.penAgentPanel, traces: { save, read: async () => ({ error: "n/a" }) } } as never;
     await browseAgent({ goal: "g", url: "https://a.test", qa: true }, ctx);
     expect(requests).toHaveBeenCalled();
     expect(requests.mock.invocationCallOrder.at(-1)!).toBeLessThan(closeSession.mock.invocationCallOrder[0]);
@@ -215,7 +215,7 @@ describe("browse_agent isolated QA run", () => {
       return textTurn("ok");
     }));
     const fillLogin = vi.fn(async () => ({}));
-    window.penDesktop = {
+    window.penAgentPanel = {
       onMenuCommand: () => () => {},
       browser: { ...shared, fillLogin, ...(withIsolated ? { isolated: () => ({ ...iso, fillLogin }), closeSession } : {}) },
     } as never;
@@ -230,7 +230,7 @@ describe("browse_agent isolated QA run", () => {
       bodies.push(JSON.parse(String(init?.body)));
       return textTurn("ok");
     }));
-    window.penDesktop = {
+    window.penAgentPanel = {
       onMenuCommand: () => () => {},
       browser: { ...shared, fillLogin: vi.fn(async () => ({})), isolated, closeSession },
     } as never;

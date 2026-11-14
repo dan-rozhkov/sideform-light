@@ -30,7 +30,6 @@ describe("TracePage", () => {
     expect(screen.queryByText(/Result:/)).toBeNull();
     expect(screen.queryByText("The trial button is missing on the pricing page.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Trace options" }));
-    expect(screen.getByRole("menuitem", { name: "Open result" })).toBeTruthy();
   });
 
   it("keeps the header to one row and puts the run facts in a popover", async () => {
@@ -228,11 +227,13 @@ describe("TracePage", () => {
   });
 
   it("asks for the desktop app when the local bridge is missing", async () => {
+    delete window.penDesktop;
     renderTrace("/trace/abc?src=local");
     expect(await screen.findByRole("heading", { name: /desktop app/ })).toBeTruthy();
   });
 
   it("draws no top bar on a failure when the shell cannot list traces", async () => {
+    delete window.penDesktop;
     renderTrace("/trace/abc?src=local");
     await screen.findByRole("heading", { name: /desktop app/ });
     expect(document.querySelector("header")).toBeNull();

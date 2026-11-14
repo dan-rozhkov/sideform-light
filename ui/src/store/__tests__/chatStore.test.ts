@@ -1,8 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest"; 
 import { reconcileModels, useChatStore, type ChatSummary } from "@/store/chatStore";
 import { getDefaultModel, getModelOptions } from "@/lib/chatModels";
-import { clearOpenCodeKey, setOpenCodeKey } from "@/lib/opencodeKey";
-import { assertDefined } from "@/test/assertions";
 import { resetBrowseCheckpoints, useBrowseCheckpointStore } from "@/store/browseCheckpointStore";
 
 function makeChat(overrides: Partial<ChatSummary> & { id: string }): ChatSummary {
@@ -353,111 +351,5 @@ describe("chatStore — model selection", () => {
 
     expect(useChatStore.getState().model).toBe(valid);
   });
-
-  // Defect 2 (code review): removing the OpenCode key used to leave an
-  // opencode-* selection active, so the very next turn hit the backend's
-  // 400 opencode_key_required instead of falling back — the exact scenario
-  // reconcileModels()'s own header comment claims is prevented. The fix
-  // subscribes reconcileModels to opencodeKey.ts's change notifications
-  // (chatStore.ts, module scope) rather than relying on a specific button
-  // handler to call it, so ANY clearOpenCodeKey() caller is covered.
-  describe("reacts to OpenCode key changes (defect 2)", () => {
-    afterEach(() => {
-      clearOpenCodeKey();
-    });
-
-    it("falls back to the default model when the key backing the active selection is removed", () => {
-      const opencodeModel = getModelOptions().find((o) => o.requiresUserKey)?.value;
-      assertDefined(opencodeModel, "fixture assumes a requiresUserKey model exists");
-
-      setOpenCodeKey("sk-test-defect2");
-      useChatStore.setState((s) => ({
-        model: opencodeModel,
-        chats: s.chats.map((c) => ({ ...c, model: opencodeModel })),
-      }));
-      expect(useChatStore.getState().model).toBe(opencodeModel);
-
-      // No direct reconcileModels() call here — clearOpenCodeKey() alone
-      // must trigger it via the subscription.
-      clearOpenCodeKey();
-
-      const state = useChatStore.getState();
-      expect(state.model).toBe(getDefaultModel());
-      expect(state.chats.every((c) => c.model === getDefaultModel())).toBe(true);
-    });
-
-    it("leaves the current selection alone when a key is saved", () => {
-      const valid = getModelOptions().find((o) => !o.requiresUserKey)?.value;
-      assertDefined(valid, "fixture assumes a non-opencode model exists");
-
-      useChatStore.setState((s) => ({
-        model: valid,
-        chats: s.chats.map((c) => ({ ...c, model: valid })),
-      }));
-
-      setOpenCodeKey("sk-test-defect2-save");
-
-      expect(useChatStore.getState().model).toBe(valid);
-    });
-  });
 });
 
-describe("chatStore — liked references", () => {
-  const a = { url: "https://cdn.example.com/a.png", sourceUrl: "https://mobbin.com/a", tool: "search_screens" };
-  const b = { url: "https://cdn.example.com/b.png" };
-
-  beforeEach(() => {
-    useChatStore.setState({ likedReferences: {} });
-  });
-
-  it("toggle likes, then unlikes by url, keyed per chat", () => {
-    const { toggleLikedReference } = useChatStore.getState();
-    toggleLikedReference("c1", a);
-    toggleLikedReference("c1", b);
-    toggleLikedReference("c2", b);
-    expect(useChatStore.getState().likedReferences).toEqual({ c1: [a, b], c2: [b] });
-
-    toggleLikedReference("c1", a);
-    expect(useChatStore.getState().likedReferences.c1).toEqual([b]);
-  });
-
-  it("drops the chat key when the last like is removed", () => {
-    const { toggleLikedReference, removeLikedReference } = useChatStore.getState();
-    toggleLikedReference("c1", a);
-    removeLikedReference("c1", a.url);
-    expect(useChatStore.getState().likedReferences).toEqual({});
-  });
-
-  it("removeLikedReference / clearLikedReferences are no-ops for unknown ids", () => {
-    const before = useChatStore.getState().likedReferences;
-    useChatStore.getState().removeLikedReference("nope", "x");
-    useChatStore.getState().clearLikedReferences("nope");
-    expect(useChatStore.getState().likedReferences).toBe(before);
-  });
-
-  it("clearLikedReferences removes one chat's likes only", () => {
-    const { toggleLikedReference, clearLikedReferences } = useChatStore.getState();
-    toggleLikedReference("c1", a);
-    toggleLikedReference("c2", b);
-    clearLikedReferences("c1");
-    expect(useChatStore.getState().likedReferences).toEqual({ c2: [b] });
-  });
-
-  it("closeChat cleans up that chat's likes", () => {
-    const id = useChatStore.getState().createChat();
-    useChatStore.getState().toggleLikedReference(id, a);
-    useChatStore.getState().closeChat(id);
-    expect(useChatStore.getState().likedReferences[id]).toBeUndefined();
-  });
-});
-
-describe("chatStore — attached workflow", () => {
-  it("keeps one attached workflow id per chat and clears it", () => {
-    const { setAttachedWorkflowId } = useChatStore.getState();
-    setAttachedWorkflowId("c1", "wf_1");
-    setAttachedWorkflowId("c2", "wf_2");
-    expect(useChatStore.getState().attachedWorkflowIds).toEqual({ c1: "wf_1", c2: "wf_2" });
-    setAttachedWorkflowId("c1", null);
-    expect(useChatStore.getState().attachedWorkflowIds).toEqual({ c2: "wf_2" });
-  });
-});

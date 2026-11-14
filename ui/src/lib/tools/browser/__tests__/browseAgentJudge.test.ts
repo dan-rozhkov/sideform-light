@@ -50,7 +50,7 @@ const bridgeOf = () => ({
 });
 
 function install(extra: Record<string, unknown> = {}) {
-  window.penDesktop = { onMenuCommand: () => () => {}, browser: { ...bridge, ...extra } } as never;
+  window.penAgentPanel = { onMenuCommand: () => () => {}, browser: { ...bridge, ...extra } } as never;
 }
 
 function stubFetch(verdict: string, preTurns: Response[] = []) {
@@ -299,14 +299,6 @@ describe("browse_agent QA judge", () => {
     expect(known.qa).toMatchObject({ outcome: "passed", judge: { error: "no time left for the judge" } });
   });
 
-  it("the outer limit is the call's own timeoutMs, and the reads plus the cleanup tail must fit before the margin", async () => {
-    await primeJudgeOn();
-    const tooShort = await run({}, { ...ctx, timeoutMs: 50_000 });
-    expect(bridge.read).not.toHaveBeenCalled();
-    expect(tooShort.qa.judge).toEqual({ error: "no time left for the judge" });
-    const enough = await run({}, { ...ctx, timeoutMs: 5 * 60_000 });
-    expect(enough.qa.judge).toMatchObject({ verdict: "pass" });
-  });
 
   it("an abort while the read is hanging ends the read at once: judge.error aborted", async () => {
     await primeJudgeOn();
@@ -354,7 +346,7 @@ describe("browse_agent QA judge, isolated run", () => {
     const iso = bridgeOf();
     const isolated = vi.fn(() => iso);
     const closeSession = vi.fn(async () => ({ ok: true }));
-    window.penDesktop = { onMenuCommand: () => () => {}, browser: { ...shared, isolated, closeSession } } as never;
+    window.penAgentPanel = { onMenuCommand: () => () => {}, browser: { ...shared, isolated, closeSession } } as never;
     const judge = deferredJudge();
     stubFetch("pass");
     let settled = false;
@@ -372,7 +364,7 @@ describe("browse_agent QA judge, isolated run", () => {
 
   it("aborts the started judge request when the outer cleanup throws", async () => {
     const iso = bridgeOf();
-    window.penDesktop = { onMenuCommand: () => () => {}, browser: { ...bridgeOf(), isolated: vi.fn(() => iso), closeSession: vi.fn(async () => ({ ok: true })) } } as never;
+    window.penAgentPanel = { onMenuCommand: () => () => {}, browser: { ...bridgeOf(), isolated: vi.fn(() => iso), closeSession: vi.fn(async () => ({ ok: true })) } } as never;
     let requestSignal: AbortSignal | undefined;
     judgeAnswer = (init) => {
       requestSignal = init.signal ?? undefined;

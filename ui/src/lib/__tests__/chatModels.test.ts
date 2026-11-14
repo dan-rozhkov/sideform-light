@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   canSendImages,
   canUseModel,
@@ -7,14 +7,14 @@ import {
   getModelOptions,
   modelSupportsVision,
 } from "@/lib/chatModels";
-import { clearOpenCodeKey, setOpenCodeKey } from "@/lib/opencodeKey";
 
 afterEach(() => {
-  clearOpenCodeKey();
+  vi.unstubAllGlobals();
+  vi.resetModules();
 });
 
 describe("chatModels fallback", () => {
-  it("offers the shipped models before any /api/models response", () => {
+  it("offers the shipped models before any /api/models response, with no own-key models", () => {
     expect(getModelOptions().map((option) => option.value)).toEqual([
       "meta/muse-spark-1.3-contributor",
       "qwen/qwen3.8-flash",
@@ -28,246 +28,75 @@ describe("chatModels fallback", () => {
       "minimax/minimax-m3",
       "xiaomi/mimo-v2.6-pro",
       "xiaomi/mimo-v2.6-flash",
-      "opencode-go/deepseek-v4.1-flash",
-      "opencode-go/deepseek-v4-flash-vision-exp",
-      "opencode-go/glm-5.3-flash",
-      "opencode-go/glm-5.3",
-      "opencode-go/glm-5.2",
-      "opencode/deepseek-v4-flash",
-      "opencode/glm-5.3-flash",
-      "opencode/kimi-k2.7-code",
-      "opencode/minimax-m3",
     ]);
     expect(getDefaultModel()).toBe("deepseek/deepseek-v4.1-flash");
   });
 
-  it("marks exactly the nine OpenCode BYOK entries as requiresUserKey", () => {
-    const requiresKey = getModelOptions()
-      .filter((option) => option.requiresUserKey)
-      .map((option) => option.value);
-    expect(requiresKey).toEqual([
-      "opencode-go/deepseek-v4.1-flash",
-      "opencode-go/deepseek-v4-flash-vision-exp",
-      "opencode-go/glm-5.3-flash",
-      "opencode-go/glm-5.3",
-      "opencode-go/glm-5.2",
-      "opencode/deepseek-v4-flash",
-      "opencode/glm-5.3-flash",
-      "opencode/kimi-k2.7-code",
-      "opencode/minimax-m3",
-    ]);
+  it("reports native vision per model, and assumes an unknown id can see", () => {
+    expect(modelSupportsVision("deepseek/deepseek-v4.1-flash")).toBe(true);
+    expect(modelSupportsVision("tencent/hy4-preview")).toBe(false);
+    expect(modelSupportsVision("not/listed")).toBe(true);
   });
 
-  // Not every shipped model reads images, and without a backend vision
-  // fallback canSendImages() must follow that flag. The three OpenCode
-  // entries here answered a test image with an EMPTY completion 3/3 when
-  // measured live (2026-09-18) — see the comment above DEFAULT_MODELS in
-  // pen-editor-backend/src/config.ts. Vision on that route is an endpoint
-  // property, so this list is a measurement, not something derivable from
-  // the model names.
-  it("reports each shipped model's own vision support", () => {
-    for (const option of getModelOptions()) {
-      expect(modelSupportsVision(option.value)).toBe(option.supportsVision);
-      expect(canSendImages(option.value)).toBe(option.supportsVision);
-    }
-    expect(
-      getModelOptions().filter((option) => !option.supportsVision).map((o) => o.value),
-    ).toEqual([
-      "tencent/hy4-preview",
-      "z-ai/glm-5.3",
-      "z-ai/glm-5.2",
-      "opencode-go/glm-5.3",
-      "opencode-go/glm-5.2",
-      "opencode/deepseek-v4-flash",
-      "opencode/minimax-m3",
-    ]);
+  it("allows images for a vision-less model only through the backend's vision fallback", () => {
+    expect(canSendImages("deepseek/deepseek-v4.1-flash")).toBe(true);
+    expect(canSendImages("tencent/hy4-preview")).toBe(false);
   });
 
-  // A stale saved selection, or a model the backend added after this bundle
-  // was built: assumed vision-capable, matching the backend's own convention
-  // for an id with no metadata.
-  it("assumes an unknown model reads images", () => {
-    expect(modelSupportsVision("who/knows")).toBe(true);
-  });
-});
-
-describe("chatModels canUseModel", () => {
-  it("is false for a totally unknown id", () => {
-    expect(canUseModel("nonexistent/model")).toBe(false);
+  it("canUseModel accepts listed ids only", () => {
+    expect(canUseModel("z-ai/glm-5.3")).toBe(true);
+    expect(canUseModel("opencode-go/glm-5.3")).toBe(false);
+    expect(canUseModel("unknown")).toBe(false);
   });
 
-  it("is true for an OpenRouter entry regardless of any stored key", () => {
-    expect(canUseModel("deepseek/deepseek-v4.1-flash")).toBe(true);
-  });
-
-  it("is false for an OpenCode BYOK entry with no key stored", () => {
-    clearOpenCodeKey();
-    expect(canUseModel("opencode-go/glm-5.3-flash")).toBe(false);
-  });
-
-  it("is true for an OpenCode BYOK entry once a key is stored", () => {
-    setOpenCodeKey("sk-test");
-    expect(canUseModel("opencode-go/glm-5.3-flash")).toBe(true);
-  });
-});
-
-describe("chatModels visionFallback", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.resetModules();
-  });
-
-  it("lets a vision-less backend model send images once it reports visionFallback: true", async () => {
-    vi.resetModules();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({
-          models: [
-            {
-              id: "text-only/model",
-              label: "Text Only",
-              supportsVision: false,
-            },
-          ],
-          default: "text-only/model",
-          visionFallback: true,
-        }),
-      })),
-    );
-
-    const fresh = await import("@/lib/chatModels");
-    await fresh.loadModels();
-
-    expect(fresh.getModelOptions().map((o) => o.value)).toEqual(["text-only/model"]);
-    expect(fresh.getDefaultModel()).toBe("text-only/model");
-    expect(fresh.modelSupportsVision("text-only/model")).toBe(false);
-    expect(fresh.canSendImages("text-only/model")).toBe(true);
-  });
-
-  it("keeps the hardcoded fallback list when the fetch fails", async () => {
-    vi.resetModules();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: false })),
-    );
-
-    const fresh = await import("@/lib/chatModels");
-    await fresh.loadModels();
-
-    expect(fresh.getDefaultModel()).toBe("deepseek/deepseek-v4.1-flash");
-    expect(fresh.getModelOptions()).toHaveLength(21);
-    expect(fresh.canSendImages("deepseek/deepseek-v4.1-flash")).toBe(true);
-  });
-});
-
-describe("chatModels imageOps capabilities", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.resetModules();
-  });
-
-  it("default false before any /api/models response has landed", async () => {
-    vi.resetModules();
-    const fresh = await import("@/lib/chatModels");
-    expect(fresh.canRemoveBackground()).toBe(false);
-    expect(fresh.canVectorize()).toBe(false);
-  });
-
-  it("reflects the backend's imageOps flags once loaded", async () => {
-    vi.resetModules();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({
-          models: [{ id: "m", label: "M", supportsVision: true }],
-          default: "m",
-          visionFallback: false,
-          imageOps: { removeBackground: true, vectorize: false },
-        }),
-      })),
-    );
-
-    const fresh = await import("@/lib/chatModels");
-    await fresh.loadModels();
-
-    expect(fresh.canRemoveBackground()).toBe(true);
-    expect(fresh.canVectorize()).toBe(false);
-  });
-
-  it("stays false when the backend response omits imageOps", async () => {
-    vi.resetModules();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({
-          models: [{ id: "m", label: "M", supportsVision: true }],
-          default: "m",
-          visionFallback: false,
-        }),
-      })),
-    );
-
-    const fresh = await import("@/lib/chatModels");
-    await fresh.loadModels();
-
-    expect(fresh.canRemoveBackground()).toBe(false);
-    expect(fresh.canVectorize()).toBe(false);
-  });
-});
-
-describe("getModelContextWindow", () => {
-  it("returns the fallback window for a known model", () => {
+  it("knows a context window for a listed model", () => {
     expect(getModelContextWindow("deepseek/deepseek-v4.1-flash")).toBe(1048576);
-    expect(getModelContextWindow("opencode/kimi-k2.7-code")).toBe(262144);
+    expect(getModelContextWindow("unknown")).toBeUndefined();
   });
+});
 
-  it("returns undefined for an unknown model id", () => {
-    expect(getModelContextWindow("nobody/knows-this-model")).toBeUndefined();
-  });
+describe("loadModels", () => {
+  const stubModels = (body: unknown, ok = true) =>
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok, json: async () => body })));
 
-  it("returns undefined once the backend reports a model with no contextWindow", async () => {
+  it("fetches /api/models from the local backend without cookies", async () => {
     vi.resetModules();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({
-          models: [{ id: "m", label: "M", supportsVision: true }],
-          default: "m",
-          visionFallback: false,
-        }),
-      })),
-    );
-
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ models: [], default: "" }) }));
+    vi.stubGlobal("fetch", fetchMock);
     const fresh = await import("@/lib/chatModels");
     await fresh.loadModels();
-
-    expect(fresh.getModelContextWindow("m")).toBeUndefined();
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("http://localhost:3001/api/models");
+    expect(init.credentials).toBe("omit");
   });
 
-  it("picks up a contextWindow the backend reports", async () => {
+  it("takes the backend list and default, and drops models that need the user's own key", async () => {
     vi.resetModules();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({
-          models: [
-            { id: "m", label: "M", supportsVision: true, contextWindow: 777_000 },
-          ],
-          default: "m",
-          visionFallback: false,
-        }),
-      })),
-    );
-
+    stubModels({
+      models: [
+        { id: "a/one", label: "One", supportsVision: true, contextWindow: 1000 },
+        { id: "opencode/two", label: "Two", supportsVision: false, requiresUserKey: true },
+        { id: "b/three", label: "Three", supportsVision: false },
+      ],
+      default: "a/one",
+      visionFallback: true,
+    });
     const fresh = await import("@/lib/chatModels");
     await fresh.loadModels();
+    expect(fresh.getModelOptions().map((o) => o.value)).toEqual(["a/one", "b/three"]);
+    expect(fresh.getDefaultModel()).toBe("a/one");
+    expect(fresh.getModelContextWindow("a/one")).toBe(1000);
+    // visionFallback: a model without native vision still accepts images.
+    expect(fresh.canSendImages("b/three")).toBe(true);
+    expect(fresh.areModelsLoaded()).toBe(true);
+  });
 
-    expect(fresh.getModelContextWindow("m")).toBe(777_000);
+  it("keeps the fallback list when the request fails", async () => {
+    vi.resetModules();
+    stubModels({}, false);
+    const fresh = await import("@/lib/chatModels");
+    await fresh.loadModels();
+    expect(fresh.getModelOptions()).toHaveLength(12);
+    expect(fresh.areModelsLoaded()).toBe(true);
   });
 });
