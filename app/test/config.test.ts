@@ -1,22 +1,107 @@
 import { describe, it, expect } from "vitest";
-import { resolveEditorUrl, DEFAULT_EDITOR_URL, resolveBrowserCursorEnabled, resolveUserDataDir, resolveStorageIdentity, LEGACY_APP_NAME, DISPLAY_APP_NAME, resolveAgentPanelUrl, resolveCanvasTabUrl, isValidCanvasId, canvasIdOfUrl, resolveDocTabUrl, isValidDocId, docIdOfUrl, isDocPageUrl, isDocPageOn, isSettingsPageOn, isWorkflowPageOn, resolveWorkflowTabUrl, isValidWorkflowId, workflowIdOfUrl, resolveTraceTabUrl, resolveSettingsTabUrl, isValidSettingsSection, SETTINGS_SECTIONS, isValidTraceId, traceIdOfUrl, INITIAL_TABS, isAdBlockDisabledByEnv } from "../src/main/config";
+import {
+  APP_ORIGIN,
+  DEFAULT_BACKEND_URL,
+  DISPLAY_APP_NAME,
+  SETTINGS_SECTIONS,
+  isAdBlockDisabledByEnv,
+  isOnUiOrigin,
+  isSettingsPageOn,
+  isValidSettingsSection,
+  isValidTraceId,
+  originOf,
+  resolveAgentPanelUrl,
+  resolveBackendOrigin,
+  resolveBrowserCursorEnabled,
+  resolveSettingsTabUrl,
+  resolveTraceTabUrl,
+  resolveUiOrigin,
+  resolveUserDataDir,
+  traceIdOfUrl,
+} from "../src/main/config";
 
-describe("resolveEditorUrl", () => {
-  it("defaults to the production URL", () => {
-    expect(resolveEditorUrl({})).toBe(DEFAULT_EDITOR_URL);
-    // "/app" — "/" is the showcase gallery, not the editor.
-    expect(DEFAULT_EDITOR_URL).toBe("https://app.sideform.pro/app");
+describe("branding", () => {
+  it("is Sideform Light on the app://sideform origin", () => {
+    expect(DISPLAY_APP_NAME).toBe("Sideform Light");
+    expect(APP_ORIGIN).toBe("app://sideform");
   });
+});
 
-  it("honors SIDEFORM_LIGHT_URL", () => {
-    expect(
-      resolveEditorUrl({ SIDEFORM_LIGHT_URL: "http://localhost:5173/app" }),
-    ).toBe("http://localhost:5173/app");
+describe("originOf / isOnUiOrigin", () => {
+  it("reads protocol//host, also for the standard app: scheme (new URL().origin is \"null\" there)", () => {
+    expect(originOf("app://sideform/agent?x=1")).toBe("app://sideform");
+    expect(originOf("http://localhost:5174/trace/a")).toBe("http://localhost:5174");
+    expect(originOf("not a url")).toBeNull();
+    expect(originOf(undefined)).toBeNull();
+    expect(originOf("about:blank")).toBeNull();
   });
+  it("compares against one ui origin", () => {
+    expect(isOnUiOrigin("app://sideform/settings", "app://sideform")).toBe(true);
+    expect(isOnUiOrigin("app://other/settings", "app://sideform")).toBe(false);
+    expect(isOnUiOrigin("https://sideform/settings", "app://sideform")).toBe(false);
+  });
+});
 
-  it("ignores a non-http(s) or unparseable override", () => {
-    expect(resolveEditorUrl({ SIDEFORM_LIGHT_URL: "file:///etc/passwd" })).toBe(DEFAULT_EDITOR_URL);
-    expect(resolveEditorUrl({ SIDEFORM_LIGHT_URL: "not a url" })).toBe(DEFAULT_EDITOR_URL);
+describe("resolveUiOrigin", () => {
+  it("defaults to the bundled ui", () => {
+    expect(resolveUiOrigin({})).toBe("app://sideform");
+    expect(resolveUiOrigin({ SIDEFORM_LIGHT_UI_URL: "" })).toBe("app://sideform");
+  });
+  it("SIDEFORM_LIGHT_UI_URL replaces the origin (http/https only, path ignored)", () => {
+    expect(resolveUiOrigin({ SIDEFORM_LIGHT_UI_URL: "http://localhost:5174" })).toBe("http://localhost:5174");
+    expect(resolveUiOrigin({ SIDEFORM_LIGHT_UI_URL: "https://ui.example.com/agent?x=1" })).toBe("https://ui.example.com");
+  });
+  it("ignores a non-http override", () => {
+    expect(resolveUiOrigin({ SIDEFORM_LIGHT_UI_URL: "file:///etc/passwd" })).toBe("app://sideform");
+    expect(resolveUiOrigin({ SIDEFORM_LIGHT_UI_URL: "app://evil" })).toBe("app://sideform");
+    expect(resolveUiOrigin({ SIDEFORM_LIGHT_UI_URL: "not a url" })).toBe("app://sideform");
+  });
+});
+
+describe("resolveBackendOrigin", () => {
+  it("defaults to the local backend", () => {
+    expect(resolveBackendOrigin({})).toBe("http://localhost:3001");
+    expect(DEFAULT_BACKEND_URL).toBe("http://localhost:3001");
+  });
+  it("reads the origin of SIDEFORM_LIGHT_BACKEND_URL (http/https only)", () => {
+    expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "https://api.sideform.pro/some/path" })).toBe("https://api.sideform.pro");
+    expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "http://127.0.0.1:4000" })).toBe("http://127.0.0.1:4000");
+    expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "ftp://x" })).toBe("http://localhost:3001");
+    expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "nope" })).toBe("http://localhost:3001");
+  });
+});
+
+describe("page URLs", () => {
+  it("agent panel: /agent on the ui origin", () => {
+    expect(resolveAgentPanelUrl("app://sideform")).toBe("app://sideform/agent");
+    expect(resolveAgentPanelUrl("http://localhost:5174")).toBe("http://localhost:5174/agent");
+  });
+  it("trace tab: /trace/<id>?src=local, id encoded", () => {
+    expect(resolveTraceTabUrl("app://sideform", "abc_1")).toBe("app://sideform/trace/abc_1?src=local");
+    expect(resolveTraceTabUrl("http://localhost:5174", "a b")).toBe("http://localhost:5174/trace/a%20b?src=local");
+  });
+  it("settings tab: /settings with a valid section only", () => {
+    expect(resolveSettingsTabUrl("app://sideform")).toBe("app://sideform/settings");
+    expect(resolveSettingsTabUrl("app://sideform", "browser")).toBe("app://sideform/settings?section=browser");
+    expect(resolveSettingsTabUrl("app://sideform", "appearance")).toBe("app://sideform/settings?section=appearance");
+    expect(resolveSettingsTabUrl("app://sideform", "account")).toBe("app://sideform/settings");
+    expect(resolveSettingsTabUrl("app://sideform", 5)).toBe("app://sideform/settings");
+  });
+});
+
+describe("settings sections", () => {
+  it("are appearance and browser only", () => {
+    expect([...SETTINGS_SECTIONS]).toEqual(["appearance", "browser"]);
+    expect(isValidSettingsSection("browser")).toBe(true);
+    expect(isValidSettingsSection("advanced")).toBe(false);
+    expect(isValidSettingsSection(undefined)).toBe(false);
+  });
+  it("isSettingsPageOn checks the origin and the last path segment", () => {
+    expect(isSettingsPageOn("app://sideform/settings?section=browser", "app://sideform")).toBe(true);
+    expect(isSettingsPageOn("app://sideform/settings/", "app://sideform")).toBe(true);
+    expect(isSettingsPageOn("app://sideform/agent", "app://sideform")).toBe(false);
+    expect(isSettingsPageOn("https://evil.example/settings", "app://sideform")).toBe(false);
+    expect(isSettingsPageOn(undefined, "app://sideform")).toBe(false);
   });
 });
 
@@ -48,178 +133,6 @@ describe("resolveUserDataDir", () => {
   });
 });
 
-describe("resolveStorageIdentity", () => {
-  const join = (...p: string[]) => p.join("/");
-  const appData = "/AS";
-  const legacy = "/AS/Pineapple Editor";
-  const fresh = "/AS/Sideform Desktop";
-  const mk = (dirs: string[], files: Record<string, string> = {}) => ({
-    exists: (p: string) => dirs.includes(p) || p in files,
-    isDirectory: (p: string) => dirs.includes(p),
-    read: (p: string) => files[p] ?? null,
-  });
-
-  it("existing install: legacy dir and legacy name", () => {
-    expect(resolveStorageIdentity({}, appData, mk([legacy]), join)).toEqual({ userDataDir: legacy, storageName: LEGACY_APP_NAME });
-  });
-  it("fresh install: new dir and new name", () => {
-    expect(resolveStorageIdentity({}, appData, mk([]), join)).toEqual({ userDataDir: fresh, storageName: DISPLAY_APP_NAME });
-  });
-  it("the new dir wins when both exist; its identity file decides the name", () => {
-    const fs = mk([legacy, fresh], { [`${fresh}/storage-identity.json`]: '{"storageName":"Pineapple Editor"}' });
-    expect(resolveStorageIdentity({}, appData, fs, join)).toEqual({ userDataDir: fresh, storageName: LEGACY_APP_NAME });
-  });
-  it("a legacy dir that appears later does not change a fresh install", () => {
-    const fs = mk([legacy, fresh], { [`${fresh}/storage-identity.json`]: '{"storageName":"Sideform Desktop"}' });
-    expect(resolveStorageIdentity({}, appData, fs, join)).toEqual({ userDataDir: fresh, storageName: DISPLAY_APP_NAME });
-  });
-  it("a new dir without an identity file gets the new name even if legacy exists", () => {
-    expect(resolveStorageIdentity({}, appData, mk([legacy, fresh]), join).storageName).toBe(DISPLAY_APP_NAME);
-  });
-  it("a legacy path that is a file, not a directory, is ignored", () => {
-    expect(resolveStorageIdentity({}, appData, mk([], { [legacy]: "x" }), join)).toEqual({ userDataDir: fresh, storageName: DISPLAY_APP_NAME });
-  });
-  it("env override: its identity file decides the name; the legacy dir itself means the legacy name", () => {
-    const env = { SIDEFORM_LIGHT_USER_DATA_DIR: " /tmp/e2e " };
-    const withFile = mk([], { "/tmp/e2e/storage-identity.json": '{"storageName":"Pineapple Editor"}' });
-    expect(resolveStorageIdentity(env, appData, withFile, join)).toEqual({ userDataDir: "/tmp/e2e", storageName: LEGACY_APP_NAME });
-    expect(resolveStorageIdentity(env, appData, mk([legacy]), join)).toEqual({ userDataDir: "/tmp/e2e", storageName: DISPLAY_APP_NAME });
-    expect(resolveStorageIdentity({ SIDEFORM_LIGHT_USER_DATA_DIR: legacy }, appData, mk([]), join).storageName).toBe(LEGACY_APP_NAME);
-  });
-  it("ignores a corrupt or unknown identity file", () => {
-    for (const text of ["not json", '{"storageName":"Evil"}', "null"]) {
-      const fs = mk([legacy], { [`${legacy}/storage-identity.json`]: text });
-      expect(resolveStorageIdentity({}, appData, fs, join).storageName).toBe(LEGACY_APP_NAME);
-    }
-  });
-});
-
-describe("resolveAgentPanelUrl", () => {
-  it("replaces /app with /agent on the default URL", () => {
-    expect(resolveAgentPanelUrl(DEFAULT_EDITOR_URL)).toBe("https://app.sideform.pro/agent");
-  });
-  it("keeps origin and port but drops the editor's query and hash", () => {
-    expect(resolveAgentPanelUrl("http://localhost:5173/app?x=1&y=2#h")).toBe("http://localhost:5173/agent");
-  });
-  it("replaces only the last segment and keeps a base path prefix", () => {
-    expect(resolveAgentPanelUrl("https://host/pen/app")).toBe("https://host/pen/agent");
-    expect(resolveAgentPanelUrl("https://host/app/app")).toBe("https://host/app/agent");
-  });
-  it("ignores a trailing slash after app", () => {
-    expect(resolveAgentPanelUrl("http://127.0.0.1:9000/app/")).toBe("http://127.0.0.1:9000/agent");
-    expect(resolveAgentPanelUrl("https://host/pen/app/?q=1")).toBe("https://host/pen/agent");
-  });
-  it("appends agent beside the last segment when the path does not end in app", () => {
-    expect(resolveAgentPanelUrl("http://127.0.0.1:9000")).toBe("http://127.0.0.1:9000/agent");
-    expect(resolveAgentPanelUrl("http://127.0.0.1:9000/other")).toBe("http://127.0.0.1:9000/agent");
-    expect(resolveAgentPanelUrl("https://host/pen/x")).toBe("https://host/pen/agent");
-    expect(resolveAgentPanelUrl("https://host/pen/")).toBe("https://host/pen/agent");
-    expect(resolveAgentPanelUrl("https://host/application")).toBe("https://host/agent");
-  });
-  it("follows a SIDEFORM_LIGHT_URL override", () => {
-    const url = resolveEditorUrl({ SIDEFORM_LIGHT_URL: "https://staging.example.com/app?flag=1" });
-    expect(resolveAgentPanelUrl(url)).toBe("https://staging.example.com/agent");
-  });
-});
-
-describe("resolveDocTabUrl", () => {
-  it("swaps the /app path for /doc and adds chat=off", () => {
-    expect(resolveDocTabUrl(DEFAULT_EDITOR_URL)).toBe("https://app.sideform.pro/doc?new=1&chat=off");
-  });
-  it("drops a stray new param when an id is given", () => {
-    expect(resolveDocTabUrl("https://h/app?new=1", "n1")).toBe("https://h/doc?id=n1&chat=off");
-  });
-  it("adds id before chat=off and encodes it", () => {
-    expect(resolveDocTabUrl("http://localhost:5173/app", "abc_1-X")).toBe("http://localhost:5173/doc?id=abc_1-X&chat=off");
-  });
-  it("keeps the path prefix, other params and drops the hash; replaces id and chat", () => {
-    expect(resolveDocTabUrl("https://h/pen/app?q=1&id=old&chat=on#frame", "n1")).toBe("https://h/pen/doc?q=1&id=n1&chat=off");
-  });
-  it("handles /app/ and a path not ending in app like the panel URL", () => {
-    expect(resolveDocTabUrl("https://h/app/")).toBe("https://h/doc?new=1&chat=off");
-    expect(resolveDocTabUrl("https://h/pen/x")).toBe("https://h/pen/doc?new=1&chat=off");
-    expect(resolveDocTabUrl("https://h/")).toBe("https://h/doc?new=1&chat=off");
-  });
-});
-
-describe("resolveWorkflowTabUrl", () => {
-  it("swaps /app for /workflow with new=1 or id, then chat=off", () => {
-    expect(resolveWorkflowTabUrl(DEFAULT_EDITOR_URL)).toBe("https://app.sideform.pro/workflow?new=1&chat=off");
-    expect(resolveWorkflowTabUrl("http://localhost:5173/app", "wf_0123456789ab")).toBe("http://localhost:5173/workflow?id=wf_0123456789ab&chat=off");
-  });
-  it("keeps prefix and other params, drops hash, replaces id/new/chat", () => {
-    expect(resolveWorkflowTabUrl("https://h/pen/app?q=1&id=old&new=1&chat=on#x", "wf_a")).toBe("https://h/pen/workflow?q=1&id=wf_a&chat=off");
-    expect(resolveWorkflowTabUrl("https://h/app/")).toBe("https://h/workflow?new=1&chat=off");
-  });
-});
-
-describe("workflow id and page helpers", () => {
-  it("isValidWorkflowId accepts wf_ + 1-64 alphanumerics only", () => {
-    expect(isValidWorkflowId("wf_0123456789ab")).toBe(true);
-    expect(isValidWorkflowId("wf_" + "a".repeat(64))).toBe(true);
-    for (const bad of ["", "wf_", "abc", "wf_a-b", "wf_a b", "wf_../x", "wf_" + "a".repeat(65), 5, null, undefined, {}]) expect(isValidWorkflowId(bad)).toBe(false);
-  });
-  it("isWorkflowPageOn", () => {
-    expect(isWorkflowPageOn("https://h/workflow?new=1", "https://h")).toBe(true);
-    expect(isWorkflowPageOn("https://h/workflow/", "https://h")).toBe(true);
-    expect(isWorkflowPageOn("https://h/doc?id=x", "https://h")).toBe(false);
-    expect(isWorkflowPageOn("https://other/workflow", "https://h")).toBe(false);
-    expect(isWorkflowPageOn("file:///offline.html", "https://h")).toBe(false);
-    expect(isWorkflowPageOn(undefined, "https://h")).toBe(false);
-  });
-
-  it("workflowIdOfUrl", () => {
-    expect(workflowIdOfUrl("https://h/workflow?id=wf_a&chat=off")).toBe("wf_a");
-    expect(workflowIdOfUrl("https://h/workflow?new=1")).toBeNull();
-    expect(workflowIdOfUrl("nope")).toBeNull();
-  });
-});
-
-describe("isValidDocId / docIdOfUrl", () => {
-  it("accepts 1-64 of A-Za-z0-9_- only", () => {
-    expect(isValidDocId("a")).toBe(true);
-    expect(isValidDocId("A_b-9".repeat(12))).toBe(true);
-    expect(isValidDocId("a".repeat(65))).toBe(false);
-    for (const bad of ["", "a b", "a/b", "a&id=b", "../x", "é", 5, null, undefined, {}]) expect(isValidDocId(bad)).toBe(false);
-  });
-  it("reads the id param of a doc URL", () => {
-    expect(docIdOfUrl("https://h/doc?id=abc&chat=off")).toBe("abc");
-    expect(docIdOfUrl("https://h/doc?new=1&chat=off")).toBeNull();
-    expect(docIdOfUrl("not a url")).toBeNull();
-  });
-});
-
-describe("isDocPageUrl", () => {
-  it("is true only when the last path segment is doc", () => {
-    for (const ok of ["https://h/doc", "https://h/doc/", "https://h/doc?id=a&chat=off", "https://h/pre/doc"]) expect(isDocPageUrl(ok)).toBe(true);
-    for (const bad of ["https://h/", "https://h/app", "https://h/doc/x", "https://h/docs", "https://h/trace/doc/a", "not a url"]) expect(isDocPageUrl(bad)).toBe(false);
-  });
-});
-
-describe("isDocPageOn", () => {
-  it("needs the doc page on exactly the editor origin", () => {
-    expect(isDocPageOn("https://h/doc?id=a", "https://h")).toBe(true);
-    expect(isDocPageOn("https://other/doc", "https://h")).toBe(false);
-    expect(isDocPageOn("http://h/doc", "https://h")).toBe(false);
-    expect(isDocPageOn("https://h/app", "https://h")).toBe(false);
-    expect(isDocPageOn(undefined, "https://h")).toBe(false);
-    expect(isDocPageOn("nope", "https://h")).toBe(false);
-  });
-});
-
-describe("resolveTraceTabUrl", () => {
-  it("swaps the /app path for /trace/<id> and adds src=local&chat=off", () => {
-    expect(resolveTraceTabUrl(DEFAULT_EDITOR_URL, "abc_1-X")).toBe("https://app.sideform.pro/trace/abc_1-X?src=local&chat=off");
-  });
-  it("keeps the path prefix and other params, drops the hash, replaces src and chat", () => {
-    expect(resolveTraceTabUrl("https://h/pen/app?q=1&src=cloud&chat=on#f", "t1")).toBe("https://h/pen/trace/t1?q=1&src=local&chat=off");
-  });
-  it("handles /app/ and a path not ending in app", () => {
-    expect(resolveTraceTabUrl("https://h/app/", "t")).toBe("https://h/trace/t?src=local&chat=off");
-    expect(resolveTraceTabUrl("https://h/pen/x", "t")).toBe("https://h/pen/trace/t?src=local&chat=off");
-  });
-});
-
 describe("isValidTraceId / traceIdOfUrl", () => {
   it("accepts 1-64 of A-Za-z0-9_- only", () => {
     expect(isValidTraceId("a")).toBe(true);
@@ -227,115 +140,15 @@ describe("isValidTraceId / traceIdOfUrl", () => {
     for (const bad of ["", "a".repeat(65), "a b", "a/b", "..", "../x", "a?b", 5, null, undefined]) expect(isValidTraceId(bad)).toBe(false);
   });
   it("reads the id from the path of a trace URL", () => {
-    expect(traceIdOfUrl("https://h/trace/abc?src=local&chat=off")).toBe("abc");
+    expect(traceIdOfUrl("app://sideform/trace/abc?src=local")).toBe("abc");
     expect(traceIdOfUrl("https://h/pen/trace/abc")).toBe("abc");
-    expect(traceIdOfUrl("https://h/doc?id=abc")).toBeNull();
+    expect(traceIdOfUrl("https://h/settings?id=abc")).toBeNull();
     expect(traceIdOfUrl("https://h/trace/")).toBeNull();
     expect(traceIdOfUrl("https://h/trace/a%20b")).toBeNull();
     expect(traceIdOfUrl("not a url")).toBeNull();
   });
 });
 
-describe("resolveCanvasTabUrl", () => {
-  it("adds chat=off to the default editor URL", () => {
-    expect(resolveCanvasTabUrl(DEFAULT_EDITOR_URL)).toBe("https://app.sideform.pro/app?chat=off");
-  });
-  it("keeps other params and merges chat=off", () => {
-    const u = new URL(resolveCanvasTabUrl("http://localhost:5173/app?q=1&x=a%20b"));
-    expect(u.searchParams.get("q")).toBe("1");
-    expect(u.searchParams.get("x")).toBe("a b");
-    expect(u.searchParams.get("chat")).toBe("off");
-  });
-  it("replaces an existing chat value without duplicating it", () => {
-    const u = new URL(resolveCanvasTabUrl("http://h/app?chat=on&q=1&chat=x"));
-    expect(u.searchParams.getAll("chat")).toEqual(["off"]);
-    expect(u.searchParams.get("q")).toBe("1");
-  });
-  it("keeps the base path and the hash", () => {
-    expect(resolveCanvasTabUrl("https://h/pen/app#frame-1")).toBe("https://h/pen/app?chat=off#frame-1");
-  });
-  it("keeps other params byte-for-byte (no re-serialization)", () => {
-    expect(resolveCanvasTabUrl("http://h/app?x=a%20b&flag&t=~v")).toBe("http://h/app?x=a%20b&flag&t=~v&chat=off");
-  });
-  it("drops every chat param from the raw string and keeps the order of the rest", () => {
-    expect(resolveCanvasTabUrl("http://h/app?chat=on&q=1+2&chat=x&z")).toBe("http://h/app?q=1+2&z&chat=off");
-    expect(resolveCanvasTabUrl("http://h/app?chat")).toBe("http://h/app?chat=off");
-  });
-  it("does not drop params that merely start with chat", () => {
-    expect(resolveCanvasTabUrl("http://h/app?chatty=1")).toBe("http://h/app?chatty=1&chat=off");
-  });
-});
-
-describe("empty start", () => {
-  it("opens no initial tab", () => {
-    expect(INITIAL_TABS).toEqual([]);
-  });
-});
-
-describe("resolveSettingsTabUrl", () => {
-  it("swaps the /app path for /settings and adds chat=off", () => {
-    expect(resolveSettingsTabUrl(DEFAULT_EDITOR_URL)).toBe("https://app.sideform.pro/settings?chat=off");
-  });
-  it("adds section after chat=off for each valid section", () => {
-    for (const id of SETTINGS_SECTIONS) {
-      expect(resolveSettingsTabUrl("http://localhost:5173/app", id)).toBe(`http://localhost:5173/settings?chat=off&section=${id}`);
-    }
-  });
-  it("drops an invalid or non-string section", () => {
-    for (const bad of ["nope", "", "Account", "account&x=1", 5, null, {}]) {
-      expect(resolveSettingsTabUrl("https://h/app", bad)).toBe("https://h/settings?chat=off");
-    }
-  });
-  it("keeps the path prefix and other params, drops the hash, replaces chat and section", () => {
-    expect(resolveSettingsTabUrl("https://h/pen/app?q=1&chat=on&section=agent#frame", "canvas")).toBe("https://h/pen/settings?q=1&chat=off&section=canvas");
-  });
-  it("handles /app/ and a path not ending in app like the panel URL", () => {
-    expect(resolveSettingsTabUrl("https://h/app/")).toBe("https://h/settings?chat=off");
-    expect(resolveSettingsTabUrl("https://h/pen/x")).toBe("https://h/pen/settings?chat=off");
-  });
-});
-
-describe("isValidSettingsSection", () => {
-  it("accepts exactly the six section ids", () => {
-    expect([...SETTINGS_SECTIONS]).toEqual(["account", "appearance", "canvas", "agent", "memory", "skills", "browser", "integrations", "privacy", "advanced", "shortcuts"]);
-    for (const id of SETTINGS_SECTIONS) expect(isValidSettingsSection(id)).toBe(true);
-    for (const bad of ["", "other", "constructor", 1, undefined, null]) expect(isValidSettingsSection(bad)).toBe(false);
-  });
-});
-
-describe("canvas ids in tab URLs", () => {
-  it("resolveCanvasTabUrl adds canvas=<id> before chat=off and keeps other params", () => {
-    expect(resolveCanvasTabUrl("http://h/app?q=1", "cv_a1")).toBe("http://h/app?q=1&canvas=cv_a1&chat=off");
-    expect(resolveCanvasTabUrl("https://app.sideform.pro/app", "cv_a1")).toBe("https://app.sideform.pro/app?canvas=cv_a1&chat=off");
-  });
-  it("replaces an existing canvas and chat param, never duplicates", () => {
-    expect(resolveCanvasTabUrl("http://h/app?canvas=old&chat=off&q=1", "new")).toBe("http://h/app?q=1&canvas=new&chat=off");
-  });
-  it("is idempotent on an already resolved URL and unchanged without an id", () => {
-    const once = resolveCanvasTabUrl("http://h/app", "x");
-    expect(resolveCanvasTabUrl(once, "x")).toBe(once);
-    expect(resolveCanvasTabUrl("http://h/app?canvas=keep")).toBe("http://h/app?canvas=keep&chat=off");
-  });
-  it("isValidCanvasId and canvasIdOfUrl", () => {
-    expect(isValidCanvasId("cv_Ab-9")).toBe(true);
-    for (const bad of ["", "a/b", "a".repeat(65), 5, null, "a b"]) expect(isValidCanvasId(bad)).toBe(false);
-    expect(canvasIdOfUrl("http://h/app?canvas=cv_1&chat=off")).toBe("cv_1");
-    expect(canvasIdOfUrl("http://h/app")).toBeNull();
-    expect(canvasIdOfUrl("not a url")).toBeNull();
-  });
-});
-
-describe("isSettingsPageOn", () => {
-  it("accepts the settings page on the editor origin only", () => {
-    expect(isSettingsPageOn("https://h/settings?chat=off", "https://h")).toBe(true);
-    expect(isSettingsPageOn("https://h/prefix/settings/", "https://h")).toBe(true);
-    expect(isSettingsPageOn("https://evil/settings", "https://h")).toBe(false);
-    expect(isSettingsPageOn("https://h/app", "https://h")).toBe(false);
-    expect(isSettingsPageOn("https://h/settings/x", "https://h")).toBe(false);
-    expect(isSettingsPageOn(undefined, "https://h")).toBe(false);
-    expect(isSettingsPageOn("nonsense", "https://h")).toBe(false);
-  });
-});
 
 describe("isAdBlockDisabledByEnv", () => {
   it("is true only for an explicit on value", () => {
@@ -346,3 +159,4 @@ describe("isAdBlockDisabledByEnv", () => {
     expect(isAdBlockDisabledByEnv({})).toBe(false);
   });
 });
+

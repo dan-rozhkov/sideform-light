@@ -41,13 +41,13 @@ describe("resolveViewMode", () => {
   const none = new Set<number>();
   it("active tab is shown, even when awake", () => {
     expect(resolveViewMode({ id: 1, kind: "browser" }, 1, new Set([1]))).toBe("shown");
-    expect(resolveViewMode({ id: 1, kind: "editor" }, 1, none)).toBe("shown");
+    expect(resolveViewMode({ id: 1, kind: "settings" }, 1, none)).toBe("shown");
   });
   it("an awake browser tab that is not active is awake", () => {
     expect(resolveViewMode({ id: 2, kind: "browser" }, 1, new Set([2]))).toBe("awake");
   });
-  it("an editor tab in the awake set stays hidden", () => {
-    expect(resolveViewMode({ id: 2, kind: "editor" }, 1, new Set([2]))).toBe("hidden");
+  it("a page tab in the awake set stays hidden", () => {
+    expect(resolveViewMode({ id: 2, kind: "settings" }, 1, new Set([2]))).toBe("hidden");
   });
   it("everything else is hidden", () => {
     expect(resolveViewMode({ id: 2, kind: "browser" }, 1, none)).toBe("hidden");
@@ -68,7 +68,7 @@ describe("TabManager awake view modes", () => {
         views.push(v);
         return v;
       },
-      editorUrl: "https://pen-editor.onrender.com",
+      uiOrigin: "app://sideform",
       onStateChanged: () => {},
     });
   };
@@ -80,15 +80,15 @@ describe("TabManager awake view modes", () => {
   });
 
   it("without awake tabs: active is shown, the others hidden", () => {
-    tm.newTab("editor");
+    tm.newTab("settings");
     tm.newTab("browser");
     expect(last(views[0])).toBe("hidden");
     expect(last(views[1])).toBe("shown");
     expect(views.flatMap((v) => v.setViewMode.mock.calls.map((c) => c[0])).includes("awake")).toBe(false);
   });
 
-  it("an awake browser tab under the canvas tab is awake; activating it shows it; leaving makes it awake again", () => {
-    const canvas = tm.newTab("editor");
+  it("an awake browser tab under a page tab is awake; activating it shows it; leaving makes it awake again", () => {
+    const canvas = tm.newTab("settings");
     const b = tm.newTab("browser", undefined, { activate: false });
     tm.setAgentTabAwake(b, true);
     expect(last(views[0])).toBe("shown");
@@ -101,7 +101,7 @@ describe("TabManager awake view modes", () => {
   });
 
   it("clearing awake hides the tab again", () => {
-    tm.newTab("editor");
+    tm.newTab("settings");
     const b = tm.newTab("browser", undefined, { activate: false });
     tm.setAgentTabAwake(b, true);
     tm.setAgentTabAwake(b, false);
@@ -109,18 +109,18 @@ describe("TabManager awake view modes", () => {
   });
 
   it("a session tab opened in the background and marked awake is awake", () => {
-    tm.newTab("editor");
+    tm.newTab("settings");
     const s = tm.newTab("browser", "a");
     expect(last(views[1])).toBe("hidden");
     tm.setAgentTabAwake(s, true);
     expect(last(views[1])).toBe("awake");
-    expect(tm.getSnapshot().activeKind).toBe("editor");
+    expect(tm.getSnapshot().activeKind).toBe("settings");
   });
 
   it("an unchanged awake flag is a no-op and emits no snapshot", () => {
     const states: unknown[] = [];
-    tm = new TabManager({ createView: () => makeView(true), editorUrl: "x", onStateChanged: (s) => states.push(s) });
-    tm.newTab("editor");
+    tm = new TabManager({ createView: () => makeView(true), uiOrigin: "x", onStateChanged: (s) => states.push(s) });
+    tm.newTab("settings");
     const b = tm.newTab("browser", undefined, { activate: false });
     const n = states.length;
     tm.setAgentTabAwake(b, true);
@@ -129,7 +129,7 @@ describe("TabManager awake view modes", () => {
   });
 
   it("closing an awake tab forgets it", () => {
-    tm.newTab("editor");
+    tm.newTab("settings");
     const b = tm.newTab("browser", undefined, { activate: false });
     tm.setAgentTabAwake(b, true);
     expect(tm.hasAwakeTab()).toBe(true);
@@ -140,7 +140,7 @@ describe("TabManager awake view modes", () => {
   it("a handle without setViewMode keeps an awake tab hidden (it cannot go under the active tab)", () => {
     withViewMode = false;
     build();
-    tm.newTab("editor");
+    tm.newTab("settings");
     const b = tm.newTab("browser", undefined, { activate: false });
     expect(views[0].setVisible).toHaveBeenLastCalledWith(true);
     expect(views[1].setVisible).toHaveBeenLastCalledWith(false);
@@ -152,7 +152,7 @@ describe("TabManager awake view modes", () => {
   });
 
   it("setAgentTabAwake touches only that tab's view", () => {
-    tm.newTab("editor");
+    tm.newTab("settings");
     const b = tm.newTab("browser", undefined, { activate: false });
     const c = tm.newTab("browser", undefined, { activate: false });
     for (const v of views) v.setViewMode?.mockClear();
@@ -164,7 +164,7 @@ describe("TabManager awake view modes", () => {
   });
 
   it("layoutActive moves the active tab and awake tabs, not hidden ones", () => {
-    tm.newTab("editor");
+    tm.newTab("settings");
     const b = tm.newTab("browser", undefined, { activate: false });
     tm.newTab("browser", undefined, { activate: false });
     tm.setAgentTabAwake(b, true);

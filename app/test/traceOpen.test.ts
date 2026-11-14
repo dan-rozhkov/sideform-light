@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { openTraceTab, type TraceOpenDeps } from "../src/main/traceOpen";
-import { handleTraceList, handleTraceListTabs, handleTraceRead, handleTraceSave, type TraceIpcDeps } from "../src/main/traceIpc";
+import { handleTraceListTabs, handleTraceRead, handleTraceSave, type TraceIpcDeps } from "../src/main/traceIpc";
 
 function deps(over: Partial<TraceOpenDeps> = {}): TraceOpenDeps {
   return {
     isPanel: (id) => id === 1,
-    isDocViewer: vi.fn((id: number, url: string | undefined) => id === 6 && url === "https://ed.example/doc"),
     findTraceTab: vi.fn(() => null),
     activate: vi.fn(),
     newTraceTab: vi.fn(() => 5),
@@ -13,9 +12,8 @@ function deps(over: Partial<TraceOpenDeps> = {}): TraceOpenDeps {
   };
 }
 
-const panel = { senderId: 1, topFrame: true, frameUrl: undefined };
-const other = { senderId: 2, topFrame: true, frameUrl: "https://ed.example/doc" };
-const docTab = { senderId: 6, topFrame: true, frameUrl: "https://ed.example/doc" };
+const panel = 1;
+const other = 2;
 
 describe("traces:open", () => {
   it("opens a new trace tab, without keyboard focus, when none shows the trace", () => {
@@ -32,32 +30,11 @@ describe("traces:open", () => {
     expect(d.newTraceTab).not.toHaveBeenCalled();
   });
 
-  it("refuses any sender but the agent panel and a doc tab", () => {
+  it("refuses any sender but the agent panel", () => {
     const d = deps();
     expect(openTraceTab(d, other, "run_1")).toMatchObject({ ok: false });
     expect(d.newTraceTab).not.toHaveBeenCalled();
     expect(d.activate).not.toHaveBeenCalled();
-  });
-
-  it("a doc tab on the doc page opens a new trace tab WITH focus", () => {
-    const d = deps();
-    expect(openTraceTab(d, docTab, "run_1")).toEqual({ ok: true });
-    expect(d.newTraceTab).toHaveBeenCalledWith("run_1", { focus: true });
-  });
-
-  it("a doc tab focuses an existing trace tab", () => {
-    const d = deps({ findTraceTab: vi.fn(() => 9) });
-    expect(openTraceTab(d, docTab, "run_1")).toEqual({ ok: true });
-    expect(d.activate).toHaveBeenCalledWith(9, { focus: true });
-    expect(d.newTraceTab).not.toHaveBeenCalled();
-  });
-
-  it("a doc tab call from a subframe, or off the doc page, is refused", () => {
-    const d = deps();
-    expect(openTraceTab(d, { ...docTab, topFrame: false }, "run_1")).toMatchObject({ ok: false });
-    expect(openTraceTab(d, { ...docTab, frameUrl: "https://ed.example/app" }, "run_1")).toMatchObject({ ok: false });
-    expect(openTraceTab(d, { ...docTab, frameUrl: undefined }, "run_1")).toMatchObject({ ok: false });
-    expect(d.newTraceTab).not.toHaveBeenCalled();
   });
 
   it("rejects invalid ids without touching tabs", () => {
@@ -76,31 +53,30 @@ describe("traces:open", () => {
 });
 
 describe("traces:save / traces:read sender rules", () => {
-  // webContents ids: 1 panel, 2 editor tab, 3 trace tab, 4 browser tab / anything else
-  function ipcDeps(): TraceIpcDeps & { store: { save: ReturnType<typeof vi.fn>; read: ReturnType<typeof vi.fn>; list: ReturnType<typeof vi.fn> } } {
+  // webContents ids: 1 panel, 3 trace tab, 4 browser tab / anything else
+  function ipcDeps(): TraceIpcDeps & { store: { save: ReturnType<typeof vi.fn>; read: ReturnType<typeof vi.fn> } } {
     return {
-      store: { save: vi.fn(async () => ({ id: "t1" })), read: vi.fn(async () => ({ error: "trace not found" })), list: vi.fn(async () => ({ traces: [] })) },
+      store: { save: vi.fn(async () => ({ id: "t1" })), read: vi.fn(async () => ({ error: "trace not found" })) },
       isPanel: (id) => id === 1,
-      isEditorTab: (id) => id === 2,
       isTraceTab: (id) => id === 3,
     };
   }
 
-  it("save: the panel and editor tabs only", async () => {
+  it("save: the panel only", async () => {
     const d = ipcDeps();
     expect(await handleTraceSave(d, 1, {})).toEqual({ id: "t1" });
-    expect(await handleTraceSave(d, 2, {})).toEqual({ id: "t1" });
     expect(await handleTraceSave(d, 3, {})).toHaveProperty("error");
     expect(await handleTraceSave(d, 4, {})).toHaveProperty("error");
-    expect(d.store.save).toHaveBeenCalledTimes(2);
+    expect(d.store.save).toHaveBeenCalledTimes(1);
   });
 
-  it("read: trace tabs, the panel and editor tabs; nobody else", async () => {
+  it("read: trace tabs and the panel; nobody else", async () => {
     const d = ipcDeps();
-    for (const sender of [1, 2, 3]) expect(await handleTraceRead(d, sender, "t1")).toEqual({ error: "trace not found" });
-    expect(d.store.read).toHaveBeenCalledTimes(3);
+    for (const sender of [1, 3]) expect(await handleTraceRead(d, sender, "t1")).toEqual({ error: "trace not found" });
+    expect(d.store.read).toHaveBeenCalledTimes(2);
     expect(await handleTraceRead(d, 4, "t1")).toHaveProperty("error");
-    expect(d.store.read).toHaveBeenCalledTimes(3);
+    expect(await handleTraceRead(d, 2, "t1")).toHaveProperty("error");
+    expect(d.store.read).toHaveBeenCalledTimes(2);
   });
 
   it("read: forwards only a plain { frames: boolean } option", async () => {
@@ -125,29 +101,6 @@ describe("traces:save / traces:read sender rules", () => {
     d.store.read.mockImplementation(async () => { throw new Error("disk"); });
     expect(await handleTraceSave(d, 1, {})).toEqual({ error: "disk" });
     expect(await handleTraceRead(d, 1, "t1")).toEqual({ error: "disk" });
-  });
-});
-
-describe("traces:list sender rules", () => {
-  const mk = (list = vi.fn(async () => ({ traces: [] }))): TraceIpcDeps => ({
-    store: { save: vi.fn(), read: vi.fn(), list } as unknown as TraceIpcDeps["store"],
-    isPanel: (id) => id === 1,
-    isEditorTab: (id) => id === 2,
-    isTraceTab: (id) => id === 3,
-  });
-
-  it("same senders as traces:read: panel, editor tab, trace tab", async () => {
-    const list = vi.fn(async () => ({ traces: [] }));
-    const d = mk(list);
-    expect(await handleTraceList(d, 1)).toEqual({ traces: [] });
-    expect(await handleTraceList(d, 2)).toEqual({ traces: [] });
-    expect(await handleTraceList(d, 3)).toEqual({ traces: [] });
-    expect(await handleTraceList(d, 4)).toEqual({ error: "traces:list is not allowed from this sender" });
-    expect(list).toHaveBeenCalledTimes(3);
-  });
-
-  it("a rejecting store comes back as an error value", async () => {
-    expect(await handleTraceList(mk(vi.fn(async () => Promise.reject(new Error("disk")))), 1)).toEqual({ error: "disk" });
   });
 });
 

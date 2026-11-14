@@ -2,40 +2,22 @@ import { describe, expect, it } from "vitest";
 import { resolveWindowTheme } from "../src/main/windowTheme";
 
 describe("resolveWindowTheme", () => {
-  it("uses the system theme before any editor reported", () => {
-    expect(resolveWindowTheme({ activeTheme: null, remembered: null, system: "light" })).toEqual({ theme: "light", remembered: null });
+  it("uses the fallback before the panel reported", () => {
+    expect(resolveWindowTheme(null, "light")).toBe("light");
   });
 
-  it("an editor theme wins and is remembered", () => {
-    expect(resolveWindowTheme({ activeTheme: "dark", remembered: null, system: "light" })).toEqual({ theme: "dark", remembered: "dark" });
-    expect(resolveWindowTheme({ activeTheme: "light", remembered: "dark", system: "dark" })).toEqual({ theme: "light", remembered: "light" });
-  });
-
-  it("keeps the remembered editor theme with no editor tab, ignoring the system theme", () => {
-    expect(resolveWindowTheme({ activeTheme: null, remembered: "dark", system: "light" })).toEqual({ theme: "dark", remembered: "dark" });
+  it("the panel's theme always wins over the fallback", () => {
+    expect(resolveWindowTheme("dark", "light")).toBe("dark");
+    expect(resolveWindowTheme("light", "dark")).toBe("light");
   });
 });
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { adoptPanelTheme, contentBackground, FALLBACK_THEME, glassTint, isPanelDocument, ISLAND_BG, GLASS_ALPHA_DIFFERENT, GLASS_ALPHA_SAME } from "../src/main/windowTheme";
-
-describe("adoptPanelTheme", () => {
-  it("adopts the panel theme until an editor reported", () => {
-    expect(adoptPanelTheme({ remembered: null, fromPanel: false }, "dark", 0)).toEqual({ remembered: "dark", fromPanel: true, changed: true });
-    expect(adoptPanelTheme({ remembered: "dark", fromPanel: true }, "light", 1)).toEqual({ remembered: "light", fromPanel: true, changed: true });
-    expect(adoptPanelTheme({ remembered: "dark", fromPanel: true }, "dark", 1).changed).toBe(false);
-  });
-  it("never overrides an editor's report while an editor tab exists", () => {
-    expect(adoptPanelTheme({ remembered: "light", fromPanel: false }, "dark", 2)).toEqual({ remembered: "light", fromPanel: false, changed: false });
-  });
-  it("lets the panel win again when there are zero editor tabs (stale editor theme)", () => {
-    expect(adoptPanelTheme({ remembered: "light", fromPanel: false }, "dark", 0)).toEqual({ remembered: "dark", fromPanel: true, changed: true });
-  });
-});
+import { contentBackground, FALLBACK_THEME, glassTint, isPanelDocument, ISLAND_BG, GLASS_ALPHA_DIFFERENT, GLASS_ALPHA_SAME } from "../src/main/windowTheme";
 
 describe("window colours", () => {
-  it("content background = the island colour (frontend panel surface)", () => {
+  it("content background = the island colour (ui panel surface)", () => {
     expect(contentBackground("dark")).toBe("#2a2a2a");
     expect(contentBackground("light")).toBe("#ffffff");
   });
@@ -56,26 +38,31 @@ describe("window colours", () => {
 });
 
 describe("isPanelDocument", () => {
-  const panel = "https://x.test/agent";
+  const panel = "app://sideform/agent";
   it("accepts the panel page and subpaths, rejects others", () => {
-    expect(isPanelDocument("https://x.test/agent", panel)).toBe(true);
-    expect(isPanelDocument("https://x.test/agent/chat/1?q=1", panel)).toBe(true);
-    expect(isPanelDocument("https://x.test/app", panel)).toBe(false);
-    expect(isPanelDocument("https://x.test/agentx", panel)).toBe(false);
-    expect(isPanelDocument("https://evil.test/agent", panel)).toBe(false);
-    expect(isPanelDocument("file:///app/assets/offline.html", panel)).toBe(false);
+    expect(isPanelDocument("app://sideform/agent", panel)).toBe(true);
+    expect(isPanelDocument("app://sideform/agent/chat/1?q=1", panel)).toBe(true);
+    expect(isPanelDocument("app://sideform/settings", panel)).toBe(false);
+    expect(isPanelDocument("app://sideform/agentx", panel)).toBe(false);
+    expect(isPanelDocument("app://evil/agent", panel)).toBe(false);
+    expect(isPanelDocument("https://sideform/agent", panel)).toBe(false);
+    expect(isPanelDocument("file:///app/index.html", panel)).toBe(false);
     expect(isPanelDocument("not a url", panel)).toBe(false);
+  });
+  it("works against a dev server origin", () => {
+    expect(isPanelDocument("http://localhost:5174/agent/x", "http://localhost:5174/agent")).toBe(true);
+    expect(isPanelDocument("http://localhost:5175/agent", "http://localhost:5174/agent")).toBe(false);
   });
 });
 
 describe("glassTint", () => {
-  it("is light-handed when the editor theme matches the OS, stronger when it differs", () => {
+  it("is light-handed when the theme matches the OS, stronger when it differs", () => {
     expect(glassTint("light", false).alpha).toBe(GLASS_ALPHA_SAME);
     expect(glassTint("dark", true).alpha).toBe(GLASS_ALPHA_SAME);
     expect(glassTint("light", true).alpha).toBe(GLASS_ALPHA_DIFFERENT);
     expect(glassTint("dark", false).alpha).toBe(GLASS_ALPHA_DIFFERENT);
   });
-  it("uses the editor theme's colour", () => {
+  it("uses the theme's colour", () => {
     expect(glassTint("light", true).color).toMatch(/^rgba\(244, 245, 248, /);
     expect(glassTint("dark", false).color).toMatch(/^rgba\(28, 28, 30, /);
   });

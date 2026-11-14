@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   TabManager,
-  resolveMcpActiveTab,
   shouldFocusAddressBar,
   parseReorderPayload,
   type TabKind,
@@ -89,13 +88,13 @@ describe("TabManager", () => {
         views.push(v);
         return v;
       },
-      editorUrl: "https://pen-editor.onrender.com",
+      uiOrigin: "app://sideform",
       onStateChanged: (s) => states.push(s),
     });
   });
 
   it("loading flag follows the view, and pushes state only when it changes", () => {
-    const e = tm.newTab();
+    const e = tm.newTab("settings");
     const b = tm.newTab("browser");
     expect(tm.getSnapshot().tabs.every((t) => !t.loading)).toBe(true);
     const before = states.length;
@@ -108,7 +107,7 @@ describe("TabManager", () => {
     views[1].emitLoading(false);
     expect(states.length).toBe(before + 2);
     expect(tm.getSnapshot().tabs.find((t) => t.id === b)?.loading).toBeFalsy();
-    views[0].emitLoading(true); // editor tabs too
+    views[0].emitLoading(true); // page tabs too
     expect(tm.getSnapshot().tabs.find((t) => t.id === e)?.loading).toBe(true);
   });
 
@@ -123,34 +122,34 @@ describe("TabManager", () => {
         });
         return v;
       },
-      editorUrl: "https://pen-editor.onrender.com",
+      uiOrigin: "app://sideform",
       onStateChanged: (s) => seen.push(s),
     });
-    m.newTab("editor", undefined, { activate: false });
+    m.newTab("settings", undefined, { activate: false });
     // No snapshot lacking the new tab: every emitted snapshot holds it, and carries loading: true.
     expect(seen.length).toBeGreaterThan(0);
     for (const s of seen) expect(s.tabs).toHaveLength(1);
     expect(seen[seen.length - 1].tabs[0].loading).toBe(true);
   });
 
-  it("newTab loads the editor url and becomes active", () => {
+  it("newTab defaults to a browser tab: loads nothing, titled New Tab, becomes active", () => {
     const id = tm.newTab();
-    expect(views[0].loadURL).toHaveBeenCalledWith("https://pen-editor.onrender.com");
+    expect(views[0].loadURL).not.toHaveBeenCalled();
     expect(tm.getSnapshot().activeId).toBe(id);
     expect(tm.count()).toBe(1);
-    expect(tm.getSnapshot().tabs[0].title).toBe("Untitled");
-    expect(tm.getSnapshot().tabs[0].kind).toBe("editor");
-    expect(tm.getSnapshot().activeKind).toBe("editor");
+    expect(tm.getSnapshot().tabs[0].title).toBe("New Tab");
+    expect(tm.getSnapshot().tabs[0].kind).toBe("browser");
+    expect(tm.getSnapshot().activeKind).toBe("browser");
   });
 
   describe("moveTab", () => {
     const order = () => tm.getSnapshot().tabs.map((t) => t.id);
     let a: number, b: number, c: number, d: number;
     beforeEach(() => {
-      a = tm.newTab();
+      a = tm.newTab("settings");
       b = tm.newTab("browser");
-      c = tm.newTab();
-      d = tm.newTab("doc");
+      c = tm.newTab("settings");
+      d = tm.newTab("history");
       tm.activate(b);
       states.length = 0;
     });
@@ -193,7 +192,7 @@ describe("TabManager", () => {
     });
 
     it("is anchored on ids: a tab opened or closed meanwhile does not misplace it", () => {
-      const e = tm.newTab(); // appended after d
+      const e = tm.newTab("settings"); // appended after d
       tm.moveTab(a, d);
       expect(order()).toEqual([b, c, a, d, e]);
       tm.closeTab(c);
@@ -210,10 +209,6 @@ describe("TabManager", () => {
       expect(tm.getSnapshot().activeId).toBe(a); // wraps backwards from b
     });
 
-    it("editor tabs info follows the strip order (the canvas link sorts by activation itself)", () => {
-      tm.moveTab(c, a);
-      expect(tm.editorTabsInfo().tabs.map((t) => t.webContentsId)).toEqual([tm.webContentsIdOf(c), tm.webContentsIdOf(a)]);
-    });
   });
 
   describe("parseReorderPayload", () => {
@@ -231,234 +226,9 @@ describe("TabManager", () => {
     });
   });
 
-  describe("workflow tabs", () => {
-    it("load /workflow?id=...&chat=off, start titled Workflow, follow the page title and the theme", () => {
-      const id = tm.newTab("workflow", undefined, { workflowId: "wf_abc" });
-      expect(views[0].loadURL).toHaveBeenCalledWith("https://pen-editor.onrender.com/workflow?id=wf_abc&chat=off");
-      expect(tm.getSnapshot()).toMatchObject({ activeId: id, activeKind: "workflow" });
-      expect(tm.getSnapshot().tabs[0]).toMatchObject({ kind: "workflow", title: "Workflow" });
-      views[0].emitTitle("Release checklist");
-      expect(tm.getSnapshot().tabs[0].title).toBe("Release checklist");
-      views[0].emitTheme("dark");
-      expect(tm.getSnapshot().activeTheme).toBe("dark");
-    });
 
-    it("a tab without an id loads /workflow?new=1&chat=off", () => {
-      tm.newTab("workflow");
-      expect(views[0].loadURL).toHaveBeenCalledWith("https://pen-editor.onrender.com/workflow?new=1&chat=off");
-    });
 
-    it("findWorkflowTab matches by live URL, falling back to the opening id; never matches doc tabs", () => {
-      const a = tm.newTab("workflow", undefined, { workflowId: "wf_a" });
-      tm.newTab("doc", undefined, { docId: "wf_a" });
-      expect(tm.findWorkflowTab("wf_a")).toBe(a);
-      expect(tm.findWorkflowTab("wf_zzz")).toBeNull();
-      vi.mocked(views[0].getURL).mockReturnValue("https://pen-editor.onrender.com/workflow?id=wf_b&chat=off");
-      expect(tm.findWorkflowTab("wf_a")).toBeNull();
-      expect(tm.findWorkflowTab("wf_b")).toBe(a);
-    });
 
-    it("is not a canvas tab", () => {
-      tm.newTab("workflow", undefined, { workflowId: "wf_a" });
-      expect(tm.isEditorTab(views[0].getWebContentsId())).toBe(false);
-    });
-  });
-
-  describe("doc tabs", () => {
-    it("load /doc?chat=off (with the id), start titled Document, follow the page title and the theme", () => {
-      const id = tm.newTab("doc", undefined, { docId: "d1" });
-      expect(views[0].loadURL).toHaveBeenCalledWith("https://pen-editor.onrender.com/doc?id=d1&chat=off");
-      let snap = tm.getSnapshot();
-      expect(snap).toMatchObject({ activeId: id, activeKind: "doc" });
-      expect(snap.tabs[0]).toMatchObject({ kind: "doc", title: "Document" });
-      views[0].emitTitle("My notes");
-      expect(tm.getSnapshot().tabs[0].title).toBe("My notes");
-      views[0].emitTheme("dark");
-      snap = tm.getSnapshot();
-      expect(snap.activeTheme).toBe("dark");
-    });
-
-    it("isDocViewer needs a doc tab on /doc of the editor origin, by the view URL AND the frame URL", () => {
-      tm.newTab("doc");
-      tm.newTab("editor");
-      const getUrl = (i: number) => views[i].getURL as unknown as ReturnType<typeof vi.fn>;
-      const doc = "https://pen-editor.onrender.com/doc?id=d1&chat=off";
-      const docWc = views[0].getWebContentsId();
-      getUrl(0).mockReturnValue(doc);
-      getUrl(1).mockReturnValue("https://pen-editor.onrender.com/doc");
-      expect(tm.isDocViewer(docWc, doc)).toBe(true);
-      // not a doc tab
-      expect(tm.isDocViewer(views[1].getWebContentsId(), doc)).toBe(false);
-      // the frame's own document is not the doc page / not the editor origin / unknown
-      expect(tm.isDocViewer(docWc, "https://pen-editor.onrender.com/app")).toBe(false);
-      expect(tm.isDocViewer(docWc, "https://evil.example/doc")).toBe(false);
-      expect(tm.isDocViewer(docWc, undefined)).toBe(false);
-      // the view navigated away
-      getUrl(0).mockReturnValue("https://pen-editor.onrender.com/app");
-      expect(tm.isDocViewer(docWc, doc)).toBe(false);
-      getUrl(0).mockReturnValue("https://evil.example/doc");
-      expect(tm.isDocViewer(docWc, doc)).toBe(false);
-    });
-
-    it("a doc tab without an id opens a NEW document (new=1) and never matches findDocTab", () => {
-      tm.newTab("doc");
-      expect(views[0].loadURL).toHaveBeenCalledWith("https://pen-editor.onrender.com/doc?new=1&chat=off");
-      expect(tm.findDocTab("new")).toBeNull();
-      expect(tm.findDocTab("1")).toBeNull();
-      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("https://pen-editor.onrender.com/doc?new=1&chat=off");
-      expect(tm.findDocTab("x")).toBeNull();
-    });
-
-    it("are not canvas tabs: not in the canvas-link list, not the MCP active tab, not lastEditor", () => {
-      const editor = tm.newTab("editor");
-      const doc = tm.newTab("doc");
-      expect(tm.getSnapshot().activeKind).toBe("doc");
-      expect(tm.editorTabsInfo()).toEqual({
-        tabs: [{ webContentsId: 1, title: "Untitled" }],
-        activeWebContentsId: null,
-      });
-      expect(tm.isEditorTab(2)).toBe(false);
-      expect(tm.getSnapshot().mcpActiveWebContentsId).toBe(1);
-      tm.activateEditorByWebContentsId(2);
-      expect(tm.getSnapshot().activeId).toBe(doc);
-      tm.closeTab(editor);
-      expect(tm.getSnapshot().mcpActiveWebContentsId).toBeNull();
-    });
-
-    it("a lone doc tab never becomes the MCP target", () => {
-      tm.newTab("doc");
-      expect(tm.getSnapshot().mcpActiveWebContentsId).toBeNull();
-      expect(tm.editorTabsInfo().tabs).toEqual([]);
-    });
-
-    it("findDocTab matches the opened id, then the live URL once the view reports one", () => {
-      const a = tm.newTab("doc", undefined, { docId: "a" });
-      tm.newTab("doc", undefined, { docId: "b" });
-      tm.newTab("editor");
-      expect(tm.findDocTab("a")).toBe(a);
-      expect(tm.findDocTab("zzz")).toBeNull();
-      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("https://pen-editor.onrender.com/doc?id=c&chat=off");
-      expect(tm.findDocTab("a")).toBeNull();
-      expect(tm.findDocTab("c")).toBe(a);
-    });
-  });
-
-  describe("canvas tabs by id", () => {
-    it("newTab(editor, canvasId) loads canvas=<id> and findCanvasTab matches it", () => {
-      const a = tm.newTab("editor", undefined, { canvasId: "cv_a" });
-      tm.newTab("editor");
-      expect(views[0].loadURL).toHaveBeenCalledWith("https://pen-editor.onrender.com/?canvas=cv_a&chat=off".replace("/?", "/?"));
-      expect(tm.findCanvasTab("cv_a")).toBe(a);
-      expect(tm.findCanvasTab("zzz")).toBeNull();
-    });
-
-    it("the live URL wins once the view reports one (the frontend adds canvas= by replaceState)", () => {
-      const a = tm.newTab("editor");
-      const b = tm.newTab("editor", undefined, { canvasId: "cv_b" });
-      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("https://pen-editor.onrender.com/?canvas=cv_new&chat=off");
-      expect(tm.findCanvasTab("cv_new")).toBe(a);
-      expect(tm.findCanvasTab("cv_b")).toBe(b);
-    });
-
-    it("falls back to the opening id when the live URL has no canvas param", () => {
-      const a = tm.newTab("editor", undefined, { canvasId: "cv_open" });
-      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("https://pen-editor.onrender.com/?chat=off");
-      expect(tm.findCanvasTab("cv_open")).toBe(a);
-      expect(tm.findCanvasTab("other")).toBeNull();
-    });
-
-    it("canvasTabCount counts editor tabs only and flushCanvasTabs reaches each of them", async () => {
-      tm.newTab("editor");
-      tm.newTab("editor");
-      tm.newTab("doc", undefined, { docId: "d1" });
-      expect(tm.canvasTabCount()).toBe(2);
-      const flush = vi.fn(async () => undefined);
-      for (const v of views.slice(0, 3)) (v as unknown as { flushCanvas?: unknown }).flushCanvas = flush;
-      await tm.flushCanvasTabs();
-      expect(flush).toHaveBeenCalledTimes(2);
-    });
-
-    it("ignores doc tabs with the same id", () => {
-      tm.newTab("doc", undefined, { docId: "same" });
-      expect(tm.findCanvasTab("same")).toBeNull();
-    });
-  });
-
-  describe("fileTargetOf", () => {
-    const setUrl = (i: number, url: string) => (views[i].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue(url);
-
-    it("canvas tab: the live canvas= wins, else the opened id, else null", () => {
-      const a = tm.newTab("editor", undefined, { canvasId: "cv_a" });
-      expect(tm.fileTargetOf(a)).toEqual({ kind: "canvas", id: "cv_a" });
-      setUrl(0, "https://pen-editor.onrender.com/?canvas=cv_live&chat=off");
-      expect(tm.fileTargetOf(a)).toEqual({ kind: "canvas", id: "cv_live" });
-      setUrl(0, "https://pen-editor.onrender.com/?chat=off");
-      expect(tm.fileTargetOf(a)).toEqual({ kind: "canvas", id: "cv_a" });
-      const fresh = tm.newTab("editor");
-      expect(tm.fileTargetOf(fresh)).toBeNull();
-    });
-
-    it("doc tab: the opened id only while the view has no URL; the live URL wins after", () => {
-      const d = tm.newTab("doc", undefined, { docId: "d1" });
-      expect(tm.fileTargetOf(d)).toEqual({ kind: "doc", id: "d1" });
-      setUrl(0, "https://pen-editor.onrender.com/doc?id=live&chat=off");
-      expect(tm.fileTargetOf(d)).toEqual({ kind: "doc", id: "live" });
-      setUrl(0, "https://pen-editor.onrender.com/doc?new=1&chat=off");
-      expect(tm.fileTargetOf(d)).toBeNull();
-      // Offline fallback page: the opened id still names a file on disk.
-      setUrl(0, "file:///app/assets/offline.html");
-      expect(tm.fileTargetOf(d)).toEqual({ kind: "doc", id: "d1" });
-      const fresh = tm.newTab("doc");
-      expect(tm.fileTargetOf(fresh)).toBeNull();
-    });
-
-    it("workflow tab: the live id wins, else the opened id; only a valid id", () => {
-      const w = tm.newTab("workflow", undefined, { workflowId: "wf_a1" });
-      expect(tm.fileTargetOf(w)).toEqual({ kind: "workflow", id: "wf_a1" });
-      setUrl(0, "https://pen-editor.onrender.com/workflow?id=wf_live&chat=off");
-      expect(tm.fileTargetOf(w)).toEqual({ kind: "workflow", id: "wf_live" });
-      // On the workflow page without an id (deleted workflow, empty state): no file.
-      setUrl(0, "https://pen-editor.onrender.com/workflow?new=1&chat=off");
-      expect(tm.fileTargetOf(w)).toBeNull();
-      // Offline fallback page: the opened id still names a file on disk.
-      setUrl(0, "file:///app/assets/offline.html");
-      expect(tm.fileTargetOf(w)).toEqual({ kind: "workflow", id: "wf_a1" });
-      setUrl(0, "https://pen-editor.onrender.com/workflow?id=../x&chat=off");
-      expect(tm.fileTargetOf(w)).toBeNull();
-      expect(tm.fileTargetOf(tm.newTab("workflow"))).toBeNull();
-    });
-
-    it("isWorkflowTab is true only for workflow tabs", () => {
-      tm.newTab("workflow");
-      tm.newTab("doc");
-      expect(tm.isWorkflowTab(views[0].getWebContentsId())).toBe(true);
-      expect(tm.isWorkflowTab(views[1].getWebContentsId())).toBe(false);
-    });
-
-    it("trace tab: the live URL, else the opened id", () => {
-      const t = tm.newTab("trace", undefined, { traceId: "tr1" });
-      expect(tm.fileTargetOf(t)).toEqual({ kind: "trace", id: "tr1" });
-      setUrl(0, "https://pen-editor.onrender.com/trace/live");
-      expect(tm.fileTargetOf(t)).toEqual({ kind: "trace", id: "live" });
-      setUrl(0, "file:///app/assets/offline.html");
-      expect(tm.fileTargetOf(t)).toEqual({ kind: "trace", id: "tr1" });
-    });
-
-    it("an invalid id from the live URL gives null", () => {
-      const a = tm.newTab("editor");
-      setUrl(0, "https://pen-editor.onrender.com/?canvas=bad%20id&chat=off");
-      expect(tm.fileTargetOf(a)).toBeNull();
-    });
-
-    it("kinds without a file and unknown tabs give null", () => {
-      const w = tm.newTab("workflow", undefined, { workflowId: "w1" });
-      const b = tm.newTab("browser");
-      const s = tm.openSettingsTab();
-      const p = tm.openPasswordsTab();
-      const h = tm.openHistoryTab();
-      for (const id of [w, b, s, p, h, 9999]) expect(tm.fileTargetOf(id)).toBeNull();
-    });
-  });
 
   describe("passwords tab", () => {
     it("opens as a local tab: titled Passwords, active, loads no URL", () => {
@@ -473,24 +243,21 @@ describe("TabManager", () => {
 
     it("is a singleton: a second open activates the existing tab", () => {
       const first = tm.openPasswordsTab({ focus: true });
-      const editor = tm.newTab("editor");
-      expect(tm.getSnapshot().activeId).toBe(editor);
+      const other = tm.newTab("browser");
+      expect(tm.getSnapshot().activeId).toBe(other);
       expect(tm.openPasswordsTab({ focus: true })).toBe(first);
       expect(tm.getSnapshot()).toMatchObject({ activeId: first, activeKind: "passwords" });
       expect(views).toHaveLength(2);
     });
 
-    it("is not a page tab, a canvas tab or an editor theme source", () => {
-      tm.newTab("editor");
+    it("is not a page tab (those load the ui with the tab preload)", () => {
+      tm.newTab("settings");
       views[0].getWebContentsId.mockReturnValue(10);
       tm.openPasswordsTab();
       views[1].getWebContentsId.mockReturnValue(11);
       expect(tm.isPageTab(10)).toBe(true);
       expect(tm.isPageTab(11)).toBe(false);
-      expect(tm.isEditorTab(11)).toBe(false);
-      expect(tm.editorTabsInfo().tabs).toHaveLength(1);
-      views[0].emitTheme("dark");
-      expect(tm.getSnapshot()).toMatchObject({ activeKind: "passwords", activeTheme: "dark" });
+      expect(tm.getSnapshot()).toMatchObject({ activeKind: "passwords" });
     });
 
     it("can be reopened after it was closed", () => {
@@ -516,25 +283,22 @@ describe("TabManager", () => {
 
     it("is a singleton: a second open activates the existing tab", () => {
       const first = tm.openHistoryTab({ focus: true });
-      const editor = tm.newTab("editor");
-      expect(tm.getSnapshot().activeId).toBe(editor);
+      const other = tm.newTab("browser");
+      expect(tm.getSnapshot().activeId).toBe(other);
       expect(tm.openHistoryTab({ focus: true })).toBe(first);
       expect(tm.getSnapshot()).toMatchObject({ activeId: first, activeKind: "history" });
       expect(views).toHaveLength(2);
     });
 
-    it("is not a page tab, a canvas tab or an editor theme source, and is not the Passwords tab", () => {
-      tm.newTab("editor");
+    it("is not a page tab, and is not the Passwords tab", () => {
+      tm.newTab("settings");
       views[0].getWebContentsId.mockReturnValue(10);
       tm.openHistoryTab();
       views[1].getWebContentsId.mockReturnValue(11);
       expect(tm.isPageTab(10)).toBe(true);
       expect(tm.isPageTab(11)).toBe(false);
-      expect(tm.isEditorTab(11)).toBe(false);
-      expect(tm.editorTabsInfo().tabs).toHaveLength(1);
       expect(tm.findPasswordsTab()).toBeNull();
-      views[0].emitTheme("dark");
-      expect(tm.getSnapshot()).toMatchObject({ activeKind: "history", activeTheme: "dark" });
+      expect(tm.getSnapshot()).toMatchObject({ activeKind: "history" });
     });
 
     it("can be reopened after it was closed", () => {
@@ -546,42 +310,42 @@ describe("TabManager", () => {
   });
 
   describe("settings tab", () => {
-    it("loads /settings?chat=off, starts titled Settings, follows the page title and the theme", () => {
+    it("loads /settings on the ui origin, starts titled Settings and follows the page title", () => {
       const id = tm.openSettingsTab();
-      expect(views[0].loadURL).toHaveBeenCalledWith("https://pen-editor.onrender.com/settings?chat=off");
-      let snap = tm.getSnapshot();
+      expect(views[0].loadURL).toHaveBeenCalledWith("app://sideform/settings");
+      const snap = tm.getSnapshot();
       expect(snap).toMatchObject({ activeId: id, activeKind: "settings" });
       expect(snap.tabs[0]).toMatchObject({ kind: "settings", title: "Settings" });
-      views[0].emitTitle("Settings - Account");
-      expect(tm.getSnapshot().tabs[0].title).toBe("Settings - Account");
-      views[0].emitTheme("dark");
-      snap = tm.getSnapshot();
-      expect(snap.activeTheme).toBe("dark");
+      views[0].emitTitle("Settings - Browser");
+      expect(tm.getSnapshot().tabs[0].title).toBe("Settings - Browser");
     });
 
     it("opens at a valid section and ignores an invalid one", () => {
-      tm.openSettingsTab("agent");
-      expect(views[0].loadURL).toHaveBeenCalledWith("https://pen-editor.onrender.com/settings?chat=off&section=agent");
+      tm.openSettingsTab("browser");
+      expect(views[0].loadURL).toHaveBeenCalledWith("app://sideform/settings?section=browser");
       tm.closeTab(tm.findSettingsTab() as number);
       tm.openSettingsTab("bogus");
-      expect(views[1].loadURL).toHaveBeenCalledWith("https://pen-editor.onrender.com/settings?chat=off");
+      expect(views[1].loadURL).toHaveBeenCalledWith("app://sideform/settings");
+      tm.closeTab(tm.findSettingsTab() as number);
+      tm.openSettingsTab("account"); // a section of the old frontend: gone
+      expect(views[2].loadURL).toHaveBeenCalledWith("app://sideform/settings");
     });
 
     it("is a singleton: a second open activates the existing tab, a section is sent to it (no reload)", () => {
       const first = tm.openSettingsTab();
-      const editor = tm.newTab("editor");
-      expect(tm.getSnapshot().activeId).toBe(editor);
+      const other = tm.newTab("browser");
+      expect(tm.getSnapshot().activeId).toBe(other);
       expect(tm.openSettingsTab()).toBe(first);
       expect(tm.getSnapshot()).toMatchObject({ activeId: first, activeKind: "settings" });
       expect(views).toHaveLength(2);
       expect(views[0].loadURL).toHaveBeenCalledTimes(1);
       expect(views[0].sendSettingsSection).not.toHaveBeenCalled();
-      tm.activate(editor);
-      expect(tm.openSettingsTab("shortcuts")).toBe(first);
+      tm.activate(other);
+      expect(tm.openSettingsTab("appearance")).toBe(first);
       expect(views).toHaveLength(2);
       expect(views[0].loadURL).toHaveBeenCalledTimes(1);
       expect(views[0].sendSettingsSection).toHaveBeenCalledTimes(1);
-      expect(views[0].sendSettingsSection).toHaveBeenCalledWith("shortcuts");
+      expect(views[0].sendSettingsSection).toHaveBeenCalledWith("appearance");
       expect(tm.getSnapshot().activeId).toBe(first);
       expect(tm.findSettingsTab()).toBe(first);
     });
@@ -593,16 +357,28 @@ describe("TabManager", () => {
       expect(views[0].loadURL).toHaveBeenCalledTimes(1);
     });
 
-    it("is not a canvas tab, and isPageTab matches by webContents id", () => {
-      tm.newTab("editor");
+    it("isPageTab matches the trace and settings tabs by webContents id", () => {
+      tm.newTab("trace", undefined, { traceId: "t1" });
       tm.openSettingsTab();
       tm.newTab("browser");
-      expect(tm.editorTabsInfo().tabs).toHaveLength(1);
-      expect(tm.isEditorTab(views[1].getWebContentsId())).toBe(false);
       expect(tm.isPageTab(views[0].getWebContentsId())).toBe(true);
       expect(tm.isPageTab(views[1].getWebContentsId())).toBe(true);
       expect(tm.isPageTab(views[2].getWebContentsId())).toBe(false);
       expect(tm.isPageTab(99)).toBe(false);
+    });
+
+    it("isSettingsViewer needs a settings tab on /settings of the ui origin, by the view URL AND the frame URL", () => {
+      tm.openSettingsTab();
+      const wc = views[0].getWebContentsId();
+      const url = views[0].getURL as unknown as ReturnType<typeof vi.fn>;
+      url.mockReturnValue("app://sideform/settings?section=browser");
+      expect(tm.isSettingsViewer(wc, "app://sideform/settings?section=browser")).toBe(true);
+      expect(tm.isSettingsViewer(wc, "app://sideform/agent")).toBe(false);
+      expect(tm.isSettingsViewer(wc, "https://evil.example/settings")).toBe(false);
+      expect(tm.isSettingsViewer(wc, undefined)).toBe(false);
+      url.mockReturnValue("https://evil.example/settings");
+      expect(tm.isSettingsViewer(wc, "app://sideform/settings")).toBe(false);
+      expect(tm.isSettingsViewer(99, "app://sideform/settings")).toBe(false);
     });
 
     it("reopens after the tab is closed", () => {
@@ -614,22 +390,25 @@ describe("TabManager", () => {
   });
 
   describe("trace tabs", () => {
-    it("load /trace/<id>?src=local&chat=off, start titled Trace, follow the page title and the theme", () => {
+    it("load /trace/<id>?src=local on the ui origin, start titled Trace and follow the page title", () => {
       const id = tm.newTab("trace", undefined, { traceId: "t_1" });
-      expect(views[0].loadURL).toHaveBeenCalledWith("https://pen-editor.onrender.com/trace/t_1?src=local&chat=off");
+      expect(views[0].loadURL).toHaveBeenCalledWith("app://sideform/trace/t_1?src=local");
       expect(tm.getSnapshot()).toMatchObject({ activeId: id, activeKind: "trace" });
       expect(tm.getSnapshot().tabs[0]).toMatchObject({ kind: "trace", title: "Trace" });
       views[0].emitTitle("Run: find pricing");
       expect(tm.getSnapshot().tabs[0].title).toBe("Run: find pricing");
-      views[0].emitTheme("dark");
-      expect(tm.getSnapshot().activeTheme).toBe("dark");
     });
 
-    it("are not canvas tabs and never the MCP target", () => {
-      tm.newTab("trace", undefined, { traceId: "t1" });
-      expect(tm.editorTabsInfo().tabs).toEqual([]);
-      expect(tm.isEditorTab(views[0].getWebContentsId())).toBe(false);
-      expect(tm.getSnapshot().mcpActiveWebContentsId).toBeNull();
+    it("fileTargetOf: the live URL id wins, else the opened id; only trace tabs have a file", () => {
+      const t = tm.newTab("trace", undefined, { traceId: "a" });
+      expect(tm.fileTargetOf(t)).toEqual({ kind: "trace", id: "a" });
+      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("app://sideform/trace/b?src=local");
+      expect(tm.fileTargetOf(t)).toEqual({ kind: "trace", id: "b" });
+      const b = tm.newTab("browser");
+      const s = tm.openSettingsTab();
+      expect(tm.fileTargetOf(b)).toBeNull();
+      expect(tm.fileTargetOf(s)).toBeNull();
+      expect(tm.fileTargetOf(999)).toBeNull();
     });
 
     it("without a valid trace id no tab and no view is created", () => {
@@ -642,9 +421,9 @@ describe("TabManager", () => {
 
     it("listTraceTabs keeps strip order, prefers the live URL id, flags the active tab and skips non-trace tabs", () => {
       const a = tm.newTab("trace", undefined, { traceId: "a" });
-      tm.newTab("doc", undefined, { docId: "d" });
+      tm.newTab("browser");
       tm.newTab("trace", undefined, { traceId: "b" });
-      (views[2].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("https://pen-editor.onrender.com/trace/z?src=local&chat=off");
+      (views[2].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("app://sideform/trace/z?src=local");
       tm.activate(a);
       expect(tm.listTraceTabs()).toEqual([
         { traceId: "a", title: "Trace", active: true },
@@ -652,18 +431,18 @@ describe("TabManager", () => {
       ]);
     });
 
-    it("findTraceTab falls back to the opened id when the live URL has none (offline page, redirect)", () => {
+    it("findTraceTab falls back to the opened id when the live URL has none (redirect)", () => {
       const a = tm.newTab("trace", undefined, { traceId: "a" });
-      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("file:///app/assets/offline.html");
+      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("about:blank");
       expect(tm.findTraceTab("a")).toBe(a);
     });
 
     it("findTraceTab matches the opened id, then the live URL; isTraceTab matches the webContents id", () => {
       const a = tm.newTab("trace", undefined, { traceId: "a" });
-      tm.newTab("doc", undefined, { docId: "a" });
+      tm.newTab("browser");
       expect(tm.findTraceTab("a")).toBe(a);
       expect(tm.findTraceTab("zzz")).toBeNull();
-      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("https://pen-editor.onrender.com/trace/c?src=local&chat=off");
+      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("app://sideform/trace/c?src=local");
       expect(tm.findTraceTab("a")).toBeNull();
       expect(tm.findTraceTab("c")).toBe(a);
       expect(tm.isTraceTab(views[0].getWebContentsId())).toBe(true);
@@ -671,37 +450,29 @@ describe("TabManager", () => {
       expect(tm.isTraceTab(99)).toBe(false);
     });
 
-    it("isDocTab matches only doc tabs by webContents id", () => {
-      tm.newTab("trace", undefined, { traceId: "a" });
-      tm.newTab("doc", undefined, { docId: "d" });
-      expect(tm.isDocTab(views[0].getWebContentsId())).toBe(false);
-      expect(tm.isDocTab(views[1].getWebContentsId())).toBe(true);
-      expect(tm.isDocTab(99)).toBe(false);
-    });
-
     it("isTraceViewer needs a trace tab that still shows /trace/<id>; isActiveTabWebContents follows the active tab", () => {
       const a = tm.newTab("trace", undefined, { traceId: "a" });
-      const doc = tm.newTab("doc", undefined, { docId: "d" });
+      const other = tm.newTab("browser");
       const traceWc = views[0].getWebContentsId();
-      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("https://pen-editor.onrender.com/trace/a?src=local");
-      (views[1].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("https://pen-editor.onrender.com/trace/a?src=local");
+      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("app://sideform/trace/a?src=local");
+      (views[1].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("app://sideform/trace/a?src=local");
       expect(tm.isTraceViewer(traceWc)).toBe(true);
       expect(tm.isTraceViewer(views[1].getWebContentsId())).toBe(false);
-      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("https://pen-editor.onrender.com/app");
+      (views[0].getURL as unknown as ReturnType<typeof vi.fn>).mockReturnValue("app://sideform/agent");
       expect(tm.isTraceViewer(traceWc)).toBe(false);
       tm.activate(a);
       expect(tm.isActiveTabWebContents(traceWc)).toBe(true);
-      tm.activate(doc);
+      tm.activate(other);
       expect(tm.isActiveTabWebContents(traceWc)).toBe(false);
     });
   });
 
   it("newTab with activate:false opens in the background without activating or emitting an activation", () => {
-    const first = tm.newTab();
+    const first = tm.newTab("settings");
     const browser = tm.newTab("browser");
     tm.activate(first);
     const before = states.length;
-    const bg = tm.newTab("editor", undefined, { activate: false });
+    const bg = tm.newTab("settings", undefined, { activate: false });
     const snap = tm.getSnapshot();
     expect(snap.activeId).toBe(first);
     expect(snap.tabs.map((t) => t.id)).toContain(bg);
@@ -714,15 +485,15 @@ describe("TabManager", () => {
   });
 
   it("second tab hides the first and shows itself", () => {
-    tm.newTab();
-    tm.newTab();
+    tm.newTab("settings");
+    tm.newTab("settings");
     expect(views[0].setVisible).toHaveBeenLastCalledWith(false);
     expect(views[1].setVisible).toHaveBeenLastCalledWith(true);
   });
 
   it("activate switches visibility and focuses", () => {
-    const a = tm.newTab();
-    tm.newTab();
+    const a = tm.newTab("settings");
+    tm.newTab("settings");
     tm.activate(a);
     expect(views[0].setVisible).toHaveBeenLastCalledWith(true);
     expect(views[1].setVisible).toHaveBeenLastCalledWith(false);
@@ -730,8 +501,8 @@ describe("TabManager", () => {
   });
 
   it("activate with focus:false shows the tab without focusing its view", () => {
-    const a = tm.newTab();
-    tm.newTab();
+    const a = tm.newTab("settings");
+    tm.newTab("settings");
     const before = vi.mocked(views[0].focus).mock.calls.length;
     tm.activate(a, { focus: false });
     expect(views[0].setVisible).toHaveBeenLastCalledWith(true);
@@ -742,16 +513,16 @@ describe("TabManager", () => {
   });
 
   it("newTab with focus:false becomes active but is not focused", () => {
-    tm.newTab();
-    const d = tm.newTab("doc", undefined, { docId: "abc", focus: false });
+    tm.newTab("settings");
+    const d = tm.newTab("trace", undefined, { traceId: "abc", focus: false });
     expect(tm.getSnapshot().activeId).toBe(d);
     expect(views[1].setVisible).toHaveBeenLastCalledWith(true);
     expect(views[1].focus).not.toHaveBeenCalled();
   });
 
   it("closeTab destroys the view and activates a neighbor", () => {
-    const a = tm.newTab();
-    const b = tm.newTab();
+    const a = tm.newTab("settings");
+    const b = tm.newTab("settings");
     tm.closeTab(b);
     expect(views[1].destroy).toHaveBeenCalled();
     expect(tm.getSnapshot().activeId).toBe(a);
@@ -759,8 +530,8 @@ describe("TabManager", () => {
   });
 
   it("closeTab does not corrupt state when destroy() throws", () => {
-    const a = tm.newTab();
-    const b = tm.newTab();
+    const a = tm.newTab("settings");
+    const b = tm.newTab("settings");
     views[1].destroy.mockImplementation(() => {
       throw new Error("boom");
     });
@@ -776,9 +547,9 @@ describe("TabManager", () => {
   });
 
   it("next/prev cycle through tabs", () => {
-    const a = tm.newTab();
-    const b = tm.newTab();
-    const c = tm.newTab();
+    const a = tm.newTab("settings");
+    const b = tm.newTab("settings");
+    const c = tm.newTab("settings");
     expect(tm.getSnapshot().activeId).toBe(c);
     tm.nextTab();
     expect(tm.getSnapshot().activeId).toBe(a);
@@ -789,101 +560,21 @@ describe("TabManager", () => {
   });
 
   it("document title changes flow into the snapshot and notify", () => {
-    tm.newTab();
+    tm.newTab("settings");
     views[0].emitTitle("My Design — Pen");
     const last = states[states.length - 1];
     expect(last.tabs[0].title).toBe("My Design — Pen");
   });
 
-  it("reports the active editor theme and follows it when tabs switch", () => {
-    const lightTab = tm.newTab();
-    views[0].emitTheme("light");
-    tm.newTab();
-    views[1].emitTheme("dark");
-    expect(tm.getSnapshot().activeTheme).toBe("dark");
-    tm.activate(lightTab);
-    expect(tm.getSnapshot().activeTheme).toBe("light");
-  });
-
-  // Glass tab bar work, 2026-09-25: a browser tab has no theme of its own
-  // (no preload, so no editor:theme IPC), and used to report `null` —
-  // falling back to the system theme in window.ts and visibly flipping the
-  // bar's color scheme relative to whatever editor tab is open elsewhere in
-  // the strip. `activeTheme` must instead inherit the last-active editor
-  // tab's theme.
-  it("a browser tab inherits the last-active editor tab's theme", () => {
-    const editor = tm.newTab("editor");
-    views[0].emitTheme("dark");
-    tm.newTab("browser");
-    expect(tm.getSnapshot().activeKind).toBe("browser");
-    expect(tm.getSnapshot().activeTheme).toBe("dark");
-    // Activating the editor tab directly still reports its own theme.
-    tm.activate(editor);
-    expect(tm.getSnapshot().activeTheme).toBe("dark");
-  });
-
-  it("updates the snapshot when the last-active editor tab's theme changes while a browser tab is active", () => {
-    tm.newTab("editor");
-    views[0].emitTheme("light");
-    tm.newTab("browser");
-    expect(tm.getSnapshot().activeTheme).toBe("light");
-
-    const before = states.length;
-    views[0].emitTheme("dark");
-    // The theme-change callback on an inactive editor tab must still push a
-    // fresh snapshot — not just update internal state silently.
-    expect(states.length).toBe(before + 1);
-    expect(tm.getSnapshot().activeTheme).toBe("dark");
-    expect(states[states.length - 1].activeTheme).toBe("dark");
-  });
-
-  it("falls back to any editor tab with a known theme when the last-active one has none yet", () => {
-    tm.newTab("editor"); // views[0]
-    views[0].emitTheme("dark");
-    tm.newTab("editor"); // views[1] — now the last-active editor, no theme yet
-    tm.newTab("browser");
-    expect(tm.getSnapshot().activeKind).toBe("browser");
-    expect(tm.getSnapshot().activeTheme).toBe("dark");
-  });
-
-  it("reports null when no editor tab has ever reported a theme", () => {
-    tm.newTab("editor");
-    tm.newTab("browser");
-    expect(tm.getSnapshot().activeKind).toBe("browser");
-    expect(tm.getSnapshot().activeTheme).toBeNull();
-  });
-
-  it("defaults mcpStatus to off and reports it in the snapshot", () => {
-    tm.newTab();
-    expect(tm.getSnapshot().mcpStatus).toBe("off");
-  });
-
-  it("setMcpStatus updates the snapshot and emits a fresh state", () => {
-    tm.newTab();
-    const before = states.length;
-    tm.setMcpStatus("listening");
-    expect(tm.getSnapshot().mcpStatus).toBe("listening");
-    expect(states.length).toBe(before + 1);
-    expect(states[states.length - 1].mcpStatus).toBe("listening");
-  });
-
-  it("setMcpStatus is a no-op (no extra emit) when the status is unchanged", () => {
-    tm.newTab();
-    tm.setMcpStatus("not-published");
-    const before = states.length;
-    tm.setMcpStatus("not-published");
-    expect(states.length).toBe(before);
-  });
-
   it("layout applies the rect it is given (computed by layout.ts) to every tab view", () => {
-    tm.newTab();
+    tm.newTab("settings");
     tm.layout({ x: 1, y: 38, width: 1198, height: 761 });
     expect(views[0].setBounds).toHaveBeenLastCalledWith({ x: 1, y: 38, width: 1198, height: 761 });
   });
 
   it("layoutActive moves only the active tab view, and later tabs get the latest rect", () => {
-    const a = tm.newTab();
-    tm.newTab();
+    const a = tm.newTab("settings");
+    tm.newTab("settings");
     tm.activate(a);
     for (const v of views) v.setBounds.mockClear();
     tm.layoutActive({ x: 100, y: 38, width: 500, height: 700 });
@@ -891,7 +582,7 @@ describe("TabManager", () => {
     expect(views[0].setBounds).toHaveBeenLastCalledWith({ x: 100, y: 38, width: 500, height: 700 });
     expect(views[1].setBounds).not.toHaveBeenCalled();
     // A tab opened mid-slide is placed at the latest frame.
-    tm.newTab();
+    tm.newTab("settings");
     expect(views[2].setBounds).toHaveBeenLastCalledWith({ x: 100, y: 38, width: 500, height: 700 });
     // The final full layout reaches the hidden tab views too.
     tm.layout({ x: 8, y: 38, width: 900, height: 700 });
@@ -901,15 +592,15 @@ describe("TabManager", () => {
   it("layoutActive with no active tab only records the rect", () => {
     const empty = new TabManager({
       createView: () => makeFakeView(),
-      editorUrl: "https://pen-editor.onrender.com",
+      uiOrigin: "app://sideform",
       onStateChanged: () => {},
     });
     expect(() => empty.layoutActive({ x: 1, y: 2, width: 3, height: 4 })).not.toThrow();
   });
 
   it("layout positions all tab views below the tab bar", () => {
-    tm.newTab();
-    tm.newTab();
+    tm.newTab("settings");
+    tm.newTab("settings");
     tm.layout({ x: 380, y: 38, width: 820, height: 762 });
     for (const v of views) {
       expect(v.setBounds).toHaveBeenLastCalledWith({ x: 380, y: 38, width: 820, height: 762 });
@@ -917,17 +608,17 @@ describe("TabManager", () => {
   });
 
   it("every mutation emits a fresh snapshot", () => {
-    tm.newTab();
+    tm.newTab("settings");
     const before = states.length;
-    tm.newTab();
+    tm.newTab("settings");
     tm.nextTab();
     expect(states.length).toBeGreaterThan(before + 1);
   });
 
   it("destroyAll destroys every tab view and does not respawn a fresh tab", () => {
-    tm.newTab();
-    tm.newTab();
-    tm.newTab();
+    tm.newTab("settings");
+    tm.newTab("settings");
+    tm.newTab("settings");
     tm.destroyAll();
     for (const v of views) {
       expect(v.destroy).toHaveBeenCalled();
@@ -936,8 +627,8 @@ describe("TabManager", () => {
   });
 
   it("destroyAll tolerates a view whose destroy() throws", () => {
-    tm.newTab();
-    tm.newTab();
+    tm.newTab("settings");
+    tm.newTab("settings");
     views[0].destroy.mockImplementation(() => {
       throw new Error("boom");
     });
@@ -947,7 +638,7 @@ describe("TabManager", () => {
   });
 
   describe("browser tabs", () => {
-    it("newTab(\"browser\") does not load the editor url, defaults title to New Tab, and does not wire title/theme callbacks", () => {
+    it("newTab(\"browser\") does not load a url, defaults title to New Tab, and does not wire title/theme callbacks", () => {
       const id = tm.newTab("browser");
       expect(views[0].loadURL).not.toHaveBeenCalled();
       expect(views[0].onDocumentTitleChanged).not.toHaveBeenCalled();
@@ -978,19 +669,14 @@ describe("TabManager", () => {
       expect(tm.getSnapshot().tabs[0].title).toBe("New Tab");
     });
 
-    it("editor tabs are unaffected by browser-tab wiring (editor tabs still get title/theme callbacks, not onNavigationStateChanged use)", () => {
-      tm.newTab("editor");
-      expect(views[0].onDocumentTitleChanged).toHaveBeenCalled();
-      expect(views[0].onThemeChanged).toHaveBeenCalled();
-    });
 
     it("browserHandle returns null when there is no browser tab", () => {
-      tm.newTab("editor");
+      tm.newTab("settings");
       expect(tm.browserHandle()).toBeNull();
     });
 
     it("browserHandle returns the active browser tab when it is active", () => {
-      tm.newTab("editor");
+      tm.newTab("settings");
       const b = tm.newTab("browser");
       expect(tm.getSnapshot().activeId).toBe(b);
       expect(tm.browserHandle()).toBe(views[1]);
@@ -999,7 +685,7 @@ describe("TabManager", () => {
     it("browserHandle falls back to the most recently created browser tab when a different (editor) tab is active", () => {
       tm.newTab("browser"); // views[0]
       tm.newTab("browser"); // views[1]
-      const e = tm.newTab("editor"); // views[2], becomes active
+      const e = tm.newTab("settings"); // views[2], becomes active
       expect(tm.getSnapshot().activeId).toBe(e);
       expect(tm.browserHandle()).toBe(views[1]);
     });
@@ -1017,7 +703,7 @@ describe("TabManager", () => {
     });
 
     it("browserHandle falls back to the default rule when agentBrowserTabId points at an editor tab or a closed tab", () => {
-      const e = tm.newTab("editor");
+      const e = tm.newTab("settings");
       const b = tm.newTab("browser");
       tm.setAgentBrowserTabId(e); // not a browser tab at all
       expect(tm.browserHandle()).toBe(views[1]); // falls back to active-if-browser
@@ -1034,7 +720,7 @@ describe("TabManager", () => {
     });
 
     it("closing the agent's browser tab clears agentBrowserTabId rather than leaving it dangling", () => {
-      tm.newTab("editor"); // views[0]
+      tm.newTab("settings"); // views[0]
       const b1 = tm.newTab("browser"); // views[1]
       tm.newTab("browser"); // views[2], becomes active
       tm.setAgentBrowserTabId(b1);
@@ -1047,7 +733,7 @@ describe("TabManager", () => {
     });
 
     it("listBrowserTabs reports every browser tab and marks browserHandle()'s pick current", () => {
-      tm.newTab("editor");
+      tm.newTab("settings");
       const b1 = tm.newTab("browser");
       const b2 = tm.newTab("browser");
       views[1].emitNavState({ url: "https://a.example/", title: "A", canGoBack: false, canGoForward: false });
@@ -1060,22 +746,13 @@ describe("TabManager", () => {
       ]);
     });
 
-    it("isEditorTab is true only for editor tabs' webContents ids", () => {
-      tm.newTab("editor");
-      tm.newTab("browser");
-      const editorWcId = views[0].getWebContentsId();
-      const browserWcId = views[1].getWebContentsId();
-      expect(tm.isEditorTab(editorWcId)).toBe(true);
-      expect(tm.isEditorTab(browserWcId)).toBe(false);
-      expect(tm.isEditorTab(999)).toBe(false);
-    });
 
     it("activeKind tracks the active tab's kind across activation", () => {
-      const e = tm.newTab("editor");
+      const e = tm.newTab("settings");
       const b = tm.newTab("browser");
       expect(tm.getSnapshot().activeKind).toBe("browser");
       tm.activate(e);
-      expect(tm.getSnapshot().activeKind).toBe("editor");
+      expect(tm.getSnapshot().activeKind).toBe("settings");
       tm.activate(b);
       expect(tm.getSnapshot().activeKind).toBe("browser");
     });
@@ -1097,7 +774,7 @@ describe("TabManager", () => {
 
     it("activate() on an editor tab does not touch agentBrowserTabId", () => {
       const b1 = tm.newTab("browser"); // views[0]
-      const e = tm.newTab("editor"); // views[1]
+      const e = tm.newTab("settings"); // views[1]
       tm.setAgentBrowserTabId(b1);
       tm.activate(e);
       // Falls back to the default rule (no active browser tab, most recent
@@ -1120,7 +797,7 @@ describe("TabManager", () => {
     describe("nextTab/prevTab repoint the agent on a browser tab (finding 3)", () => {
       it("nextTab landing on a browser tab repoints agentBrowserTabId", () => {
         const b1 = tm.newTab("browser"); // views[0]
-        const e = tm.newTab("editor"); // views[1]
+        const e = tm.newTab("settings"); // views[1]
         const b2 = tm.newTab("browser"); // views[2], active
         tm.setAgentBrowserTabId(b1);
         expect(tm.browserHandle()).toBe(views[0]);
@@ -1136,7 +813,7 @@ describe("TabManager", () => {
       it("prevTab landing on a browser tab repoints agentBrowserTabId", () => {
         const b1 = tm.newTab("browser"); // views[0]
         const b2 = tm.newTab("browser"); // views[1]
-        tm.newTab("editor"); // views[2], active
+        tm.newTab("settings"); // views[2], active
         // Point the agent at b1 — b2, not b1, is the one prevTab is about
         // to land on (order: b1, b2, editor), so the fallback rule
         // ("active if browser, else most recent") could never independently
@@ -1149,17 +826,6 @@ describe("TabManager", () => {
         expect(tm.browserHandle()).toBe(views[1]);
       });
 
-      it("cycling to an editor tab does not touch agentBrowserTabId", () => {
-        const b1 = tm.newTab("browser"); // views[0]
-        tm.newTab("editor"); // views[1], active
-        tm.setAgentBrowserTabId(b1);
-        tm.nextTab(); // editor -> b1 (wraps)
-        tm.nextTab(); // b1 -> editor
-        expect(tm.getSnapshot().activeKind).toBe("editor");
-        // agentBrowserTabId is still b1 — cycling onto the editor tab must
-        // not have cleared or changed it.
-        expect(tm.browserHandle()).toBe(views[0]);
-      });
     });
 
     // Second-pass review finding 2: window.ts's ensurePage/popup callback
@@ -1167,7 +833,7 @@ describe("TabManager", () => {
     // to pin agentBrowserTabId even when handing back an existing tab.
     describe("currentBrowserTabId", () => {
       it("returns null when there is no browser tab", () => {
-        tm.newTab("editor");
+        tm.newTab("settings");
         expect(tm.currentBrowserTabId()).toBeNull();
       });
 
@@ -1193,7 +859,7 @@ describe("TabManager", () => {
 
       it("is null while an editor tab is active", () => {
         tm.newTab("browser");
-        tm.newTab("editor");
+        tm.newTab("settings");
         expect(tm.activeBrowserHandle()).toBeNull();
       });
     });
@@ -1209,7 +875,7 @@ describe("TabManager", () => {
       });
 
       it("returns null for an editor tab id, and for an id that doesn't exist", () => {
-        const e = tm.newTab("editor");
+        const e = tm.newTab("settings");
         expect(tm.browserTabHandleById(e)).toBeNull();
         expect(tm.browserTabHandleById(999)).toBeNull();
       });
@@ -1224,28 +890,6 @@ describe("TabManager", () => {
   });
 });
 
-// Finding 1: activating a browser tab must not knock out
-// McpService.getActiveTab() for un-targeted tools/call requests while an
-// editor tab is still open elsewhere in the strip.
-describe("resolveMcpActiveTab", () => {
-  it("reports the active webContents id while an editor tab is active", () => {
-    expect(resolveMcpActiveTab("editor", 7, null)).toBe(7);
-    expect(resolveMcpActiveTab("editor", 7, 3)).toBe(7);
-  });
-
-  it("falls back to the last active editor tab id while a browser tab is active, instead of nulling it out", () => {
-    expect(resolveMcpActiveTab("browser", 9, 3)).toBe(3);
-  });
-
-  it("stays null while a browser tab is active and no editor tab has ever been active", () => {
-    expect(resolveMcpActiveTab("browser", 9, null)).toBeNull();
-  });
-
-  it("falls back to the last editor tab id when there is no active tab at all (activeKind null)", () => {
-    expect(resolveMcpActiveTab(null, null, 3)).toBe(3);
-  });
-});
-
 describe("agentTabIds", () => {
   function make() {
     const states: TabsSnapshot[] = [];
@@ -1256,7 +900,7 @@ describe("agentTabIds", () => {
         v.getWebContentsId.mockReturnValue(n++);
         return v;
       },
-      editorUrl: "https://pen-editor.onrender.com",
+      uiOrigin: "app://sideform",
       onStateChanged: (s) => states.push(s),
     });
     return { tm, states };
@@ -1264,14 +908,14 @@ describe("agentTabIds", () => {
 
   it("is empty when no tab is marked", () => {
     const { tm } = make();
-    tm.newTab();
+    tm.newTab("settings");
     tm.newTab("browser");
     expect(tm.getSnapshot().agentTabIds).toEqual([]);
   });
 
   it("lists every marked browser tab, each cleared on its own", () => {
     const { tm } = make();
-    tm.newTab();
+    tm.newTab("settings");
     const b1 = tm.newTab("browser");
     const b2 = tm.newTab("browser", "s");
     tm.setAgentTabWorking(b1, true);
@@ -1302,7 +946,7 @@ describe("agentTabIds", () => {
 
   it("ignores an editor tab", () => {
     const { tm } = make();
-    const e = tm.newTab();
+    const e = tm.newTab("settings");
     tm.setAgentTabWorking(e, true);
     expect(tm.getSnapshot().agentTabIds).toEqual([]);
   });
@@ -1319,62 +963,6 @@ describe("agentTabIds", () => {
   });
 });
 
-// Finding 1 regression: closing the active *editor* tab whose neighbor is a
-// browser tab used to leave TabManager's internal "last editor tab" pointer
-// aimed at the now-destroyed webContents id — the exact regression
-// resolveMcpActiveTab was added to prevent, surfacing as "No editor tab is
-// open" MCP errors even while another editor tab is still open elsewhere in
-// the strip.
-describe("mcpActiveWebContentsId (finding 1)", () => {
-  let views: ReturnType<typeof makeFakeView>[];
-  let tm: TabManager;
-  let nextWebContentsId: number;
-
-  beforeEach(() => {
-    views = [];
-    nextWebContentsId = 1;
-    tm = new TabManager({
-      createView: (_kind: TabKind) => {
-        const v = makeFakeView();
-        v.getWebContentsId.mockReturnValue(nextWebContentsId++);
-        views.push(v);
-        return v;
-      },
-      editorUrl: "https://pen-editor.onrender.com",
-      onStateChanged: () => {},
-    });
-  });
-
-  it("repoints to a surviving editor tab when the active editor tab is closed next to a browser tab", () => {
-    tm.newTab("editor"); // views[0] — editorA, will survive
-    tm.newTab("browser"); // views[1]
-    const editorB = tm.newTab("editor"); // views[2] — active, will be closed
-    // Close the active editor tab — its neighbor (idx - 1) is the browser tab.
-    tm.closeTab(editorB);
-
-    const snapshot = tm.getSnapshot();
-    expect(snapshot.activeKind).toBe("browser");
-    // Must repoint to the surviving editor tab (editorA), never to editorB's
-    // now-destroyed webContents id, and never null while an editor tab is
-    // still open — the exact "No editor tab is open" regression.
-    expect(snapshot.mcpActiveWebContentsId).toBe(views[0].getWebContentsId());
-  });
-
-  it("nulls out mcpActiveWebContentsId when the last editor tab is closed and no other editor tab exists", () => {
-    tm.newTab("browser");
-    const onlyEditor = tm.newTab("editor");
-    tm.activate(onlyEditor);
-    tm.closeTab(onlyEditor);
-
-    // closeTab always respawns... no: respawning only happens when *all*
-    // tabs (including browser tabs) are gone. Here the browser tab survives,
-    // so no editor tab remains and mcpActiveWebContentsId must be null.
-    const snapshot = tm.getSnapshot();
-    expect(snapshot.tabs.some((t) => t.kind === "editor")).toBe(false);
-    expect(snapshot.mcpActiveWebContentsId).toBeNull();
-  });
-});
-
 // The new-browser-tab focus fix: File ▸ New Browser Tab used to leave a
 // blank content area with an unfocused, empty address bar and no cue where
 // to type. shouldFocusAddressBar is the pure predicate window.ts's
@@ -1382,31 +970,25 @@ describe("mcpActiveWebContentsId (finding 1)", () => {
 // push that should move focus into #url-input (see tabManager.ts's doc
 // comment on the function and window.ts's pushState).
 describe("shouldFocusAddressBar", () => {
-  const editorSnapshot: TabsSnapshot = {
-    tabs: [{ id: 1, title: "Untitled", kind: "editor" }],
+  const pageSnapshot: TabsSnapshot = {
+    tabs: [{ id: 1, title: "Settings", kind: "settings" }],
     activeId: 1,
-    activeKind: "editor",
-    activeTheme: null,
-    mcpStatus: "off",
-    mcpActiveWebContentsId: 1,
+    activeKind: "settings",
     agentTabIds: [],
   };
 
   const emptyBrowserSnapshot: TabsSnapshot = {
     tabs: [
-      { id: 1, title: "Untitled", kind: "editor" },
+      { id: 1, title: "Settings", kind: "settings" },
       { id: 2, title: "New Tab", kind: "browser", url: "", canGoBack: false, canGoForward: false },
     ],
     activeId: 2,
     activeKind: "browser",
-    activeTheme: null,
-    mcpStatus: "off",
-    mcpActiveWebContentsId: 1,
     agentTabIds: [],
   };
 
-  it("is true on editor -> empty-URL browser tab activation", () => {
-    expect(shouldFocusAddressBar(editorSnapshot, emptyBrowserSnapshot)).toBe(true);
+  it("is true on page tab -> empty-URL browser tab activation", () => {
+    expect(shouldFocusAddressBar(pageSnapshot, emptyBrowserSnapshot)).toBe(true);
   });
 
   it("is true even on the very first push, if it already lands on an empty browser tab", () => {
@@ -1425,16 +1007,16 @@ describe("shouldFocusAddressBar", () => {
         { ...emptyBrowserSnapshot.tabs[1], url: "https://example.com" },
       ],
     };
-    expect(shouldFocusAddressBar(editorSnapshot, alreadyNavigated)).toBe(false);
+    expect(shouldFocusAddressBar(pageSnapshot, alreadyNavigated)).toBe(false);
   });
 
-  it("is false when activating an editor tab", () => {
-    expect(shouldFocusAddressBar(emptyBrowserSnapshot, editorSnapshot)).toBe(false);
+  it("is false when activating a page tab", () => {
+    expect(shouldFocusAddressBar(emptyBrowserSnapshot, pageSnapshot)).toBe(false);
   });
 
-  it("is false when only mcpStatus changed (same active tab)", () => {
-    const mcpChanged: TabsSnapshot = { ...emptyBrowserSnapshot, mcpStatus: "listening" };
-    expect(shouldFocusAddressBar(emptyBrowserSnapshot, mcpChanged)).toBe(false);
+  it("is false when only the pinned agent tabs changed (same active tab)", () => {
+    const changed: TabsSnapshot = { ...emptyBrowserSnapshot, agentTabIds: [2] };
+    expect(shouldFocusAddressBar(emptyBrowserSnapshot, changed)).toBe(false);
   });
 
   it("is false when only the active tab's title changed (same active tab)", () => {
@@ -1463,16 +1045,16 @@ describe("TabManager scopes (isolated browser sessions)", () => {
         v.getWebContentsId.mockReturnValue(wc++);
         return v;
       },
-      editorUrl: "https://pen-editor.onrender.com",
+      uiOrigin: "app://sideform",
       onStateChanged: () => {},
     });
-    tm.newTab("editor");
+    tm.newTab("settings");
   });
 
   it("passes the session to createView for browser tabs only", () => {
     tm.newTab("browser", "a");
     tm.newTab("browser");
-    tm.newTab("editor", "a");
+    tm.newTab("settings", "a");
     expect(sessionsSeen).toEqual([undefined, "a", undefined, undefined]);
   });
 
@@ -1497,7 +1079,7 @@ describe("TabManager scopes (isolated browser sessions)", () => {
     const a = tm.newTab("browser", "a");
     expect(tm.count()).toBe(before + 1);
     expect(tm.getSnapshot().activeId).toBe(editorId);
-    expect(tm.getSnapshot().activeKind).toBe("editor");
+    expect(tm.getSnapshot().activeKind).toBe("settings");
     // Clicking it makes it the active tab.
     tm.activate(a);
     expect(tm.getSnapshot().activeId).toBe(a);
@@ -1621,7 +1203,7 @@ describe("TabManager with zero tabs (closing the last tab leaves the window empt
         v.getWebContentsId.mockReturnValue(wc++);
         return v;
       },
-      editorUrl: "https://x/app?chat=off",
+      uiOrigin: "app://sideform",
       onStateChanged: (s) => states.push(s),
     });
     return { tm, states };
@@ -1631,10 +1213,9 @@ describe("TabManager with zero tabs (closing the last tab leaves the window empt
     const { tm } = make();
     expect(tm.count()).toBe(0);
     const snap = tm.getSnapshot();
-    expect(snap).toMatchObject({ tabs: [], activeId: null, activeKind: null, mcpActiveWebContentsId: null, agentTabIds: [] });
+    expect(snap).toMatchObject({ tabs: [], activeId: null, activeKind: null, agentTabIds: [] });
     expect(tm.activeHandle()).toBeNull();
     expect(tm.activeBrowserHandle()).toBeNull();
-    expect(tm.editorTabsInfo()).toEqual({ tabs: [], activeWebContentsId: null });
     expect(() => {
       tm.nextTab();
       tm.prevTab();
@@ -1647,18 +1228,18 @@ describe("TabManager with zero tabs (closing the last tab leaves the window empt
 
   it("closing the last tab leaves zero tabs and emits an empty snapshot", () => {
     const { tm, states } = make();
-    const a = tm.newTab();
+    const a = tm.newTab("settings");
     tm.closeTab(a);
     expect(tm.count()).toBe(0);
-    expect(states[states.length - 1]).toMatchObject({ tabs: [], activeId: null, activeKind: null, mcpActiveWebContentsId: null });
+    expect(states[states.length - 1]).toMatchObject({ tabs: [], activeId: null, activeKind: null });
     // A tab can still be opened afterwards.
-    const b = tm.newTab();
+    const b = tm.newTab("settings");
     expect(tm.getSnapshot().activeId).toBe(b);
   });
 
   it("closing the active tab with only background session tabs left leaves no active tab", () => {
     const { tm } = make();
-    const a = tm.newTab();
+    const a = tm.newTab("settings");
     const s = tm.newTab("browser", "sess", { activate: false });
     tm.closeTab(a);
     expect(tm.count()).toBe(1);
@@ -1668,9 +1249,9 @@ describe("TabManager with zero tabs (closing the last tab leaves the window empt
 
   it("a background-requested tab becomes active from the zero-tab state; later ones stay in the background", () => {
     const { tm } = make();
-    const a = tm.newTab("editor", undefined, { activate: false });
+    const a = tm.newTab("settings", undefined, { activate: false });
     expect(tm.getSnapshot().activeId).toBe(a);
-    const b = tm.newTab("editor", undefined, { activate: false });
+    const b = tm.newTab("settings", undefined, { activate: false });
     expect(tm.getSnapshot().activeId).toBe(a);
     expect(b).not.toBe(a);
   });
@@ -1683,15 +1264,15 @@ describe("TabManager with zero tabs (closing the last tab leaves the window empt
         views.push(v);
         return v;
       },
-      editorUrl: "u",
+      uiOrigin: "u",
       onStateChanged: () => {},
     });
-    const a = tm.newTab("editor", undefined, { activate: false });
+    const a = tm.newTab("settings", undefined, { activate: false });
     expect(tm.getSnapshot().activeId).toBe(a);
     expect(views[0].setVisible).toHaveBeenLastCalledWith(true);
     expect(views[0].focus).not.toHaveBeenCalled();
     // A default open (or an explicit activation) still focuses.
-    tm.newTab();
+    tm.newTab("settings");
     expect(views[1].focus).toHaveBeenCalledTimes(1);
     tm.activate(a);
     expect(views[0].focus).toHaveBeenCalledTimes(1);

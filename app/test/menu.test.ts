@@ -1,45 +1,45 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { buildMenuTemplate, buildNewTabMenuTemplate, buildRecentContextMenuTemplate, buildRecentFilterMenuTemplate, buildTabContextMenuTemplate, type MenuActions, REVEAL_MENU_ITEM_ID } from "../src/main/menu";
+import { buildMenuTemplate, buildTabContextMenuTemplate, type MenuActions, REVEAL_MENU_ITEM_ID } from "../src/main/menu";
 import type { MenuItemConstructorOptions } from "electron";
 
 function flatten(items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] {
   return items.flatMap((i) => [i, ...flatten((i.submenu as MenuItemConstructorOptions[]) ?? [])]);
 }
 
+function makeActions(): MenuActions {
+  return {
+    newBrowserTab: vi.fn(),
+    openSettings: vi.fn(),
+    openPasswords: vi.fn(),
+    openHistory: vi.fn(),
+    closeTab: vi.fn(),
+    closeWindow: vi.fn(),
+    nextTab: vi.fn(),
+    prevTab: vi.fn(),
+    setCursorEnabled: vi.fn(),
+    toggleAgentPanel: vi.fn(),
+    revealActiveTab: vi.fn(),
+  };
+}
+
 describe("buildMenuTemplate", () => {
   let actions: MenuActions;
 
   beforeEach(() => {
-    actions = {
-      newTab: vi.fn(),
-      newBrowserTab: vi.fn(),
-      newDocTab: vi.fn(), newWorkflowTab: vi.fn(),
-      openSettings: vi.fn(),
-      openPasswords: vi.fn(),
-      openHistory: vi.fn(),
-      signIn: vi.fn(),
-      closeTab: vi.fn(), closeWindow: vi.fn(),
-      nextTab: vi.fn(),
-      prevTab: vi.fn(),
-      forwardToActiveTab: vi.fn(),
-      useThisAppForMcp: vi.fn(),
-      setCursorEnabled: vi.fn(),
-      toggleAgentPanel: vi.fn(),
-      revealActiveTab: vi.fn(),
-    };
+    actions = makeActions();
   });
 
-  function item(
-    label: string,
-    mcpStatus: "listening" | "not-published" | "off" | "error" = "off",
-  ): MenuItemConstructorOptions {
-    const found = flatten(buildMenuTemplate(actions, { isMac: true }, mcpStatus)).find((i) => i.label === label);
+  function item(label: string): MenuItemConstructorOptions {
+    const found = flatten(buildMenuTemplate(actions, { isMac: true })).find((i) => i.label === label);
     if (!found) throw new Error(`menu item not found: ${label}`);
     return found;
   }
 
+  const fileLabels = (isMac: boolean) =>
+    (buildMenuTemplate(actions, { isMac }).find((m) => m.label === "File")!.submenu as MenuItemConstructorOptions[]).map((i) => i.label ?? i.type);
+
   it("has the app menu first on mac only", () => {
-    expect(buildMenuTemplate(actions, { isMac: true, appName: "Sideform" })[0].label).toBe("Sideform");
+    expect(buildMenuTemplate(actions, { isMac: true, appName: "Sideform Light" })[0].label).toBe("Sideform Light");
     expect(buildMenuTemplate(actions, { isMac: false })[0].label).toBe("File");
   });
 
@@ -54,8 +54,7 @@ describe("buildMenuTemplate", () => {
     (settings.click as () => void)();
     expect(actions.openSettings).toHaveBeenCalledOnce();
     // Not duplicated in File on mac.
-    const file = buildMenuTemplate(actions, { isMac: true }).find((i) => i.label === "File")!;
-    expect((file.submenu as MenuItemConstructorOptions[]).some((i) => i.label === "Settings…")).toBe(false);
+    expect(fileLabels(true)).not.toContain("Settings…");
   });
 
   it("off mac, Settings… (CmdOrCtrl+,) is in the File menu", () => {
@@ -66,51 +65,36 @@ describe("buildMenuTemplate", () => {
     expect(actions.openSettings).toHaveBeenCalledOnce();
   });
 
-  it("reads New Canvas Tab, same action and accelerator", () => {
-    const t = buildMenuTemplate(actions, { isMac: false });
-    const i = flatten(t).find((x) => x.label === "New Canvas Tab")!;
+  it("New Browser Tab is CmdOrCtrl+T and the only new-tab item", () => {
+    const i = item("New Browser Tab");
     expect(i.accelerator).toBe("CmdOrCtrl+T");
     (i.click as () => void)();
-    expect(actions.newTab).toHaveBeenCalled();
-    expect(flatten(t).some((x) => x.label === "New Tab")).toBe(false);
+    expect(actions.newBrowserTab).toHaveBeenCalledOnce();
+    const labels = flatten(buildMenuTemplate(actions, { isMac: false })).map((x) => String(x.label));
+    expect(labels.filter((l) => /^New /.test(l))).toEqual(["New Browser Tab"]);
   });
 
-  it("New Browser Tab triggers newBrowserTab", () => {
-    const i = item("New Browser Tab");
-    (i.click as () => void)();
-    expect(actions.newBrowserTab).toHaveBeenCalled();
+  it("the File menu is exactly the browser items", () => {
+    expect(fileLabels(true)).toEqual(["New Browser Tab", "Passwords…", "History…", "Reveal in Finder", "separator", "Close Tab", "Close Window"]);
+    expect(fileLabels(false)).toEqual(["New Browser Tab", "Passwords…", "History…", "Settings…", "Reveal in Finder", "separator", "Close Tab", "Close Window"]);
   });
 
-  it("New Document Tab triggers newDocTab with CmdOrCtrl+Shift+D", () => {
-    const i = item("New Document Tab");
-    expect(i.accelerator).toBe("CmdOrCtrl+Shift+D");
-    (i.click as () => void)();
-    expect(actions.newDocTab).toHaveBeenCalledOnce();
+  it("has no item of a removed feature (canvas, documents, workflows, sign-in, MCP, import/export)", () => {
+    const labels = flatten(buildMenuTemplate(actions, { isMac: true })).map((x) => String(x.label ?? ""));
+    for (const l of labels) expect(l).not.toMatch(/canvas|document|workflow|sign in|mcp|\.pen|\.json|tokens|open…/i);
   });
 
-  it("New Workflow Tab triggers newWorkflowTab, with no accelerator and no forwarded command", () => {
-    const i = item("New Workflow Tab");
-    expect(i.accelerator).toBeUndefined();
-    (i.click as () => void)();
-    expect(actions.newWorkflowTab).toHaveBeenCalledOnce();
-  });
-
-  it("Passwords… opens the Passwords tab and forwards no menu command", () => {
-    const i = item("Passwords…");
-    (i.click as () => void)();
+  it("Passwords… opens the Passwords tab", () => {
+    (item("Passwords…").click as () => void)();
     expect(actions.openPasswords).toHaveBeenCalledTimes(1);
-    expect(actions.forwardToActiveTab).not.toHaveBeenCalled();
   });
 
-  it("History… sits right after Passwords…, opens the History tab and forwards no menu command", () => {
-    const labels = (isMac: boolean) =>
-      (buildMenuTemplate(actions, { isMac }).find((m) => m.label === "File")!.submenu as MenuItemConstructorOptions[]).map((i) => i.label);
-    expect(labels(true).indexOf("History…")).toBe(labels(true).indexOf("Passwords…") + 1);
+  it("History… sits right after Passwords… and opens the History tab", () => {
+    expect(fileLabels(true).indexOf("History…")).toBe(fileLabels(true).indexOf("Passwords…") + 1);
     const i = item("History…");
     expect(i.accelerator).toBe("Cmd+Y");
     (i.click as () => void)();
     expect(actions.openHistory).toHaveBeenCalledTimes(1);
-    expect(actions.forwardToActiveTab).not.toHaveBeenCalled();
   });
 
   it("History… avoids Redo's Ctrl+Y outside macOS", () => {
@@ -119,33 +103,21 @@ describe("buildMenuTemplate", () => {
     expect(i.accelerator).toBe("Ctrl+H");
   });
 
-  it("Sign In… sits in the File menu and starts the browser sign-in without forwarding a menu command", () => {
-    const file = buildMenuTemplate(actions, { isMac: true }).find((m) => m.label === "File")!;
-    const labels = (file.submenu as MenuItemConstructorOptions[]).map((i) => i.label);
-    expect(labels).toContain("Sign In…");
-    const i = item("Sign In…");
-    (i.click as () => void)();
-    expect(actions.signIn).toHaveBeenCalledTimes(1);
-    expect(actions.forwardToActiveTab).not.toHaveBeenCalled();
-  });
-
-  it("Reveal item sits right after Open…, before the first separator, without an accelerator", () => {
+  it("Reveal item sits before the first separator, without an accelerator", () => {
     const file = buildMenuTemplate(actions, { isMac: true, reveal: { label: "Reveal in Finder", enabled: true } }).find((m) => m.label === "File")!;
     const sub = file.submenu as MenuItemConstructorOptions[];
-    const at = sub.findIndex((i) => i.label === "Open…");
-    expect(sub[at + 1].label).toBe("Reveal in Finder");
+    const at = sub.findIndex((i) => i.label === "Reveal in Finder");
     // window.ts finds the item by this id to toggle `enabled` in place.
-    expect(sub[at + 1].id).toBe(REVEAL_MENU_ITEM_ID);
-    expect(sub[at + 1].enabled).toBe(true);
-    expect(sub[at + 1].accelerator).toBeUndefined();
-    expect(sub[at + 2].type).toBe("separator");
+    expect(sub[at].id).toBe(REVEAL_MENU_ITEM_ID);
+    expect(sub[at].enabled).toBe(true);
+    expect(sub[at].accelerator).toBeUndefined();
+    expect(sub[at + 1].type).toBe("separator");
   });
 
-  it("Reveal item is local: it calls revealActiveTab, forwards no command, and survives a bare click", () => {
+  it("Reveal item calls revealActiveTab and survives a bare click", () => {
     const i = item("Reveal in Finder");
     expect(() => (i.click as () => void)()).not.toThrow();
     expect(actions.revealActiveTab).toHaveBeenCalledTimes(1);
-    expect(actions.forwardToActiveTab).not.toHaveBeenCalled();
   });
 
   it("Reveal item without opts.reveal is disabled; with it, label and state come from the opts", () => {
@@ -169,19 +141,6 @@ describe("buildMenuTemplate", () => {
     expect(actions.closeTab).toHaveBeenCalled();
   });
 
-  it.each([
-    ["Open…", "CmdOrCtrl+O", "file-open"],
-    ["Save as .pen", "CmdOrCtrl+S", "file-export-pen"],
-    ["Export as .json", "Shift+CmdOrCtrl+S", "file-export-json"],
-    ["Export Design Tokens…", undefined, "file-export-tokens"],
-    ["Import Design Tokens…", undefined, "file-import-tokens"],
-  ])("%s forwards %s", (label, accelerator, commandId) => {
-    const i = item(label as string);
-    expect(i.accelerator).toBe(accelerator);
-    (i.click as () => void)();
-    expect(actions.forwardToActiveTab).toHaveBeenCalledWith(commandId);
-  });
-
   it("tab cycling shortcuts exist", () => {
     expect(item("Next Tab").accelerator).toBe("Ctrl+Tab");
     expect(item("Previous Tab").accelerator).toBe("Ctrl+Shift+Tab");
@@ -201,37 +160,17 @@ describe("buildMenuTemplate", () => {
     }
   });
 
-  it.each([
-    ["listening" as const, "MCP: Listening"],
-    ["not-published" as const, "MCP: Not published (another server is running)"],
-    ["off" as const, "MCP: Off"],
-    ["error" as const, "MCP: Failed to start (see \"Use this app for MCP\")"],
-  ])("MCP status item reflects status %s and is disabled/informational", (status, label) => {
-    const i = item(label, status);
-    expect(i.enabled).toBe(false);
-    expect(i.click).toBeUndefined();
-  });
-
-  it("MCP status label never includes a port number", () => {
-    for (const status of ["listening", "not-published", "off", "error"] as const) {
-      const i = item(mcpStatusLabelFor(status), status);
-      expect(String(i.label)).not.toMatch(/\d/);
-    }
-  });
-
   describe("View > Show Agent Cursor", () => {
     const state = { enabled: true, enabledLocked: false };
     const cursorItem = (cursor = state) => {
-      const view = buildMenuTemplate(actions, { isMac: true }, "off", cursor).find((m) => m.label === "View")!;
+      const view = buildMenuTemplate(actions, { isMac: true }, cursor).find((m) => m.label === "View")!;
       const found = (view.submenu as MenuItemConstructorOptions[]).find((i) => i.label === "Show Agent Cursor");
       if (!found) throw new Error("Show Agent Cursor item missing");
       return found;
     };
 
-    it("is a checkbox directly in the View menu; the motion submenu is gone", () => {
+    it("is a checkbox directly in the View menu", () => {
       expect(cursorItem().type).toBe("checkbox");
-      const view = buildMenuTemplate(actions, { isMac: true }).find((m) => m.label === "View")!;
-      expect((view.submenu as MenuItemConstructorOptions[]).some((i) => i.label === "Agent Cursor Motion")).toBe(false);
     });
 
     it("reflects the current enabled flag", () => {
@@ -244,105 +183,31 @@ describe("buildMenuTemplate", () => {
       expect(actions.setCursorEnabled).toHaveBeenCalledWith(false);
     });
 
+    it("survives a bare click", () => {
+      expect(() => (cursorItem().click as () => void)()).not.toThrow();
+    });
+
     it("is disabled when an env var locks the value", () => {
       expect(cursorItem({ ...state, enabledLocked: true }).enabled).toBe(false);
       expect(cursorItem().enabled).toBe(true);
     });
   });
 
-  it("Use this app for MCP triggers useThisAppForMcp", () => {
-    const i = item("Use this app for MCP");
-    (i.click as () => void)();
-    expect(actions.useThisAppForMcp).toHaveBeenCalled();
-  });
-
-  it("error status renders a visible, non-empty label distinct from off/not-published/listening", () => {
-    const i = item(mcpStatusLabelFor("error"), "error");
-    expect(i.enabled).toBe(false);
-    expect(String(i.label).length).toBeGreaterThan(0);
-    expect(i.label).not.toBe(mcpStatusLabelFor("off"));
-  });
-
-  // Finding 7: the tooltip (tabbar/renderer.ts) and README both point users
-  // at "the app menu" for the MCP status line and "Use this app for MCP" —
-  // but buildMenuTemplate appends both to the **File** submenu, not to the
-  // real macOS app menu (the `{ role: "appMenu" }` this file unshifts
-  // separately, above). This test pins the *actual* location so the two can
-  // never silently drift apart again: if a future change moves these items
-  // out of File (e.g. into the real app menu), this test fails and forces
-  // the tooltip/README wording to be revisited in the same change.
-  it("the MCP status line and 'Use this app for MCP' live in the File submenu, not the app menu", () => {
-    const template = buildMenuTemplate(actions, { isMac: true }, "listening");
-    const appMenu = template[0];
-    const fileMenu = template.find((i) => i.label === "File");
-    expect(fileMenu).toBeTruthy();
-    const fileSubmenu = fileMenu!.submenu as MenuItemConstructorOptions[];
-    expect(fileSubmenu.some((i) => i.label === "MCP: Listening")).toBe(true);
-    expect(fileSubmenu.some((i) => i.label === "Use this app for MCP")).toBe(true);
-    // The app menu (explicit now: Electron's default roles plus Settings…) never got them.
-    const appLabels = (appMenu.submenu as MenuItemConstructorOptions[]).map((i) => i.label);
-    expect(appLabels).not.toContain("MCP: Listening");
-    expect(appLabels).not.toContain("Use this app for MCP");
-  });
-});
-
-function mcpStatusLabelFor(status: "listening" | "not-published" | "off" | "error"): string {
-  switch (status) {
-    case "listening":
-      return "MCP: Listening";
-    case "not-published":
-      return "MCP: Not published (another server is running)";
-    case "off":
-      return "MCP: Off";
-    case "error":
-      return "MCP: Failed to start (see \"Use this app for MCP\")";
-  }
-}
-
-describe("buildNewTabMenuTemplate", () => {
-  it("offers an editor tab and a browser tab, each wired to its action", () => {
-    const actions = { newTab: vi.fn(), newBrowserTab: vi.fn(), newDocTab: vi.fn(), newWorkflowTab: vi.fn() };
-    const [editor, browser, doc, workflow] = buildNewTabMenuTemplate(actions);
-
-    expect(editor.label).toBe("New Canvas Tab");
-    // Display-only: the application menu already owns ⌘T.
-    expect(editor.accelerator).toBe("CmdOrCtrl+T");
-    expect(editor.registerAccelerator).toBe(false);
-    (editor.click as () => void)();
-    expect(actions.newTab).toHaveBeenCalledOnce();
-
-    expect(browser.label).toBe("New Browser Tab");
-    (browser.click as () => void)();
-    expect(actions.newBrowserTab).toHaveBeenCalledOnce();
-
-    expect(doc.label).toBe("New Document");
-    (doc.click as () => void)();
-    expect(actions.newDocTab).toHaveBeenCalledOnce();
-
-    expect(workflow.label).toBe("New Workflow");
-    (workflow.click as () => void)();
-    expect(actions.newWorkflowTab).toHaveBeenCalledOnce();
-  });
-});
-
-describe("View > Agent Panel", () => {
-  const actions = {
-    newTab: vi.fn(), newBrowserTab: vi.fn(), newDocTab: vi.fn(), newWorkflowTab: vi.fn(), openSettings: vi.fn(), openPasswords: vi.fn(), openHistory: vi.fn(), signIn: vi.fn(), closeTab: vi.fn(), closeWindow: vi.fn(), nextTab: vi.fn(), prevTab: vi.fn(),
-    forwardToActiveTab: vi.fn(), useThisAppForMcp: vi.fn(), setCursorEnabled: vi.fn(), toggleAgentPanel: vi.fn(), revealActiveTab: vi.fn(),
-  } as MenuActions;
-  it("View menu has a Show/Hide Agent Panel item (Cmd/Ctrl+Alt+B) only with the agent layout", () => {
-    const labels = (opts: Parameters<typeof buildMenuTemplate>[1]) => {
-      const view = buildMenuTemplate(actions, opts).find((m) => m.label === "View");
-      return (view?.submenu as MenuItemConstructorOptions[]).map((m) => m.label);
-    };
-    expect(labels({ isMac: true })).not.toContain("Hide Agent Panel");
-    expect(labels({ isMac: true, agentPanel: { collapsed: false } })).toContain("Hide Agent Panel");
-    expect(labels({ isMac: true, agentPanel: { collapsed: true } })).toContain("Show Agent Panel");
-    const view = buildMenuTemplate(actions, { isMac: false, agentPanel: { collapsed: false } }).find((m) => m.label === "View");
-    const it = (view?.submenu as MenuItemConstructorOptions[]).find((m) => m.label === "Hide Agent Panel")!;
-    expect(it.accelerator).toBe("CmdOrCtrl+Alt+B");
-    (it.click as () => void)();
-    expect(actions.toggleAgentPanel).toHaveBeenCalledTimes(1);
+  describe("View > Agent Panel", () => {
+    it("View menu has a Show/Hide Agent Panel item (Cmd/Ctrl+Alt+B) when asked for", () => {
+      const labels = (opts: Parameters<typeof buildMenuTemplate>[1]) => {
+        const view = buildMenuTemplate(actions, opts).find((m) => m.label === "View");
+        return (view?.submenu as MenuItemConstructorOptions[]).map((m) => m.label);
+      };
+      expect(labels({ isMac: true })).not.toContain("Hide Agent Panel");
+      expect(labels({ isMac: true, agentPanel: { collapsed: false } })).toContain("Hide Agent Panel");
+      expect(labels({ isMac: true, agentPanel: { collapsed: true } })).toContain("Show Agent Panel");
+      const view = buildMenuTemplate(actions, { isMac: false, agentPanel: { collapsed: false } }).find((m) => m.label === "View");
+      const it = (view?.submenu as MenuItemConstructorOptions[]).find((m) => m.label === "Hide Agent Panel")!;
+      expect(it.accelerator).toBe("CmdOrCtrl+Alt+B");
+      (it.click as () => void)();
+      expect(actions.toggleAgentPanel).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -360,69 +225,5 @@ describe("buildTabContextMenuTemplate", () => {
   it("disables reveal for a tab without a file", () => {
     const t = buildTabContextMenuTemplate({ label: "Show in Folder", enabled: false }, { reveal: vi.fn(), closeTab: vi.fn() });
     expect(t[0].enabled).toBe(false);
-  });
-});
-
-describe("buildRecentContextMenuTemplate", () => {
-  it("has Open and the reveal item", () => {
-    const actions = { open: vi.fn(), reveal: vi.fn() };
-    const t = buildRecentContextMenuTemplate("Show in Explorer", actions);
-    expect(t.map((i) => i.label)).toEqual(["Open", "Show in Explorer"]);
-    (t[0].click as () => void)();
-    (t[1].click as () => void)();
-    expect(actions.open).toHaveBeenCalledTimes(1);
-    expect(actions.reveal).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("buildRecentFilterMenuTemplate", () => {
-  const all = { kinds: { canvas: true, doc: true, workflow: true }, modified: "any" as const };
-  const labels = (t: { label?: string; type?: string }[]) => t.map((i) => i.label ?? i.type);
-
-  it("lists Type, Modified and Reset in order", () => {
-    const t = buildRecentFilterMenuTemplate(all, false, vi.fn());
-    expect(labels(t)).toEqual([
-      "Type", "Canvases", "Documents", "Workflows", "separator", "Modified", "Any time", "Today", "Past 7 days", "Past 30 days", "separator", "Reset filters",
-    ]);
-  });
-  it("shows the state as checkbox and radio checks", () => {
-    const t = buildRecentFilterMenuTemplate({ kinds: { canvas: false, doc: true, workflow: true }, modified: "7d" }, false, vi.fn());
-    const by = (l: string) => t.find((i) => i.label === l)!;
-    expect([by("Canvases").type, by("Canvases").checked, by("Documents").checked]).toEqual(["checkbox", false, true]);
-    expect(["Any time", "Today", "Past 7 days", "Past 30 days"].map((l) => [by(l).type, by(l).checked])).toEqual([
-      ["radio", false], ["radio", false], ["radio", true], ["radio", false],
-    ]);
-  });
-  it("makes the section titles headers when the OS has them and disabled labels elsewhere", () => {
-    const mac = buildRecentFilterMenuTemplate(all, true, vi.fn());
-    expect([mac[0], mac[5]]).toEqual([{ type: "header", label: "Type" }, { type: "header", label: "Modified" }]);
-    const other = buildRecentFilterMenuTemplate(all, false, vi.fn());
-    expect([other[0], other[5]]).toEqual([{ label: "Type", enabled: false }, { label: "Modified", enabled: false }]);
-  });
-  it("enables Reset only when the filter is not the default", () => {
-    const reset = (s: Parameters<typeof buildRecentFilterMenuTemplate>[0]) =>
-      buildRecentFilterMenuTemplate(s, false, vi.fn()).find((i) => i.label === "Reset filters")!.enabled;
-    expect(reset(all)).toBe(false);
-    expect(reset({ ...all, modified: "today" })).toBe(true);
-    expect(reset({ kinds: { canvas: true, doc: false, workflow: true }, modified: "any" })).toBe(true);
-  });
-  it("reports each pick", () => {
-    const pick = vi.fn();
-    const t = buildRecentFilterMenuTemplate({ ...all, modified: "today" }, false, pick);
-    for (const l of ["Canvases", "Documents", "Workflows", "Any time", "Today", "Past 7 days", "Past 30 days", "Reset filters"]) {
-      const item = t.find((i) => i.label === l)!;
-      // Electron flips a checkbox before click: Canvases and Documents start checked, so they report false.
-      (item.click as (mi: { checked: boolean }) => void)({ checked: item.type === "checkbox" ? !item.checked : true });
-    }
-    expect(pick.mock.calls.map((c) => c[0])).toEqual([
-      { action: "kind", kind: "canvas", checked: false },
-      { action: "kind", kind: "doc", checked: false },
-      { action: "kind", kind: "workflow", checked: false },
-      { action: "modified", modified: "any" },
-      { action: "modified", modified: "today" },
-      { action: "modified", modified: "7d" },
-      { action: "modified", modified: "30d" },
-      { action: "reset" },
-    ]);
   });
 });

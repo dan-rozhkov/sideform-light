@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { createBrowserSettingsIpc, isSettingsSender, type BrowserSettingsEvent } from "../src/main/browserSettingsIpc";
 
-const SETTINGS = "https://app.test/settings?chat=off";
+const SETTINGS = "app://sideform/settings?section=browser";
 function setup() {
   const handlers = new Map<string, (e: BrowserSettingsEvent, ...a: unknown[]) => unknown>();
   const ipcMain = { handle: (c: string, l: never) => void handlers.set(c, l), removeHandler: vi.fn((c: string) => void handlers.delete(c)) };
-  const state = { adBlock: true, mcpBrowser: true, askAppAccess: false };
+  const state = { adBlock: true };
   const store = { get: () => ({ ...state }), set: vi.fn((p: Partial<typeof state>) => Object.assign(state, p) && { ...state }) };
   const ipc = createBrowserSettingsIpc({ ipcMain, store });
   const main = { url: "" };
@@ -24,12 +24,15 @@ describe("browser-settings IPC", () => {
   });
   it("answers the settings page top frame", () => {
     const s = setup();
-    expect(s.handlers.get("browser-settings:get")!(s.ev(7, SETTINGS))).toEqual({ adBlock: true, mcpBrowser: true, askAppAccess: false });
-    expect(s.handlers.get("browser-settings:set")!(s.ev(7, SETTINGS), { adBlock: false })).toEqual({ adBlock: false, mcpBrowser: true, askAppAccess: false });
+    expect(s.handlers.get("browser-settings:get")!(s.ev(7, SETTINGS))).toEqual({ adBlock: true });
+    expect(s.handlers.get("browser-settings:set")!(s.ev(7, SETTINGS), { adBlock: false })).toEqual({ adBlock: false });
   });
-  it("accepts askAppAccess in a patch", () => {
+  it("rejects the removed keys", () => {
     const s = setup();
-    expect(s.handlers.get("browser-settings:set")!(s.ev(7, SETTINGS), { askAppAccess: true })).toEqual({ adBlock: true, mcpBrowser: true, askAppAccess: true });
+    for (const patch of [{ askAppAccess: true }, { mcpBrowser: true }]) {
+      expect(s.handlers.get("browser-settings:set")!(s.ev(7, SETTINGS), patch)).toEqual({ error: "Invalid settings." });
+    }
+    expect(s.store.set).not.toHaveBeenCalled();
   });
   it("rejects a bad patch with an error and stores nothing", () => {
     const s = setup();

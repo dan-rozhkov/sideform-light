@@ -5,13 +5,11 @@ import {
   attachPanelNavigationPolicy,
   attachNavigationPolicy,
   attachBrowserTabPolicy,
-  attachOfflineFallback,
   attachLocalOnlyPolicy,
-  shouldDropMcpRegistration,
   shouldForwardNavigationEvent,
 } from "../src/main/navigation";
 
-const ORIGIN = "https://app.sideform.pro";
+const ORIGIN = "app://sideform";
 
 describe("decideNavigation", () => {
   it("allows same-origin", () => {
@@ -58,6 +56,10 @@ describe("attachNavigationPolicy", () => {
     contents.emit("will-navigate", ev, "https://example.com/x");
     expect(ev.preventDefault).toHaveBeenCalled();
     expect(openExternal).toHaveBeenCalledWith("https://example.com/x");
+  });
+
+  it("a different host on the app: scheme is not the ui origin", () => {
+    expect(decideNavigation("app://other/x", ORIGIN)).toBe("deny");
   });
 
   it("lets same-origin will-navigate through", () => {
@@ -140,21 +142,6 @@ describe("attachLocalOnlyPolicy", () => {
   });
 });
 
-describe("shouldDropMcpRegistration", () => {
-  it("drops registration on a real cross-document main-frame navigation (page reload)", () => {
-    expect(shouldDropMcpRegistration({ isMainFrame: true, isSameDocument: false })).toBe(true);
-  });
-
-  it("does NOT drop registration on a same-document main-frame navigation (SPA pushState/replaceState/hash)", () => {
-    expect(shouldDropMcpRegistration({ isMainFrame: true, isSameDocument: true })).toBe(false);
-  });
-
-  it("ignores subframe navigations regardless of same-document-ness", () => {
-    expect(shouldDropMcpRegistration({ isMainFrame: false, isSameDocument: false })).toBe(false);
-    expect(shouldDropMcpRegistration({ isMainFrame: false, isSameDocument: true })).toBe(false);
-  });
-});
-
 describe("shouldForwardNavigationEvent", () => {
   it("forwards main-frame navigation events", () => {
     expect(shouldForwardNavigationEvent({ isMainFrame: true })).toBe(true);
@@ -165,39 +152,6 @@ describe("shouldForwardNavigationEvent", () => {
   });
 });
 
-describe("attachOfflineFallback", () => {
-  it("loads the offline page on main-frame failure, with the failed url as target", () => {
-    const contents = fakeContents();
-    attachOfflineFallback(contents as never, "/app/dist/assets/offline.html");
-    contents.emit("did-fail-load", {}, -106, "ERR_INTERNET_DISCONNECTED", `${ORIGIN}/`, true);
-    expect(contents.loadFile).toHaveBeenCalledWith("/app/dist/assets/offline.html", {
-      query: { target: `${ORIGIN}/` },
-    });
-  });
-
-  it("ignores subframe failures and ERR_ABORTED", () => {
-    const contents = fakeContents();
-    attachOfflineFallback(contents as never, "/x/offline.html");
-    contents.emit("did-fail-load", {}, -106, "x", `${ORIGIN}/`, false);
-    contents.emit("did-fail-load", {}, -3, "ERR_ABORTED", `${ORIGIN}/`, true);
-    expect(contents.loadFile).not.toHaveBeenCalled();
-  });
-
-  it("ignores failures whose validatedURL is a file: URL, to avoid re-triggering itself", () => {
-    const contents = fakeContents();
-    attachOfflineFallback(contents as never, "/app/dist/assets/offline.html");
-    contents.emit(
-      "did-fail-load",
-      {},
-      -6,
-      "ERR_FILE_NOT_FOUND",
-      "file:///app/dist/assets/offline.html",
-      true,
-    );
-    expect(contents.loadFile).not.toHaveBeenCalled();
-  });
-});
-
 describe("decidePanelNavigation", () => {
   const PANEL = `${ORIGIN}/agent`;
   it("allows the panel path and its subpaths, with query/hash", () => {
@@ -205,20 +159,25 @@ describe("decidePanelNavigation", () => {
     expect(decidePanelNavigation(`${ORIGIN}/agent/`, PANEL)).toBe("allow");
     expect(decidePanelNavigation(`${ORIGIN}/agent/chat/1?x=1#h`, PANEL)).toBe("allow");
   });
-  it("sends other same-origin pages to an editor tab", () => {
-    expect(decidePanelNavigation(`${ORIGIN}/app`, PANEL)).toBe("editor-tab");
-    expect(decidePanelNavigation(`${ORIGIN}/`, PANEL)).toBe("editor-tab");
-    expect(decidePanelNavigation(`${ORIGIN}/agentx`, PANEL)).toBe("editor-tab");
+  it("denies other pages of the ui origin (the ui is not a browser)", () => {
+    expect(decidePanelNavigation(`${ORIGIN}/settings`, PANEL)).toBe("deny");
+    expect(decidePanelNavigation(`${ORIGIN}/`, PANEL)).toBe("deny");
+    expect(decidePanelNavigation(`${ORIGIN}/agentx`, PANEL)).toBe("deny");
+  });
+  it("another host on the same scheme is not the ui origin", () => {
+    expect(decidePanelNavigation("app://other/agent", PANEL)).toBe("deny");
+    expect(decidePanelNavigation("https://sideform/agent", PANEL)).toBe("external");
+  });
+  it("compares against a dev server origin the same way", () => {
+    const dev = "http://localhost:5174/agent";
+    expect(decidePanelNavigation("http://localhost:5174/agent/x", dev)).toBe("allow");
+    expect(decidePanelNavigation("http://localhost:5174/settings", dev)).toBe("deny");
+    expect(decidePanelNavigation("http://localhost:5175/agent", dev)).toBe("external");
   });
   it("sends foreign http(s) external and denies the rest", () => {
     expect(decidePanelNavigation("https://example.com/agent", PANEL)).toBe("external");
     expect(decidePanelNavigation("file:///etc/passwd", PANEL)).toBe("deny");
     expect(decidePanelNavigation("%%%", PANEL)).toBe("deny");
-  });
-  it("honours a base path prefix", () => {
-    const panel = "https://host/pen/agent";
-    expect(decidePanelNavigation("https://host/pen/agent/x", panel)).toBe("allow");
-    expect(decidePanelNavigation("https://host/agent", panel)).toBe("editor-tab");
   });
 });
 
@@ -226,15 +185,14 @@ describe("attachPanelNavigationPolicy", () => {
   it("blocks will-navigate away from the panel and routes it", () => {
     const contents = fakeContents();
     const openExternal = vi.fn();
-    const openEditorTab = vi.fn();
-    attachPanelNavigationPolicy(contents as never, `${ORIGIN}/agent`, openExternal, openEditorTab);
+    attachPanelNavigationPolicy(contents as never, `${ORIGIN}/agent`, openExternal);
     const ok = { preventDefault: vi.fn() };
     contents.emit("will-navigate", ok, `${ORIGIN}/agent/x`);
     expect(ok.preventDefault).not.toHaveBeenCalled();
-    const app = { preventDefault: vi.fn() };
-    contents.emit("will-navigate", app, `${ORIGIN}/app`);
-    expect(app.preventDefault).toHaveBeenCalled();
-    expect(openEditorTab).toHaveBeenCalledTimes(1);
+    const other = { preventDefault: vi.fn() };
+    contents.emit("will-navigate", other, `${ORIGIN}/settings`);
+    expect(other.preventDefault).toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
     const ext = { preventDefault: vi.fn() };
     contents.emit("will-navigate", ext, "https://example.com/");
     expect(ext.preventDefault).toHaveBeenCalled();
@@ -243,12 +201,10 @@ describe("attachPanelNavigationPolicy", () => {
   it("denies popups and routes them the same way", () => {
     const contents = fakeContents();
     const openExternal = vi.fn();
-    const openEditorTab = vi.fn();
-    attachPanelNavigationPolicy(contents as never, `${ORIGIN}/agent`, openExternal, openEditorTab);
+    attachPanelNavigationPolicy(contents as never, `${ORIGIN}/agent`, openExternal);
     expect(contents.open(`${ORIGIN}/agent/x`)).toEqual({ action: "deny" });
-    expect(openEditorTab).not.toHaveBeenCalled();
     expect(contents.open(`${ORIGIN}/`)).toEqual({ action: "deny" });
-    expect(openEditorTab).toHaveBeenCalledTimes(1);
+    expect(openExternal).not.toHaveBeenCalled();
     expect(contents.open("https://example.com/")).toEqual({ action: "deny" });
     expect(openExternal).toHaveBeenCalledWith("https://example.com/");
   });

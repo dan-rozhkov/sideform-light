@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createCanvasSenderRegistry, flushPage, flushThenClose, FLUSH_SCRIPT, pendingCloseFlushes, withTimeout } from "../src/main/canvasWriters";
+import { createPanelSenderRegistry, flushPage, flushThenClose, CHATS_FLUSH_SCRIPT, pendingCloseFlushes, withTimeout } from "../src/main/panelSenders";
 
 function manualTimers() {
   let next = 1;
@@ -20,60 +20,52 @@ function manualTimers() {
   };
 }
 
-describe("canvas sender registry", () => {
-  it("a writer is valid while its tab lives", () => {
-    const r = createCanvasSenderRegistry();
-    r.addWriter(7);
-    expect(r.isWriter(7)).toBe(true);
-    expect(r.isWriter(8)).toBe(false);
-    expect(r.isPanel(7)).toBe(false);
+describe("panel sender registry", () => {
+  it("a panel is valid while its view lives", () => {
+    const r = createPanelSenderRegistry();
+    r.addPanel(7);
+    expect(r.isPanel(7)).toBe(true);
+    expect(r.isPanel(8)).toBe(false);
   });
 
-  it("a released writer still delivers its final save during the grace period, then is forgotten", () => {
+  it("a released panel still delivers its final chat save during the grace period, then is forgotten", () => {
     const t = manualTimers();
-    const r = createCanvasSenderRegistry({ graceMs: 10_000, setTimer: t.setTimer, clearTimer: t.clearTimer });
-    r.addWriter(7);
+    const r = createPanelSenderRegistry({ graceMs: 10_000, setTimer: t.setTimer, clearTimer: t.clearTimer });
+    r.addPanel(7);
     r.release(7); // webContents "destroyed"
-    expect(r.isWriter(7)).toBe(true);
+    expect(r.isPanel(7)).toBe(true);
     expect([...t.pending.values()][0].ms).toBe(10_000);
     t.fire();
-    expect(r.isWriter(7)).toBe(false);
+    expect(r.isPanel(7)).toBe(false);
   });
 
   it("adding again cancels a pending release", () => {
     const t = manualTimers();
-    const r = createCanvasSenderRegistry({ setTimer: t.setTimer, clearTimer: t.clearTimer });
-    r.addWriter(7);
+    const r = createPanelSenderRegistry({ setTimer: t.setTimer, clearTimer: t.clearTimer });
+    r.addPanel(7);
     r.release(7);
-    r.addWriter(7);
+    r.addPanel(7);
     expect(t.pending.size).toBe(0);
     t.fire();
-    expect(r.isWriter(7)).toBe(true);
+    expect(r.isPanel(7)).toBe(true);
   });
 
   it("releasing an unknown id schedules nothing", () => {
     const t = manualTimers();
-    const r = createCanvasSenderRegistry({ setTimer: t.setTimer, clearTimer: t.clearTimer });
+    const r = createPanelSenderRegistry({ setTimer: t.setTimer, clearTimer: t.clearTimer });
     r.release(99);
     expect(t.pending.size).toBe(0);
-  });
-
-  it("a panel is a panel, never a writer", () => {
-    const r = createCanvasSenderRegistry();
-    r.addPanel(3);
-    expect(r.isPanel(3)).toBe(true);
-    expect(r.isWriter(3)).toBe(false);
   });
 
   it("works with the real timer", () => {
     vi.useFakeTimers();
     try {
-      const r = createCanvasSenderRegistry({ graceMs: 50 });
-      r.addWriter(1);
+      const r = createPanelSenderRegistry({ graceMs: 50 });
+      r.addPanel(1);
       r.release(1);
-      expect(r.isWriter(1)).toBe(true);
+      expect(r.isPanel(1)).toBe(true);
       vi.advanceTimersByTime(60);
-      expect(r.isWriter(1)).toBe(false);
+      expect(r.isPanel(1)).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -108,15 +100,15 @@ describe("flushPage", () => {
     let done = false;
     void flushPage({ isDestroyed: () => false, runInPage }).then(() => (done = true));
     await new Promise((r) => setTimeout(r, 10));
-    expect(runInPage).toHaveBeenCalledWith(FLUSH_SCRIPT);
+    expect(runInPage).toHaveBeenCalledWith(CHATS_FLUSH_SCRIPT);
     expect(done).toBe(false);
     finish();
     await new Promise((r) => setTimeout(r, 10));
     expect(done).toBe(true);
   });
 
-  it("the script calls window.penCanvasFlush when it is a function", () => {
-    expect(FLUSH_SCRIPT).toBe("typeof window.penCanvasFlush === 'function' ? window.penCanvasFlush() : undefined");
+  it("the script calls window.penChatsFlush when it is a function", () => {
+    expect(CHATS_FLUSH_SCRIPT).toBe("typeof window.penChatsFlush === 'function' ? window.penChatsFlush() : undefined");
   });
 
   it("does not run in a destroyed webContents and survives a throwing runInPage", async () => {
@@ -145,7 +137,7 @@ describe("flushThenClose", () => {
     expect(pendingCloseFlushes()).toHaveLength(1);
     finishSave();
     await done;
-    expect(order).toEqual(["script:" + FLUSH_SCRIPT, "saved", "close"]);
+    expect(order).toEqual(["script:" + CHATS_FLUSH_SCRIPT, "saved", "close"]);
     await new Promise((r) => setTimeout(r, 0));
     expect(pendingCloseFlushes()).toHaveLength(0);
   });
@@ -178,7 +170,7 @@ describe("flushThenClose", () => {
     expect(port.close).not.toHaveBeenCalled();
   });
 
-  it("does not wait for another tab's flush", async () => {
+  it("does not wait for another panel's flush", async () => {
     const slow = { isDestroyed: () => false, runInPage: () => new Promise<unknown>(() => {}), close: vi.fn() };
     const fast = { isDestroyed: () => false, runInPage: async () => undefined, close: vi.fn() };
     void flushThenClose(slow, { flushTimeoutMs: 60_000 });

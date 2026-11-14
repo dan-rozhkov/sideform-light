@@ -116,11 +116,11 @@ describe("createAgentActivity", () => {
 });
 
 describe("isAgentPageCommand", () => {
-  it.each(["open", "act", "findImages", "snapshot", "perform", "read", "screenshot", "capture", "applyFixture", "fillLogin"])(
+  it.each(["open", "act", "findImages", "snapshot", "perform", "read", "screenshot", "applyFixture", "fillLogin"])(
     "%s counts",
     (c) => expect(isAgentPageCommand(c, {})).toBe(true),
   );
-  it.each(["startJournal", "stopJournal", "captureCheckpoint", "requests", "releaseFixture", "clearActEmulation", "bogus"])("%s does not count", (c) =>
+  it.each(["startJournal", "stopJournal", "captureCheckpoint", "requests", "releaseFixture", "clearActEmulation", "capture", "bogus"])("%s does not count", (c) =>
     expect(isAgentPageCommand(c, {})).toBe(false),
   );
   it("tabs counts except action list", () => {

@@ -16,7 +16,7 @@ afterEach(() => {
 
 describe("readBrowserSettings", () => {
   it("defaults on a missing file", () => {
-    expect(readBrowserSettings(tmp())).toEqual({ adBlock: true, mcpBrowser: false, askAppAccess: false });
+    expect(readBrowserSettings(tmp())).toEqual({ adBlock: true });
   });
   it("defaults on a corrupt file", () => {
     const f = tmp();
@@ -26,7 +26,7 @@ describe("readBrowserSettings", () => {
   it("falls back per field on wrong types", () => {
     const f = tmp();
     fs.writeFileSync(f, JSON.stringify({ adBlock: "no", mcpBrowser: false }));
-    expect(readBrowserSettings(f)).toEqual({ adBlock: true, mcpBrowser: false, askAppAccess: false });
+    expect(readBrowserSettings(f)).toEqual({ adBlock: true });
   });
   it("ignores an array", () => {
     const f = tmp();
@@ -39,30 +39,22 @@ describe("parseBrowserSettingsPatch", () => {
   it("accepts optional booleans", () => {
     expect(parseBrowserSettingsPatch({})).toEqual({});
     expect(parseBrowserSettingsPatch({ adBlock: false })).toEqual({ adBlock: false });
-    expect(parseBrowserSettingsPatch({ adBlock: false, mcpBrowser: true })).toEqual({ adBlock: false, mcpBrowser: true });
-    expect(parseBrowserSettingsPatch({ askAppAccess: true })).toEqual({ askAppAccess: true });
   });
   it("rejects everything else", () => {
-    for (const bad of [null, undefined, 1, "x", [], [true], { adBlock: 1 }, { askAppAccess: 1 }, { askAppAccess: "true" }, { adBlock: "true" }, { other: true }, { adBlock: true, x: 1 }, new Date(), new (class A {})()]) {
+    for (const bad of [null, undefined, 1, "x", [], [true], { adBlock: 1 }, { askAppAccess: true }, { mcpBrowser: false }, { adBlock: "true" }, { other: true }, { adBlock: true, x: 1 }, new Date(), new (class A {})()]) {
       expect(parseBrowserSettingsPatch(bad)).toBeNull();
     }
   });
 });
 
-describe("askAppAccess", () => {
-  it("defaults to false, also for an older file without the key", () => {
-    expect(defaultBrowserSettings().askAppAccess).toBe(false);
+describe("removed settings", () => {
+  it("an older file's mcpBrowser / askAppAccess keys are ignored, and not written back", () => {
     const f = tmp();
-    fs.writeFileSync(f, JSON.stringify({ adBlock: false, mcpBrowser: true }));
-    expect(readBrowserSettings(f).askAppAccess).toBe(false);
-    fs.writeFileSync(f, JSON.stringify({ askAppAccess: "yes" }));
-    expect(readBrowserSettings(f).askAppAccess).toBe(false);
-  });
-  it("persists a patch", () => {
-    const f = tmp();
+    fs.writeFileSync(f, JSON.stringify({ adBlock: false, mcpBrowser: true, askAppAccess: true }));
+    expect(readBrowserSettings(f)).toEqual({ adBlock: false });
     const store = createBrowserSettingsStore(f);
-    expect(store.set({ askAppAccess: true })).toEqual({ adBlock: true, mcpBrowser: false, askAppAccess: true });
-    expect(createBrowserSettingsStore(f).get().askAppAccess).toBe(true);
+    store.set({ adBlock: true });
+    expect(JSON.parse(fs.readFileSync(f, "utf8"))).toEqual({ adBlock: true });
   });
 });
 
@@ -72,11 +64,11 @@ describe("createBrowserSettingsStore", () => {
     const store = createBrowserSettingsStore(f);
     const cb = vi.fn();
     const off = store.onChange(cb);
-    expect(store.set({ adBlock: false })).toEqual({ adBlock: false, mcpBrowser: false, askAppAccess: false });
+    expect(store.set({ adBlock: false })).toEqual({ adBlock: false });
     store.set({ adBlock: false });
     expect(cb).toHaveBeenCalledTimes(1);
-    expect(cb).toHaveBeenCalledWith({ adBlock: false, mcpBrowser: false, askAppAccess: false });
-    expect(JSON.parse(fs.readFileSync(f, "utf8"))).toEqual({ adBlock: false, mcpBrowser: false, askAppAccess: false });
+    expect(cb).toHaveBeenCalledWith({ adBlock: false });
+    expect(JSON.parse(fs.readFileSync(f, "utf8"))).toEqual({ adBlock: false });
     expect(createBrowserSettingsStore(f).get().adBlock).toBe(false);
     off();
     store.set({ adBlock: true });
@@ -90,7 +82,7 @@ describe("createBrowserSettingsStore", () => {
     const cb = vi.fn();
     store.onChange(cb);
     expect(store.set({ adBlock: false })).toBeNull();
-    expect(store.get()).toEqual({ adBlock: true, mcpBrowser: false, askAppAccess: false });
+    expect(store.get()).toEqual({ adBlock: true });
     expect(cb).not.toHaveBeenCalled();
   });
   it("get returns a copy", () => {

@@ -1,15 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { CHATS_FLUSH_SCRIPT, flushPanelChats, flushQuitWork, hasQuitWork } from "../src/main/chatFlush";
-import { FLUSH_SCRIPT, flushThenClose } from "../src/main/canvasWriters";
+import { flushThenClose } from "../src/main/panelSenders";
 import { createQuitFlush } from "../src/main/quitFlush";
 
 describe("chat flush handshake", () => {
-  it("runs the chats script, not the canvas one", async () => {
+  it("runs the chats script", async () => {
     expect(CHATS_FLUSH_SCRIPT).toBe("typeof window.penChatsFlush === 'function' ? window.penChatsFlush() : undefined");
     const runInPage = vi.fn(async () => undefined);
     await flushPanelChats({ isDestroyed: () => false, runInPage });
     expect(runInPage).toHaveBeenCalledWith(CHATS_FLUSH_SCRIPT);
-    expect(runInPage).not.toHaveBeenCalledWith(FLUSH_SCRIPT);
   });
 
   it("does nothing for a destroyed panel, and is bounded for a page that never settles", async () => {
@@ -42,33 +41,33 @@ describe("chat flush handshake", () => {
 });
 
 describe("quit work", () => {
-  it("holds for a canvas tab OR an agent panel", () => {
-    expect(hasQuitWork({ hasCanvasWork: () => false, panelCount: () => 0 })).toBe(false);
-    expect(hasQuitWork({ hasCanvasWork: () => true, panelCount: () => 0 })).toBe(true);
-    expect(hasQuitWork({ hasCanvasWork: () => false, panelCount: () => 1 })).toBe(true);
+  it("holds for a panel close still flushing OR an agent panel", () => {
+    expect(hasQuitWork({ hasPendingCloses: () => false, panelCount: () => 0 })).toBe(false);
+    expect(hasQuitWork({ hasPendingCloses: () => true, panelCount: () => 0 })).toBe(true);
+    expect(hasQuitWork({ hasPendingCloses: () => false, panelCount: () => 1 })).toBe(true);
   });
 
-  it("flushes canvas tabs and panels in parallel; one failing does not block the other", async () => {
+  it("flushes pending closes and panels in parallel; one failing does not block the other", async () => {
     const order: string[] = [];
     let release!: () => void;
-    const canvas = vi.fn(() => new Promise<void>((r) => (release = r)).then(() => void order.push("canvas")));
+    const pending = vi.fn(() => new Promise<void>((r) => (release = r)).then(() => void order.push("pending")));
     const panels = vi.fn(async () => {
       order.push("panels");
       throw new Error("boom");
     });
-    const done = flushQuitWork({ flushCanvasTabs: canvas, flushPanels: panels });
+    const done = flushQuitWork({ flushPendingCloses: pending, flushPanels: panels });
     await Promise.resolve();
-    expect(panels).toHaveBeenCalled(); // started while canvas is still pending
+    expect(panels).toHaveBeenCalled(); // started while pending is still pending
     release();
     await expect(done).resolves.toBeUndefined();
-    expect(order).toEqual(["panels", "canvas"]);
+    expect(order).toEqual(["panels", "pending"]);
   });
 
   it("survives a synchronously throwing flush", async () => {
     const panels = vi.fn(async () => undefined);
     await expect(
       flushQuitWork({
-        flushCanvasTabs: () => {
+        flushPendingCloses: () => {
           throw new Error("sync");
         },
         flushPanels: panels,
@@ -81,8 +80,8 @@ describe("quit work", () => {
     const quit = vi.fn();
     const flushPanels = vi.fn(async () => undefined);
     const q = createQuitFlush({
-      hasWork: () => hasQuitWork({ hasCanvasWork: () => false, panelCount: () => 1 }),
-      flushAll: () => flushQuitWork({ flushCanvasTabs: async () => undefined, flushPanels }),
+      hasWork: () => hasQuitWork({ hasPendingCloses: () => false, panelCount: () => 1 }),
+      flushAll: () => flushQuitWork({ flushPendingCloses: async () => undefined, flushPanels }),
       quit,
     });
     const event = { preventDefault: vi.fn() };
