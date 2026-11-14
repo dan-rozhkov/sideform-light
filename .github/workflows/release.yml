@@ -1,0 +1,61 @@
+name: release
+
+# Push a tag v* (or run manually with a tag) to build the macOS and Windows installers
+# against the production backend and attach them to the GitHub release of that tag.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (for example v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  BACKEND_URL: https://pen-editor-backend.onrender.com
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            dist: dist:win
+            files: app/release/*.exe
+          - os: macos-latest
+            dist: dist
+            files: |
+              app/release/*.dmg
+              app/release/*.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build ui
+        working-directory: ui
+        env:
+          VITE_DESIGN_AGENT_BACKEND_URL: ${{ env.BACKEND_URL }}
+        run: |
+          npm ci
+          npm run build
+      - name: Build installer
+        working-directory: app
+        env:
+          SIDEFORM_LIGHT_BACKEND_URL: ${{ env.BACKEND_URL }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          npm ci
+          npm run ${{ matrix.dist }} -- --publish never
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Sideform Light ${{ env.TAG }}
+          files: ${{ matrix.files }}
+          fail_on_unmatched_files: true

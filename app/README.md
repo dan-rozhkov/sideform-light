@@ -18,7 +18,7 @@ npm start                               # build + launch
 npm test                                # unit tests
 npm run test:e2e                        # Playwright against a stub ui
 npm run dist                            # macOS dmg + zip (unsigned, ad-hoc signature)
-npm run dist:win                        # Windows nsis installer (config only, untested)
+npm run dist:win                        # Windows nsis installer (built on CI, see ../.github/workflows)
 ```
 
 Your data (saved logins, history, chats, traces, settings) lives in the `Sideform Light` user data folder and
