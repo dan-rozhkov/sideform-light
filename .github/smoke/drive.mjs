@@ -1,9 +1,15 @@
 // Drives an installed Sideform Light over CDP: screenshots of every page, then one agent task.
 // Usage: node drive.mjs <outDir> <task>
 import { chromium } from "playwright-core";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { openSync } from "node:fs";
 
-const [outDir, task] = process.argv.slice(2);
+const [outDir, task, appExe] = process.argv.slice(2);
+// The app is started here, not in an earlier step: the runner kills a step's processes when the step ends.
+const app = spawn(appExe, ["--remote-debugging-port=9333"], {
+  stdio: ["ignore", openSync(`${outDir}/app-stdout.log`, "w"), openSync(`${outDir}/app-stderr.log`, "w")],
+});
+app.on("exit", (code) => console.log("APP EXITED", code));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const desktop = (name) => {
   try {
@@ -56,3 +62,5 @@ desktop("3-done-desktop");
 await panel.screenshot({ path: `${outDir}/3-done-panel.png` });
 console.log("PANEL TEXT:\n" + (await panel.innerText("body")).slice(0, 3000));
 await browser.close();
+app.kill();
+process.exit(0);

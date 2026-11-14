@@ -30,17 +30,13 @@ jobs:
           $exe = Get-ChildItem installer\*.exe | Select-Object -First 1
           Start-Process $exe.FullName -ArgumentList "/S" -Wait
           Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Sideform Light.exe" | Select-Object -ExpandProperty FullName
-      - name: Start the app
+      - name: Drive the app
         shell: pwsh
         run: |
           $app = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Sideform Light.exe" | Select-Object -First 1
           New-Item -ItemType Directory -Force shots | Out-Null
-          Start-Process $app.FullName -ArgumentList "--remote-debugging-port=9333" -RedirectStandardOutput shots\app-stdout.log -RedirectStandardError shots\app-stderr.log
-      - name: Drive the app
-        shell: pwsh
-        run: |
           npm install --no-save --prefix .github/smoke playwright-core@1.64.1
-          node .github/smoke/drive.mjs shots "${{ inputs.task }}"
+          node .github/smoke/drive.mjs shots "${{ inputs.task }}" $app.FullName
       - uses: actions/upload-artifact@v4
         if: always()
         with:
