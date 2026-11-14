@@ -81,23 +81,54 @@ function triggerAnchorDownload(
   anchor.remove();
 }
 
-async function dataUrlToBlob(url: string): Promise<Blob> {
-  const response = await fetch(url);
-  return response.blob();
+/** Decodes a `data:` URL to a Blob without `fetch` (the app CSP may not allow it), or null when it is malformed. */
+function dataUrlToBlob(url: string): Blob | null {
+  const match = /^data:([^,]*?)(;base64)?,(.*)$/is.exec(url);
+  if (!match) return null;
+  const type = match[1].split(";")[0].trim();
+  try {
+    if (match[2]) {
+      const binary = atob(decodeURIComponent(match[3]));
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new Blob([bytes], { type });
+    }
+    return new Blob([decodeURIComponent(match[3])], { type });
+  } catch {
+    return null;
+  }
+}
+
+/** The last resort: let the browser attempt the download. Never throws. */
+function anchorFallback(url: string, filename: string, openInNewTab: boolean): void {
+  try {
+    triggerAnchorDownload(url, filename, openInNewTab);
+  } catch {
+    // Nothing more can be done; a failed download must not become an unhandled rejection.
+  }
 }
 
 /**
- * Download an image (data: or http(s)) to the user's disk.
+ * Download an image (data: or http(s)) to the user's disk. Never rejects.
  *
- * For `data:` URLs the payload is converted directly to a Blob and saved.
- * For http(s) URLs we try to `fetch` the bytes and save them via an object
- * URL; if that fails (CORS/network) we fall back to a plain anchor download
- * that lets the browser handle the request directly.
+ * A `data:` URL is decoded in place and saved as a Blob (no `fetch`, so the page CSP cannot block it);
+ * a malformed one falls back to an anchor download.
+ * For http(s) URLs we try to `fetch` the bytes and save them via an object URL; if that fails (CORS,
+ * network, or the page CSP `connect-src`) we fall back to a plain anchor download that lets the
+ * browser handle the request directly.
  */
 export async function downloadFile(url: string, filename: string): Promise<void> {
   if (url.startsWith("data:")) {
-    const blob = await dataUrlToBlob(url);
-    saveBlob(blob, filename);
+    try {
+      const blob = dataUrlToBlob(url);
+      if (blob) {
+        saveBlob(blob, filename);
+        return;
+      }
+    } catch {
+      // fall through to the anchor
+    }
+    anchorFallback(url, filename, false);
     return;
   }
 
@@ -107,7 +138,7 @@ export async function downloadFile(url: string, filename: string): Promise<void>
     const blob = await response.blob();
     saveBlob(blob, filename);
   } catch {
-    // CORS or network failure: let the browser attempt the download/open.
-    triggerAnchorDownload(url, filename, true);
+    // CORS, CSP or network failure: let the browser attempt the download/open.
+    anchorFallback(url, filename, true);
   }
 }

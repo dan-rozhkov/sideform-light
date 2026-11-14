@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { BAR_ROW } from "./parts";
 import type { TraceLoadResult } from "@/lib/browseTraceLoad";
 
 function Bar({ className }: { className: string }) {
@@ -58,19 +57,9 @@ const openFile = (
   </Link>
 );
 
-/** The failure message; with a switcher, under a minimal top bar so the viewer can leave a dead trace. */
-export function TraceFailure({ failure, onRetry, switcher }: { failure: Failure; onRetry(): void; switcher?: ReactNode }) {
-  if (!switcher) return <FailureMessage failure={failure} onRetry={onRetry} />;
-  return (
-    <div className="flex h-dvh flex-col bg-surface-panel">
-      <header className="shrink-0 border-b border-border-default">
-        <div className={BAR_ROW}>{switcher}</div>
-      </header>
-      <div className="min-h-0 flex-1">
-        <FailureMessage failure={failure} onRetry={onRetry} fill />
-      </div>
-    </div>
-  );
+/** The failure message of a trace that could not be shown. */
+export function TraceFailure({ failure, onRetry }: { failure: Failure; onRetry(): void }) {
+  return <FailureMessage failure={failure} onRetry={onRetry} />;
 }
 
 function FailureMessage({ failure, onRetry, fill }: { failure: Failure; onRetry(): void; fill?: boolean }) {

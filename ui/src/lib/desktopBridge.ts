@@ -7,16 +7,6 @@ export interface BrowseTraceSavePayload {
   assets: { path: string; dataUrl: string; contentType: string }[];
 }
 
-/** One saved local trace as `traces.list` reports it (no frames, no steps). */
-export interface StoredTraceSummary {
-  id: string;
-  goal: string;
-  /** Epoch milliseconds. */
-  startedAt: number;
-  status: string;
-  qaOutcome?: string;
-}
-
 /** The shell's answer to a trace save: the stored id, or an error text. Never throws. */
 export type BrowseTraceSaveResult = { id: string } | { error: string };
 
@@ -52,10 +42,6 @@ export interface PenDesktopApi {
   /** Local browse-run traces. `read` returns `{ trace }` with data-URL frames, or `{ error }`. */
   traces?: {
     read(id: string): Promise<{ trace: BrowseTrace } | { error: string }>;
-    /** Saved local traces, newest first. Absent when the shell cannot list them. */
-    list?(): Promise<{ traces: StoredTraceSummary[] } | { error: string }>;
-    /** Opens a local trace in a trace tab. */
-    open?(id: string): Promise<{ ok: boolean; error?: string }>;
   };
   /** Opens or focuses the Settings tab, optionally on a section. */
   settings?: DesktopSettingsApi;
