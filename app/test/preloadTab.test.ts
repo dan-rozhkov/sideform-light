@@ -51,9 +51,20 @@ async function load(file: "tab" | "agentPanel") {
 describe("preload/tab.ts (trace and settings pages)", () => {
   beforeEach(() => load("tab"));
 
-  it("exposes penDesktop with exactly traces, browserSettings and settings", () => {
+  it("exposes penDesktop with exactly traces, browserSettings, mcp and settings", () => {
     expect(exposedName).toBe("penDesktop");
-    expect(Object.keys(exposedApi).sort()).toEqual(["browserSettings", "settings", "traces"]);
+    expect(Object.keys(exposedApi).sort()).toEqual(["browserSettings", "mcp", "settings", "traces"]);
+  });
+
+  it("mcp get / set / regenerateToken go over mcp-settings:get / set / regenerate-token", async () => {
+    expect(Object.keys(exposedApi.mcp).sort()).toEqual(["get", "regenerateToken", "set"]);
+    invokeMock.mockResolvedValueOnce({ enabled: false });
+    await expect(exposedApi.mcp.get()).resolves.toEqual({ enabled: false });
+    expect(invokeMock).toHaveBeenLastCalledWith("mcp-settings:get");
+    await exposedApi.mcp.set({ enabled: true });
+    expect(invokeMock).toHaveBeenLastCalledWith("mcp-settings:set", { enabled: true });
+    await exposedApi.mcp.regenerateToken();
+    expect(invokeMock).toHaveBeenLastCalledWith("mcp-settings:regenerate-token");
   });
 
   it("has no browser bridge and none of the removed surfaces", () => {
@@ -105,10 +116,66 @@ describe("preload/tab.ts (trace and settings pages)", () => {
 describe("preload/agentPanel.ts (penAgentPanel v3)", () => {
   beforeEach(() => load("agentPanel"));
 
-  it("exposes version 3 with browser, chats, traces and settings only", () => {
+  it("exposes version 3 with browser, chats, traces, settings and mcp only", () => {
     expect(exposedName).toBe("penAgentPanel");
     expect(exposedApi.version).toBe(3);
-    expect(Object.keys(exposedApi).sort()).toEqual(["browser", "chats", "settings", "traces", "version"]);
+    expect(Object.keys(exposedApi).sort()).toEqual(["browser", "chats", "mcp", "settings", "traces", "version"]);
+  });
+
+  describe("mcp (agent bridge)", () => {
+    const requestListener = () => onMock.mock.calls.find((c) => c[0] === "mcp:task-request")![1] as (e: unknown, m: unknown) => void;
+
+    it("has exactly onRequest and notifyChanged", () => {
+      expect(Object.keys(exposedApi.mcp).sort()).toEqual(["notifyChanged", "onRequest"]);
+    });
+
+    it("onRequest registers with main (mcp:panel-ready) and returns an unsubscribe", () => {
+      const off = exposedApi.mcp.onRequest(async () => ({ ok: true }));
+      expect(sendMock).toHaveBeenCalledWith("mcp:panel-ready");
+      expect(typeof off).toBe("function");
+    });
+
+    it("answers a request with mcp:task-reply { requestId, reply }", async () => {
+      const handler = vi.fn(async () => ({ task: { taskId: "t1" } }));
+      exposedApi.mcp.onRequest(handler);
+      requestListener()({}, { requestId: "r1", request: { op: "get", taskId: "t1" } });
+      await vi.waitFor(() => expect(sendMock).toHaveBeenCalledWith("mcp:task-reply", { requestId: "r1", reply: { task: { taskId: "t1" } } }));
+      expect(handler).toHaveBeenCalledWith({ op: "get", taskId: "t1" });
+    });
+
+    it("a failing handler answers with an error value, never leaves main waiting", async () => {
+      exposedApi.mcp.onRequest(async () => {
+        throw new Error("secret detail");
+      });
+      requestListener()({}, { requestId: "r2", request: {} });
+      await vi.waitFor(() => expect(sendMock).toHaveBeenCalledWith("mcp:task-reply", { requestId: "r2", reply: { error: "The task request failed" } }));
+    });
+
+    it("a second onRequest replaces the first handler (one ipc listener only)", async () => {
+      const first = vi.fn(async () => ({ ok: true }));
+      const second = vi.fn(async () => ({ ok: true }));
+      exposedApi.mcp.onRequest(first);
+      exposedApi.mcp.onRequest(second);
+      expect(onMock.mock.calls.filter((c) => c[0] === "mcp:task-request")).toHaveLength(1);
+      requestListener()({}, { requestId: "r3", request: {} });
+      await vi.waitFor(() => expect(second).toHaveBeenCalled());
+      expect(first).not.toHaveBeenCalled();
+    });
+
+    it("after unsubscribe a request is answered 'not ready'; malformed messages are ignored", async () => {
+      const off = exposedApi.mcp.onRequest(async () => ({ ok: true }));
+      off();
+      sendMock.mockClear();
+      requestListener()({}, { requestId: "r4", request: {} });
+      requestListener()({}, null);
+      requestListener()({}, { request: {} });
+      expect(sendMock.mock.calls).toEqual([["mcp:task-reply", { requestId: "r4", reply: { error: "Sideform Light is not ready" } }]]);
+    });
+
+    it("notifyChanged sends mcp:task-changed { taskId }", () => {
+      exposedApi.mcp.notifyChanged("t9");
+      expect(sendMock).toHaveBeenLastCalledWith("mcp:task-changed", { taskId: "t9" });
+    });
   });
 
   it("browser has the contract commands, isolated, closeSession and revealAgentTab; no desktop-app members", () => {
@@ -210,4 +277,20 @@ describe("preload/agentPanel.ts (penAgentPanel v3)", () => {
     await exposedApi.settings.open("appearance");
     expect(invokeMock).toHaveBeenLastCalledWith("settings:open", "appearance");
   });
+
+  it("mcp.onRequest: subscribe, unsubscribe, subscribe again still runs one request once (one listener)", async () => {
+    const handler = vi.fn(async () => ({ ok: true }));
+    const off = exposedApi.mcp.onRequest(handler);
+    off();
+    exposedApi.mcp.onRequest(handler);
+    const listeners = onMock.mock.calls.filter((c) => c[0] === "mcp:task-request");
+    expect(listeners).toHaveLength(1);
+    sendMock.mockClear();
+    listeners[0][1]({}, { requestId: "r1", request: { op: "list", limit: 1 } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(handler).toHaveBeenCalledTimes(1);
+    const replies = sendMock.mock.calls.filter((c) => c[0] === "mcp:task-reply");
+    expect(replies).toEqual([["mcp:task-reply", { requestId: "r1", reply: { ok: true } }]]);
+  });
 });
+

@@ -44,6 +44,8 @@ export interface ChatMeta {
   updatedAt: number;
   rev: number;
   messageCount: number;
+  /** Set to "mcp" for a task started over the MCP agent bridge. Absent for every other chat. */
+  source?: "mcp";
 }
 
 export interface StoredChat {
@@ -54,6 +56,7 @@ export interface StoredChat {
   updatedAt: number;
   rev: number;
   messages: unknown[];
+  source?: "mcp";
 }
 
 export type ChatListResult = { chats: ChatMeta[] } | { error: string };
@@ -88,7 +91,7 @@ const isRev = (v: unknown): v is number => typeof v === "number" && Number.isSaf
 /** The meta fields of a stored meta file, or an error. */
 export function parseChatMeta(raw: unknown): { meta: ChatMeta } | { error: string } {
   if (!isObject(raw)) return { error: "invalid chat" };
-  const { id, title, titleIsAuto, model, updatedAt, rev, messageCount } = raw;
+  const { id, title, titleIsAuto, model, updatedAt, rev, messageCount, source } = raw;
   if (!isValidChatId(id)) return { error: "invalid chat id" };
   if (typeof title !== "string" || title.length > MAX_CHAT_TITLE_CHARS) return { error: "invalid title" };
   if (typeof titleIsAuto !== "boolean") return { error: "invalid titleIsAuto" };
@@ -96,7 +99,9 @@ export function parseChatMeta(raw: unknown): { meta: ChatMeta } | { error: strin
   if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) return { error: "invalid updatedAt" };
   if (!isRev(rev)) return { error: "invalid rev" };
   if (typeof messageCount !== "number" || !Number.isSafeInteger(messageCount) || messageCount < 0) return { error: "invalid messageCount" };
-  return { meta: { id, title, titleIsAuto, model, updatedAt, rev, messageCount } };
+  // Optional and additive: absent (old files) or exactly "mcp"; anything else is invalid.
+  if (source !== undefined && source !== "mcp") return { error: "invalid source" };
+  return { meta: { id, title, titleIsAuto, model, updatedAt, rev, messageCount, ...(source === "mcp" ? { source } : {}) } };
 }
 
 /** A chat to store (payload of `chats:save`), or an error. Anything else on the input is dropped. */
@@ -227,6 +232,7 @@ export function createChatStore(opts: ChatStoreOptions): ChatStore {
           updatedAt: chat.updatedAt,
           rev: chat.rev,
           messageCount: chat.messages.length,
+          ...(chat.source === "mcp" ? { source: "mcp" as const } : {}),
         };
         await io.write(metaFile(chat.id), Buffer.from(JSON.stringify(meta), "utf8"));
         revs.set(chat.id, chat.rev);

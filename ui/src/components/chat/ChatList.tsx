@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { PlusIcon, XIcon } from "@/components/icons";
+import { PenNibIcon, PlusIcon, XIcon } from "@/components/icons";
 import { useChatStore } from "@/store/chatStore";
 import type { ChatSummary } from "@/store/chatStore";
 import { Badge } from "@/components/ui/badge";
@@ -62,7 +62,19 @@ function ChatListRow({ chat }: { chat: ChatSummary }) {
           </span>
         )}
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-xs font-semibold text-text-primary">{chat.title}</span>
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="truncate text-xs font-semibold text-text-primary">{chat.title}</span>
+            {chat.source === "mcp" && (
+              <span
+                data-testid={`chat-mcp-${chat.id}`}
+                title="Started over MCP"
+                className="shrink-0 text-text-muted"
+              >
+                <PenNibIcon size={12} weight="light" aria-hidden />
+                <span className="sr-only">Started over MCP</span>
+              </span>
+            )}
+          </span>
           <ChatStatus chat={chat} />
         </span>
       </button>

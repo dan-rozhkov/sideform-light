@@ -22,6 +22,12 @@ describe("browser-settings IPC", () => {
   it("registers exactly the two channels", () => {
     expect([...setup().handlers.keys()].sort()).toEqual(["browser-settings:get", "browser-settings:set"]);
   });
+  it("isSender applies the same rule to any event (used by mcp-settings:*)", () => {
+    const s = setup();
+    expect(s.ipc.isSender(s.ev(7, SETTINGS))).toBe(true);
+    expect(s.ipc.isSender(s.ev(8, SETTINGS))).toBe(false);
+    expect(s.ipc.isSender(s.ev(7, SETTINGS, false))).toBe(false);
+  });
   it("answers the settings page top frame", () => {
     const s = setup();
     expect(s.handlers.get("browser-settings:get")!(s.ev(7, SETTINGS))).toEqual({ adBlock: true });

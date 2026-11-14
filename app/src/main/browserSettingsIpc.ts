@@ -25,6 +25,8 @@ export interface BrowserSettingsIpcDeps {
 export interface BrowserSettingsIpc {
   /** Lends one window's Settings-tab check. Returns the withdrawal (call it when the window closes). */
   addWindow(port: SettingsWindowPort): () => void;
+  /** True when `event` comes from the top frame of a Settings tab (any window): the rule of every Settings-page channel (`mcp-settings:*` too). */
+  isSender(event: BrowserSettingsEvent): boolean;
   /** Removes both handlers (will-quit). */
   dispose(): void;
 }
@@ -57,6 +59,7 @@ export function createBrowserSettingsIpc(deps: BrowserSettingsIpcDeps): BrowserS
       ports.add(port);
       return () => void ports.delete(port);
     },
+    isSender: (e) => isSettingsSender(ports, e),
     dispose() {
       deps.ipcMain.removeHandler("browser-settings:get");
       deps.ipcMain.removeHandler("browser-settings:set");

@@ -13,6 +13,7 @@ import { useChatStore } from "@/store/chatStore";
 import { toolHandlers, type ToolExecutionContext, type ToolHandler } from "@/lib/toolRegistry";
 import type { ChatLaunchPayload } from "@/types/chat";
 import type { UIMessage } from "ai";
+import { findPendingAskUser } from "@/components/chat/pendingAskUser";
 import { isIsolatedBrowseCall } from "@/lib/tools/browser/isolation";
 import { BROWSE_AGENT_OUTER_TIMEOUT_MS } from "@/lib/tools/browser/browseAgent";
 import { useOwnedChat } from "@/hooks/useOwnedChat";
@@ -699,6 +700,47 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   // consumer of `status`/`isLoading` therefore treats the turn as in flight.
   const status = toolsBusy && chat.status === "ready" ? "streaming" : chat.status;
 
+  // The person's (or an MCP client's) answer to ask_user re-arms auto-continuation: after a Stop the
+  // question stays on screen, and answering it means "go on". Other tool outputs keep the Stop gate.
+  const chatAddToolOutput = chat.addToolOutput;
+  const addToolOutput = useCallback<typeof chatAddToolOutput>(
+    (output) => {
+      // Only a real pending ask_user with this id re-arms; a stale or foreign id keeps the Stop gate.
+      let restore: (() => void) | null = null;
+      const { tool, toolCallId } = output as { tool?: string; toolCallId?: string };
+      if (tool === "ask_user" && findPendingAskUser(ownedChat.messages)?.toolCallId === toolCallId) {
+        const previous = turnStoppedRef.current;
+        turnStoppedRef.current = false;
+        restore = () => {
+          turnStoppedRef.current = previous;
+        };
+      }
+      try {
+        const result = chatAddToolOutput(output);
+        if (restore) {
+          const undo = restore;
+          return Promise.resolve(result).catch((e: unknown) => {
+            undo();
+            throw e;
+          }) as ReturnType<typeof chatAddToolOutput>;
+        }
+        return result;
+      } catch (e) {
+        restore?.();
+        throw e;
+      }
+    },
+    [chatAddToolOutput, ownedChat],
+  );
+  // Live "a turn is in flight", read on demand: `Chat.status` changes synchronously inside sendMessage, long
+  // before the next render (the `status` above is a render-time value).
+  const isBusyLive = useCallback(
+    () => ownedChat.status === "submitted" || ownedChat.status === "streaming" || livePendingRunsRef.current.size > 0,
+    [ownedChat],
+  );
+  // Whether the current or last turn was ended by a Stop (or an abandonment path), read on demand.
+  const isTurnStopped = useCallback(() => turnStoppedRef.current, []);
+
   return {
     messages: chat.messages,
     input,
@@ -712,6 +754,8 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
     clearError,
     setMessages,
     retryState,
-    addToolOutput: chat.addToolOutput,
+    addToolOutput,
+    isTurnStopped,
+    isBusyLive,
   };
 }

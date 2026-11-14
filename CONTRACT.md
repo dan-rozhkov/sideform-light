@@ -4,12 +4,12 @@ Sideform Light is a browser-only cut of Sideform Desktop. One window: agent chat
 on the left, browser tabs on the right. The agent can drive several isolated
 browser sessions in parallel. There is NO canvas, NO documents, NO workflows,
 NO showcase, NO accounts/sign-in, NO computer use (desktop apps), NO desktop MCP
-bridge.
+bridge (the old `browse_*` remote-control bridge). There IS a small MCP *task* bridge, off by default: see "MCP agent bridge".
 
 Kept: agent chat (model picker, chat history on disk), browser tabs + address
 row + omnibox, browse_agent with parallel isolated sessions, saved logins
 (Passwords tab, fillLogin), History tab, ad blocking, trace tabs, QA
-(assert, fixtures, checkpoint journal), Settings (appearance + browser only).
+(assert, fixtures, checkpoint journal), Settings (appearance + browser + mcp), MCP agent bridge (task giver for external agents).
 
 ## Layout
 
@@ -40,7 +40,7 @@ Pages (paths are identical on `app://sideform` and on the dev server):
 |---|---|---|
 | Agent panel | `app://sideform/agent` | `preload/agentPanel` (`window.penAgentPanel`) |
 | Trace tab | `app://sideform/trace/<id>?src=local` | `preload/tab` (`window.penDesktop`) |
-| Settings tab | `app://sideform/settings?section=<appearance|browser>` | `preload/tab` |
+| Settings tab | `app://sideform/settings?section=<appearance|browser|mcp>` | `preload/tab` |
 
 Local shell HTML (tab bar, empty start, passwords, history, omnibox) stays on `file://` as today.
 
@@ -73,13 +73,54 @@ window.penAgentPanel = {
                       // REMOVED: launchApp, releaseApp, nativeApps, forChat
   chats,              // list, read, save, remove
   traces,             // save, open, listTabs, read
-  settings,           // open(section?: "appearance" | "browser")
+  settings,           // open(section?: "appearance" | "browser" | "mcp")
+  mcp,                // onRequest(handler), notifyChanged(taskId): the MCP agent bridge, see below
 }
 ```
 
-`window.penDesktop` (preload/tab.ts, trace + settings tabs only): theme reporting, `traces` (read), `settings.open`, `browserSettings` (`get`/`set` of `{ adBlock }`). No canvas, docs, workflows, logins (doc @mention), appIcon, auth, MCP, browser bridge.
+`window.penDesktop` (preload/tab.ts, trace + settings tabs only): theme reporting, `traces` (read), `settings.open`/`onSection`, `browserSettings` (`get`/`set` of `{ adBlock }`), `mcp` (`get`/`set`/`regenerateToken`, below). No canvas, docs, workflows, logins (doc @mention), appIcon, auth, browser bridge.
 
-Settings sections: `"appearance" | "browser"` only. Browser settings shape: `{ adBlock: boolean }` (`mcpBrowser` and `askAppAccess` removed).
+Settings sections: `"appearance" | "browser" | "mcp"` only. Browser settings shape: `{ adBlock: boolean }` (`mcpBrowser` and `askAppAccess` removed).
+
+## MCP agent bridge (v1)
+
+An external agent (Hermes Agent, Claude Code, Codex, any MCP client on the same machine) gives a task in plain words to the RUNNING app, follows it and collects the result. It is a task giver, not a remote control: no browser tools over MCP. Design: `docs/superpowers/specs/2026-11-15-mcp-agent-bridge-design.md`. Code: `app/src/main/mcp/`.
+
+**Endpoint.** `POST http://127.0.0.1:47821/mcp` (default port 47821; override for tests `SIDEFORM_LIGHT_MCP_PORT`; a busy port is a status error, never a fallback). JSON-RPC 2.0 with a plain `application/json` answer, server name `sideform-light`; methods `initialize`, `ping`, `tools/list`, `tools/call`, `notifications/initialized` (202). `GET` and any other method on `/mcp` answer 405, other paths 404. Loopback only; `Authorization: Bearer <token>` (constant-time); the `Host` header must be `127.0.0.1:<port>` or `localhost:<port>`; any `Origin` header is rejected; 1 MB body cap. OFF by default. Settings file `<userData>/mcp-bridge.json` `{ enabled, token }` (0600, token = 64 hex, generated once). Connection file `~/.sideform-light/mcp.json` `{ url, token, port }` (dir 0700, file 0600), written on start and removed on stop/quit only while it still holds our token.
+
+**Tools:** `start_task{prompt, title?}`, `get_task{taskId, waitSeconds?}`, `answer_question{taskId, answers}`, `send_message{taskId, text}`, `stop_task{taskId}`, `list_tasks{limit?}`. Inputs are validated in main (prompt 1..20000, title <= 200, text 1..20000, taskId `^[A-Za-z0-9_-]{1,128}$`, answers <= 50, limit 1..100, waitSeconds 0..55) and again in the panel. Results are JSON text; failures are `isError` results.
+
+**Main <-> panel.** `penAgentPanel.mcp = { onRequest(handler) -> unsubscribe, notifyChanged(taskId) }`. `onRequest` registers THE handler (a second call replaces it) and sends `mcp:panel-ready`; main sends `mcp:task-request` `{ requestId, request }`, the page answers `mcp:task-reply` `{ requestId, reply }` (the preload does this from the handler's resolved value; a rejected handler gives `{ error }`); `notifyChanged` sends `mcp:task-changed` `{ taskId }` and wakes waiting `get_task` calls. All three panel -> main channels are accepted only from the panel's own webContents and panel page. Main routes to the ONE panel that registered last; none (or a reload in progress) -> `{ error: "Sideform Light has no open window" }`; no reply within 15 s -> `{ error: "Sideform Light did not answer" }`.
+
+```ts
+type McpPanelRequest =
+  | { op: "start"; prompt: string; title?: string }
+  | { op: "get"; taskId: string }
+  | { op: "answer"; taskId: string; answers: { id: string; value: string | string[]; note?: string }[] }
+  | { op: "message"; taskId: string; text: string }
+  | { op: "stop"; taskId: string }
+  | { op: "list"; limit: number };
+type TaskStatus = "running" | "needs_answer" | "done" | "stopped" | "error";
+interface TaskState { taskId: string; title: string; status: TaskStatus; updatedAt: number;
+  question?: { questions: unknown[] }; result?: string; error?: string;
+  traces: { traceId: string; title?: string; status?: string }[] }
+type McpPanelReply = { error: string } | { task: TaskState } | { ok: true }
+  | { tasks: Pick<TaskState, "taskId" | "title" | "status" | "updatedAt">[] };
+```
+
+`get_task` with `waitSeconds` re-reads the task (op `get`) on each `mcp:task-changed` for it (and at least every 5 s) and returns early only when the status is not `running` in two reads one second apart.
+
+**Settings page (`penDesktop.mcp`).** Channels `mcp-settings:get|set|regenerate-token`, answered only to the top frame of a Settings tab on the settings page (like `browser-settings:*`), everything else gets `{ error: "Not allowed." }`.
+
+```ts
+interface McpSettingsView { enabled: boolean; port: number; url: string; token: string;
+  status: { state: "off" | "starting" | "listening" | "error"; error?: string } }
+mcp: { get(): Promise<McpSettingsView>;
+       set(p: { enabled: boolean }): Promise<McpSettingsView | { error: string }>;
+       regenerateToken(): Promise<McpSettingsView | { error: string }> }
+```
+
+Chat meta gains the optional field `source?: "mcp"` (`chats:save|read|list`; absent or exactly `"mcp"`, anything else is rejected as `invalid source`).
 
 ## Branding
 

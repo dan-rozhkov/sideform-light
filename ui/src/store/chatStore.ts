@@ -41,9 +41,25 @@ export interface ChatSummary {
   /** Last time this chat's list-relevant state changed, for sorting the chat
    * list by recency. */
   updatedAt: number;
+  /** Set once at creation for chats started over MCP (an external agent's task). Persisted with the chat. */
+  source?: "mcp";
 }
 
 export type ParallelCount = 1 | 2 | 3;
+
+/** What a mounted session knows about its turn; the MCP task status is derived from it. */
+export interface ChatRunState {
+  /** A turn is in flight (a stream, or live tool runs). */
+  busy: boolean;
+  /** The current or last turn was ended by a Stop (or an abandonment path) and nothing re-armed it. */
+  stopped: boolean;
+  /** This session sent or continued a turn in this page lifetime (false for a chat restored after a reload). */
+  ranSinceMount: boolean;
+  /** The session's last turn error text, if any. */
+  error?: string;
+  /** A launch payload for this chat still waits in the launch queue. */
+  launchQueued: boolean;
+}
 
 /** Actions published by a mounted chat session so the chat list can drive it. */
 export interface ChatSessionActions {
@@ -52,6 +68,17 @@ export interface ChatSessionActions {
   /** The chat's current transcript, read on demand (not subscribed to). */
   getMessages: () => UIMessage[];
   clearChat: () => void;
+  /** The session's true run state, read on demand (fresher than ChatSummary.isBusy). */
+  getRunState: () => ChatRunState;
+  /**
+   * Answers the pending ask_user like the form does. First answer wins: with none pending (the person
+   * answered first) it returns an error and changes nothing.
+   */
+  answerAskUser: (answers: { id: string; value: string | string[]; note?: string }[]) => { ok: true } | { error: string };
+  /** Sends a follow-up message, only when the agent is not busy and nothing is waiting for an answer. */
+  sendText: (text: string) => { ok: true } | { error: string };
+  /** The Stop button path. */
+  stop: () => void;
 }
 
 interface ChatState {
@@ -92,7 +119,7 @@ interface ChatState {
   setModel: (model: string) => void;
   setParallelCount: (count: ParallelCount) => void;
 
-  createChat: (opts?: { activate?: boolean; parallelCount?: ParallelCount }) => string;
+  createChat: (opts?: { activate?: boolean; parallelCount?: ParallelCount; source?: "mcp" }) => string;
   closeChat: (chatId: string) => void;
   /** Makes a chat active, restores its parallelCount, and clears unread. */
   openChat: (chatId: string) => void;
@@ -184,6 +211,7 @@ function makeChat(
   title: string,
   model: string,
   parallelCount: ParallelCount,
+  source?: "mcp",
 ): ChatSummary {
   return {
     id,
@@ -195,6 +223,7 @@ function makeChat(
     needsAnswer: false,
     isBusy: false,
     updatedAt: Date.now(),
+    ...(source ? { source } : {}),
   };
 }
 
@@ -272,7 +301,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       opts?.parallelCount ?? normalizeParallelCount(localStorage.getItem("chat-parallel-count"));
     const model = normalizeModel(localStorage.getItem("chat-model"));
     set({
-      chats: [...chats, makeChat(id, title, model, parallelCount)],
+      chats: [...chats, makeChat(id, title, model, parallelCount, opts?.source)],
       ...(activate ? { activeChatId: id, model, parallelCount } : {}),
     });
     return id;

@@ -5,16 +5,18 @@ import { EditorProviders } from "@/components/EditorProviders";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import { AppearanceSection } from "@/components/settings/sections/AppearanceSection";
 import { BrowserSection } from "@/components/settings/sections/BrowserSection";
+import { McpSection } from "@/components/settings/sections/McpSection";
 import { useHtmlRouteClass } from "@/hooks/useHtmlRouteClass";
 import { parseSettingsSection, type SettingsSection } from "@/lib/openSettings";
 
 const SECTION_VIEWS: Record<SettingsSection, () => React.JSX.Element> = {
   appearance: AppearanceSection,
   browser: BrowserSection,
+  mcp: McpSection,
 };
 
 /**
- * "/settings?section=appearance|browser": two sections. Writes localStorage from its own document;
+ * "/settings?section=appearance|browser|mcp": three sections. Writes localStorage from its own document;
  * the other views follow through `storage` events and the theme BroadcastChannel.
  */
 export default function SettingsPage() {

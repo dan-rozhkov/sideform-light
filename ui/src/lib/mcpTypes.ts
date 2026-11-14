@@ -1,0 +1,39 @@
+// The panel side of the MCP agent bridge contract (see docs/superpowers/specs/2026-11-15-mcp-agent-bridge-design.md).
+
+export type McpAnswer = { id: string; value: string | string[]; note?: string };
+
+export type McpPanelRequest =
+  | { op: "start"; prompt: string; title?: string }
+  | { op: "get"; taskId: string }
+  | { op: "answer"; taskId: string; answers: McpAnswer[] }
+  | { op: "message"; taskId: string; text: string }
+  | { op: "stop"; taskId: string }
+  | { op: "list"; limit: number };
+
+export type TaskStatus = "running" | "needs_answer" | "done" | "stopped" | "error";
+
+export interface TaskTrace {
+  traceId: string;
+  title?: string;
+  status?: string;
+}
+
+export interface TaskState {
+  taskId: string;
+  title: string;
+  status: TaskStatus;
+  updatedAt: number;
+  /** The pending ask_user input's questions, as the form shows them. */
+  question?: { questions: unknown[] };
+  /** Last assistant text, when done. */
+  result?: string;
+  /** When error. */
+  error?: string;
+  traces: TaskTrace[];
+}
+
+export type McpPanelReply =
+  | { error: string }
+  | { task: TaskState }
+  | { ok: true }
+  | { tasks: Pick<TaskState, "taskId" | "title" | "status" | "updatedAt">[] };

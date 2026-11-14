@@ -3,7 +3,7 @@
 Sideform Light is a browser-only cut of Sideform Desktop: ONE window with the agent chat on the left and
 browser tabs on the right. The agent can drive several isolated browser sessions in parallel. There is no
 canvas, no documents, no workflows, no showcase, no accounts or sign-in, no computer use (external desktop
-apps) and no desktop MCP bridge. `app/` is the Electron shell; the sibling `../ui/` (Vite + React) is the
+apps) and no desktop `browse_*` MCP bridge (a small, off-by-default MCP *task* bridge exists: see "MCP agent bridge"). `app/` is the Electron shell; the sibling `../ui/` (Vite + React) is the
 agent panel, the trace page and the settings page, bundled into the app. The integration contract between
 `app/`, `ui/` and the backend is `../CONTRACT.md` — read it before changing the `app://` protocol, the
 `penAgentPanel` / `penDesktop` shapes or the backend endpoints.
@@ -43,6 +43,7 @@ Versioning: `package.json` is `sideform-light` 0.1.0. There is no release automa
 | `SIDEFORM_LIGHT_NO_ANIMATIONS` | `1`: no shell motion (panel slide, tab strip). |
 | `SIDEFORM_LIGHT_BROWSER_CURSOR` | `off`/`0`/`false`: kill switch of the in-page agent cursor. |
 | `SIDEFORM_LIGHT_BROWSER_CURSOR_MOTION` | Cursor motion override (see `cursorSettings.ts`). |
+| `SIDEFORM_LIGHT_MCP_PORT` | Port of the MCP agent bridge (default 47821; whole number 1..65535, else the default). Tests/e2e use a free port. The bridge itself is switched on in Settings (`<userData>/mcp-bridge.json`). `~/.sideform-light/mcp.json` follows `$HOME` (e2e points `HOME` at a temp dir). |
 | `SIDEFORM_LIGHT_SESSION_SLOT_WAIT_MS` | How long an isolated-session command waits for a free partition slot (tests). |
 
 The `PEN_DESKTOP_*` names of Sideform Desktop were renamed to `SIDEFORM_LIGHT_*` (a plain prefix swap; `PEN_DESKTOP_URL`, `PEN_DESKTOP_REGISTER_PROTOCOL` and the editor-URL logic are gone). Names inside tests and e2e helpers (`SIDEFORM_LIGHT_E2E_OWNED_USER_DATA_DIR`) follow the same prefix.
@@ -73,10 +74,10 @@ The shell's own HTML (tab bar, empty start, passwords, history, omnibox) stays o
 
 ## Preload APIs
 
-`window.penAgentPanel` (`preload/agentPanel.ts`) is `{ version: 3, browser, chats, traces, settings }`:
-`browser` = `open, act, findImages, snapshot, perform, assert, read, screenshot, tabs, applyFixture, releaseFixture, clearActEmulation, fillLogin, startJournal, stopJournal, captureCheckpoint, requests, capture (trace DOM snapshots only), isolated(sessionId), closeSession(sessionId), revealAgentTab(sessionId?)`; `chats` = `list, read, save, remove`; `traces` = `save, open, listTabs, read`; `settings` = `open(section?)`. Removed from the Desktop shape: `launchApp`, `releaseApp`, `nativeApps`, `forChat`.
+`window.penAgentPanel` (`preload/agentPanel.ts`) is `{ version: 3, browser, chats, traces, settings, mcp }`:
+`browser` = `open, act, findImages, snapshot, perform, assert, read, screenshot, tabs, applyFixture, releaseFixture, clearActEmulation, fillLogin, startJournal, stopJournal, captureCheckpoint, requests, capture (trace DOM snapshots only), isolated(sessionId), closeSession(sessionId), revealAgentTab(sessionId?)`; `chats` = `list, read, save, remove`; `traces` = `save, open, listTabs, read`; `settings` = `open(section?)`; `mcp` = `onRequest(handler)`, `notifyChanged(taskId)` (the MCP agent bridge, below). Removed from the Desktop shape: `launchApp`, `releaseApp`, `nativeApps`, `forChat`.
 
-`window.penDesktop` (`preload/tab.ts`, trace and settings pages only) is `{ traces: { read }, browserSettings: { get, set }, settings: { open, onSection } }`, plus an invisible theme reporter (`tab:theme`). No browser bridge, no storage.
+`window.penDesktop` (`preload/tab.ts`, trace and settings pages only) is `{ traces: { read }, browserSettings: { get, set }, mcp: { get, set, regenerateToken }, settings: { open, onSection } }`, plus an invisible theme reporter (`tab:theme`). No browser bridge, no storage.
 
 `test/preloadTab.test.ts`, `test/preloadBrowserBridge.test.ts` and `test/ipcContract.test.ts` pin both shapes.
 
@@ -238,6 +239,15 @@ screenshot of the views).
 
 **Reveal in Finder.** A trace tab has a folder on disk: File ▸ Reveal in Finder (Show in Explorer / Show in Folder; enabled only while the active tab is a trace tab) and the tab's right-click menu (`tabbar:tab-menu`, native `buildTabContextMenuTemplate`) call `revealInFolder` (`revealInFolder.ts`; the target is `{kind: "trace", id}`, the id validated by `isValidTraceId`; file missing → the folder is opened). Right-clicking a tab does not activate it.
 
+## MCP agent bridge
+
+An external agent (Hermes Agent, Claude Code, Codex: any MCP client on this machine) gives a task to the RUNNING app, polls it, answers the agent's questions and reads the result. It is a task giver, not a remote control: no browser tools over MCP. Spec: `../docs/superpowers/specs/2026-11-15-mcp-agent-bridge-design.md`; wire shapes: `../CONTRACT.md` "MCP agent bridge". OFF by default; switched on in Settings > MCP.
+
+- **Code** (`src/main/mcp/`, all Electron-free and unit-tested except the wiring): `httpServer.ts` + `jsonRpc.ts` + `auth.ts` (hand-rolled MCP over HTTP POST at `/mcp` on `127.0.0.1`, fixed port 47821; loopback remote-address check, constant-time bearer, Host pinning, any `Origin` rejected, 1 MB cap, post-listen errors never crash main, GET → 405), `tools.ts` (the six tools: manifest + dispatcher) with `toolInputs.ts` (validation, runs BEFORE the panel is asked) and `waitTask.ts` (`get_task` + `waitSeconds`), `panelBridge.ts` (request ids, 15 s reply timeout, one live panel, last registered wins), `settingsStore.ts` (`<userData>/mcp-bridge.json`), `handshake.ts` (`~/.sideform-light/mcp.json`), `service.ts` (lifecycle, serialized), `mcpSettingsIpc.ts`, `mcpPanelIpc.ts` (sender check).
+- **Wiring.** `index.ts` creates ONE `PanelBridge` and ONE `McpService` per process (`start()` after ready only when enabled; `disposeSync()` on `will-quit`) and registers `mcp-settings:*` once. `window.ts` registers the window's panel on `mcp:panel-ready`, drops it on navigation / destroy / window close, and forwards `mcp:task-reply` / `mcp:task-changed` to the bridge after `isMcpPanelSender`. No decisions live there.
+- **Security.** Port busy → status `error`, no random fallback (a static client config would silently break). The token (64 hex) is shown to the Settings page only; it never appears in a log, a status text or an MCP result. Closing the window or a panel reload makes the bridge answer "Sideform Light has no open window". Tasks are ordinary panel chats; the panel marks them `source: "mcp"` in the chat meta (`chatStore.ts`), and an MCP client can only reach those.
+- **e2e** (`e2e/mcp-bridge.spec.ts`): the stub ui's agent page registers a fake `penAgentPanel.mcp.onRequest` handler with canned replies (`stubUi.ts`); the spec enables the bridge through `mcp-bridge.json` in its own userData dir, uses `SIDEFORM_LIGHT_MCP_PORT` (a free port) and `HOME` (a temp dir), and makes real HTTP calls.
+
 ## IPC channels
 
 Channel names are plain strings; `test/ipcContract.test.ts` scans `src/` and pins every channel with its direction (and that every `ipcMain` listener is torn down again). Keep this table and that test in sync.
@@ -256,10 +266,13 @@ Channel names are plain strings; `test/ipcContract.test.ts` scans `src/` and pin
 | `history:list\|remove\|clear\|open`, `history:theme`, `history:changed` | History tab ↔ main | |
 | `settings:open` | panel / trace / settings → main | `settings:section` goes back to an open Settings page |
 | `browser-settings:get`, `browser-settings:set` | Settings page → main | top frame of the Settings tab only |
+| `mcp-settings:get`, `mcp-settings:set`, `mcp-settings:regenerate-token` | Settings page → main | same sender rule (`browserSettingsIpc.isSender`) |
+| `mcp:panel-ready`, `mcp:task-reply`, `mcp:task-changed` | panel → main | panel webContents AND panel page only (`isMcpPanelSender`, the `chats:*` check without the vanished-frame allowance) |
+| `mcp:task-request` | main → panel | `{ requestId, request }`, to the one registered panel |
 | `chats:list\|read\|save\|delete` | panel → main | panel page only, process-level |
 | `traces:save\|read\|open\|list-tabs` | panel (and trace tab for `read`) → main | |
 
-Removed with the cut (the contract test fails if one comes back): every `canvas:*`, `canvases:*`, `doc:*`, `docs:*`, `workflow:*`, `workflows:*`, `mcp:*`, `auth:*`, `app-icon:*`, `logins:*`, `menu:command`, `empty:*`, `editor:*`, `tabbar:new`, `tabbar:new-doc`, `tabbar:new-menu`, `traces:list`.
+Removed with the cut (the contract test fails if one comes back): every `canvas:*`, `canvases:*`, `doc:*`, `docs:*`, `workflow:*`, `workflows:*`, `auth:*`, `app-icon:*`, `logins:*`, `menu:command`, `empty:*`, `editor:*`, `tabbar:new`, `tabbar:new-doc`, `tabbar:new-menu`, `traces:list`.
 
 ## Testing
 

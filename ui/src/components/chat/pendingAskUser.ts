@@ -25,3 +25,27 @@ export function hasPendingAskUser(messages: UIMessage[]): boolean {
       ),
   );
 }
+
+/** The pending ask_user tool call (same rule as `hasPendingAskUser`), newest first. */
+export function findPendingAskUser(
+  messages: UIMessage[],
+): { toolCallId: string; input: { title?: string; questions: unknown[] } } | undefined {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i];
+    if (m.role !== "assistant") continue;
+    for (let j = m.parts.length - 1; j >= 0; j -= 1) {
+      const p = m.parts[j] as { type?: string; toolCallId?: string; input?: unknown; state?: string };
+      if (
+        p.type === "tool-ask_user" &&
+        typeof p.toolCallId === "string" &&
+        p.input != null &&
+        p.state !== "output-available" &&
+        p.state !== "output-error"
+      ) {
+        const input = p.input as { title?: string; questions?: unknown };
+        return { toolCallId: p.toolCallId, input: { title: input.title, questions: Array.isArray(input.questions) ? input.questions : [] } };
+      }
+    }
+  }
+  return undefined;
+}

@@ -530,4 +530,29 @@ describe("desktopChatPersistence (eager)", () => {
     await startDesktopChatPersistence();
     expect(useChatStore.getState().chats.find((c) => c.id === first)?.title).toBe("Chat 1");
   });
+
+  it("restores the mcp source of a chat and ignores any other value", async () => {
+    fakeBridge(
+      [meta("a", { source: "mcp" }), meta("b"), meta("c", { source: "other" as never })],
+      { a: stored("a", [userMsg("a1")]), b: stored("b", [userMsg("b1")]), c: stored("c", [userMsg("c1")]) },
+    );
+    await startDesktopChatPersistence();
+    const chats = useChatStore.getState().chats;
+    expect(chats.find((c) => c.id === "a")?.source).toBe("mcp");
+    expect(chats.find((c) => c.id === "b")?.source).toBeUndefined();
+    expect(chats.find((c) => c.id === "c")?.source).toBeUndefined();
+  });
+
+  it("saves the mcp source with the chat, and nothing extra for a plain chat", async () => {
+    const bridge = fakeBridge();
+    await startDesktopChatPersistence();
+    const mcpId = useChatStore.getState().createChat({ activate: false, source: "mcp" });
+    const plainId = startId();
+    notifyChatState(mcpId, handle({ messages: [userMsg()] }));
+    notifyChatState(plainId, handle({ messages: [userMsg()] }));
+    await ms(1000);
+    const byId = new Map(bridge.save.mock.calls.map(([c]) => [c.id, c]));
+    expect(byId.get(mcpId)?.source).toBe("mcp");
+    expect(byId.get(plainId) && "source" in byId.get(plainId)!).toBe(false);
+  });
 });

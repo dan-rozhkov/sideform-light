@@ -46,12 +46,12 @@ describe("<SettingsPage />", () => {
     expect(document.title).toBe("Settings");
   });
 
-  it("has exactly two sections: appearance and browser", () => {
+  it("has exactly three sections: appearance, browser and MCP", () => {
     renderSettings();
     const names = within(screen.getByRole("navigation", { name: "Settings sections" }))
       .getAllByRole("button")
       .map((b) => b.textContent);
-    expect(names).toEqual(["Appearance", "Browser"]);
+    expect(names).toEqual(["Appearance", "Browser", "MCP"]);
   });
 
   it("opens the section named by ?section= and falls back to appearance for an unknown one", () => {

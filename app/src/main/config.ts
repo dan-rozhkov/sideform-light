@@ -4,6 +4,8 @@
 // the shell at the ui's Vite dev server with SIDEFORM_LIGHT_UI_URL; the page
 // origin is then that server's origin and every origin check uses it.
 
+import { MCP_DEFAULT_PORT } from "./mcp/types";
+
 export const APP_SCHEME = "app";
 export const APP_HOST = "sideform";
 /** The origin of the bundled ui. NOT `new URL(...).origin`: Node reports "null" for a non-special scheme. */
@@ -123,8 +125,16 @@ export function isAdBlockDisabledByEnv(env: NodeJS.ProcessEnv): boolean {
   return ["1", "true", "on", "yes"].includes((raw as string).trim().toLowerCase());
 }
 
+/** `SIDEFORM_LIGHT_MCP_PORT` (tests/e2e): the port of the MCP agent bridge. Default 47821; only a whole number 1..65535 counts. */
+export function resolveMcpPort(env: NodeJS.ProcessEnv): number {
+  const raw = env.SIDEFORM_LIGHT_MCP_PORT;
+  if (!isEnvValueSet(raw) || !/^\d{1,5}$/.test((raw as string).trim())) return MCP_DEFAULT_PORT;
+  const port = Number((raw as string).trim());
+  return port >= 1 && port <= 65535 ? port : MCP_DEFAULT_PORT;
+}
+
 /** The section ids of the ui's `/settings` page (`?section=<id>`). */
-export const SETTINGS_SECTIONS = ["appearance", "browser"] as const;
+export const SETTINGS_SECTIONS = ["appearance", "browser", "mcp"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 /** True for one of the settings section ids; anything else (also non-strings) is not. */

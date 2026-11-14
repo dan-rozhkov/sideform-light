@@ -124,7 +124,42 @@ const settings = {
   open: (section?: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("settings:open", section),
 };
 
-contextBridge.exposeInMainWorld("penAgentPanel", { version: 3, browser, chats, traces, settings });
+// MCP agent bridge (src/main/mcp/): main forwards a request of an external MCP client (`mcp:task-request`
+// `{ requestId, request }`); the page's handler answers it and the reply goes back as `mcp:task-reply`
+// `{ requestId, reply }`. `notifyChanged` pushes "this task's state may have changed" (`mcp:task-changed`), which wakes
+// waiting `get_task` calls. Main accepts both only from this panel's own page. One handler: a second `onRequest` replaces it.
+let mcpHandler: ((req: unknown) => Promise<unknown>) | null = null;
+// The ONE request listener of this page, installed on the first `onRequest`. Not keyed on `mcpHandler`: an
+// unsubscribe sets that to null, and a later subscribe (StrictMode re-run, remount) must not add a second listener.
+let mcpListenerInstalled = false;
+const mcp = {
+  onRequest(handler: (req: unknown) => Promise<unknown>): () => void {
+    if (!mcpListenerInstalled) {
+      mcpListenerInstalled = true;
+      ipcRenderer.on("mcp:task-request", (_e, message: unknown) => {
+        const m = message as { requestId?: unknown; request?: unknown } | null;
+        if (!m || typeof m.requestId !== "string") return;
+        const requestId = m.requestId;
+        const current = mcpHandler;
+        const reply = (value: unknown) => ipcRenderer.send("mcp:task-reply", { requestId, reply: value });
+        if (!current) return reply({ error: "Sideform Light is not ready" });
+        Promise.resolve()
+          .then(() => current(m.request))
+          .then(reply, () => reply({ error: "The task request failed" }));
+      });
+    }
+    mcpHandler = handler;
+    ipcRenderer.send("mcp:panel-ready");
+    return () => {
+      if (mcpHandler === handler) mcpHandler = null;
+    };
+  },
+  notifyChanged(taskId: string): void {
+    ipcRenderer.send("mcp:task-changed", { taskId });
+  },
+};
+
+contextBridge.exposeInMainWorld("penAgentPanel", { version: 3, browser, chats, traces, settings, mcp });
 
 // Theme report for main (channel `panel:theme`): the page paints the stored ui theme as the
 // class `dark` on <html>. Initial read on DOMContentLoaded, then a MutationObserver on that class.

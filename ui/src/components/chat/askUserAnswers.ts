@@ -69,3 +69,34 @@ export function summarizeAnswers(
     return { label: q.label, display };
   });
 }
+
+/**
+ * Turns answers given from outside the form (the MCP bridge) into the form's state, with the form's
+ * rules: ids must be questions of the form, a multi question takes a list (a single string is wrapped),
+ * the other types take one string, and every required question needs an answer.
+ */
+export function buildAnswerState(
+  questions: AskUserQuestion[],
+  answers: { id: string; value: string | string[]; note?: string }[],
+): { state: AnswerState } | { error: string } {
+  const state = initAnswerState(questions);
+  const byId = new Map(questions.map((q) => [q.id, q]));
+  const seen = new Set<string>();
+  for (const a of answers) {
+    const q = byId.get(a.id);
+    if (!q) return { error: `Unknown question id: ${a.id}` };
+    if (seen.has(a.id)) return { error: `Question answered twice: ${a.id}` };
+    seen.add(a.id);
+    let value: string | string[];
+    if (q.type === "multi") {
+      value = Array.isArray(a.value) ? a.value.filter((v) => typeof v === "string") : typeof a.value === "string" && a.value ? [a.value] : [];
+    } else {
+      if (typeof a.value !== "string") return { error: `Question ${a.id} takes one text value` };
+      value = a.value;
+    }
+    state[a.id] = { value, note: typeof a.note === "string" ? a.note : "" };
+  }
+  const missing = questions.find((q) => q.required && !isAnswered(q, state[q.id]));
+  if (missing) return { error: `Question ${missing.id} needs an answer` };
+  return { state };
+}

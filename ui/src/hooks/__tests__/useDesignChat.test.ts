@@ -111,3 +111,85 @@ describe("the request the main chat sends", () => {
     expect(body.messages.at(-1).parts[0].text).toBe("open example.com");
   });
 });
+
+describe("answering ask_user after a Stop", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const pending = (): UIMessage[] => [
+    { id: "u", role: "user", parts: [{ type: "text", text: "go" }] },
+    {
+      id: "a",
+      role: "assistant",
+      parts: [{ type: "tool-ask_user", toolCallId: "q1", state: "input-available", input: { questions: [] } }],
+    } as UIMessage,
+  ];
+
+  it("re-arms auto-continuation: the answer resumes the agent", async () => {
+    const fetchMock = vi.fn(async () => textTurn("continuing"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDesignChat({ sessionId: "stopped-answer" }));
+    act(() => result.current.setMessages(pending()));
+    expect(result.current.isTurnStopped()).toBe(false);
+    await act(async () => {
+      result.current.stop();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(result.current.isTurnStopped()).toBe(true);
+    await act(async () => {
+      await result.current.addToolOutput({ tool: "ask_user", toolCallId: "q1", output: "answered" });
+    });
+    expect(result.current.isTurnStopped()).toBe(false);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  });
+
+  it("an ask_user output with an unknown id keeps the Stop gate", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => textTurn("x")));
+    const { result } = renderHook(() => useDesignChat({ sessionId: "stopped-foreign" }));
+    act(() => result.current.setMessages(pending()));
+    await act(async () => {
+      result.current.stop();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    await act(async () => {
+      await result.current.addToolOutput({ tool: "ask_user", toolCallId: "nope", output: "x" });
+    });
+    expect(result.current.isTurnStopped()).toBe(true);
+  });
+
+  it("restores the Stop gate when addToolOutput rejects", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => textTurn("x")));
+    const { result } = renderHook(() => useDesignChat({ sessionId: "stopped-reject" }));
+    act(() => result.current.setMessages(pending()));
+    await act(async () => {
+      result.current.stop();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(result.current.isTurnStopped()).toBe(true);
+    // An `output` getter that throws makes the SDK's addToolOutput reject (its parameters are destructured inside the async fn).
+    const bad = { tool: "ask_user", toolCallId: "q1" };
+    Object.defineProperty(bad, "output", {
+      get() {
+        throw new Error("boom");
+      },
+    });
+    await act(async () => {
+      await expect(result.current.addToolOutput(bad as never)).rejects.toThrow("boom");
+    });
+    expect(result.current.isTurnStopped()).toBe(true);
+  });
+
+  it("other tool outputs keep the Stop gate", async () => {
+    const fetchMock = vi.fn(async () => textTurn("x"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDesignChat({ sessionId: "stopped-other" }));
+    act(() => result.current.setMessages(pending()));
+    await act(async () => {
+      result.current.stop();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    await act(async () => {
+      await result.current.addToolOutput({ tool: "browse_act", toolCallId: "q1", output: "{}" } as never);
+    });
+    expect(result.current.isTurnStopped()).toBe(true);
+  });
+});

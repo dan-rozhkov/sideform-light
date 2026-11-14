@@ -7,6 +7,7 @@ import {
   BUILD_CONFIG_FILE,
   DISPLAY_APP_NAME,
   isAdBlockDisabledByEnv,
+  resolveMcpPort,
   parseBuildConfigBackendUrl,
   resolveBackendOrigin,
   resolveUiOrigin,
@@ -26,6 +27,13 @@ import { registerHistorySuggest } from "./historySuggestIpc";
 import { shouldReopenMainWindow } from "./closeTarget";
 import { getBrowserSettings } from "./browserSettingsInstance";
 import { createBrowserSettingsIpc } from "./browserSettingsIpc";
+import { createHandshake } from "./mcp/handshake";
+import { startHttpServer } from "./mcp/httpServer";
+import { registerMcpSettingsIpc } from "./mcp/mcpSettingsIpc";
+import { createPanelBridge } from "./mcp/panelBridge";
+import { createMcpService } from "./mcp/service";
+import { MCP_SETTINGS_FILE, createMcpSettingsStore } from "./mcp/settingsStore";
+import { MCP_TOOL_MANIFEST, createToolDispatcher } from "./mcp/tools";
 import {
   AD_BLOCK_CACHE_FILE,
   AD_BLOCK_PARTITION,
@@ -73,7 +81,7 @@ if (!app.requestSingleInstanceLock()) {
 
 /** The one way to open a main window after startup (dock "activate" or a second launch while every window is closed on macOS). */
 function openMainWindowIfNone(): void {
-  if (shouldReopenMainWindow(BaseWindow.getAllWindows())) createMainWindow(uiOrigin, loginServices, historyServices, browserSettingsIpc, fixtureBypass);
+  if (shouldReopenMainWindow(BaseWindow.getAllWindows())) createMainWindow(uiOrigin, loginServices, historyServices, browserSettingsIpc, fixtureBypass, mcpPanelBridge);
 }
 
 app.on("second-instance", () => {
@@ -132,6 +140,22 @@ const unregisterHistorySuggest = registerHistorySuggest({ ipcMain, store: histor
 const fixtureBypass = createFixtureBypassRegistry();
 const browserSettingsIpc = createBrowserSettingsIpc({ ipcMain, store: getBrowserSettings() });
 
+// MCP agent bridge (off by default): ONE panel bridge and ONE service for the whole app. A window lends its panel to
+// the bridge (window.ts); the Settings page switches it on and off over `mcp-settings:*` (Settings-tab senders only).
+const mcpPanelBridge = createPanelBridge();
+const mcpService = createMcpService({
+  settings: createMcpSettingsStore({ filePath: path.join(app.getPath("userData"), MCP_SETTINGS_FILE) }),
+  handshake: createHandshake(),
+  rpc: { toolManifest: MCP_TOOL_MANIFEST, callTool: createToolDispatcher({ panel: mcpPanelBridge }) },
+  port: resolveMcpPort(process.env),
+  startServer: startHttpServer,
+});
+const unregisterMcpSettingsIpc = registerMcpSettingsIpc({
+  ipcMain,
+  service: mcpService,
+  isSettingsSender: (e) => browserSettingsIpc.isSender(e),
+});
+
 /**
  * Serves the bundled ui on `app://sideform` (localProtocol.ts decides the file, the MIME type and the CSP).
  * Registered on the default session, the one the agent panel and the trace/settings pages use.
@@ -162,6 +186,8 @@ function serveUi(): void {
 
 app.whenReady().then(() => {
   void historyStore.load().catch((err) => console.error("[history] load failed", err));
+  // Starts the MCP server only when the person turned the bridge on (never listens by default).
+  void mcpService.start();
   // The visible product name (app menu labels, About box); the userData path and the Keychain item
   // name are already fixed above.
   app.setAboutPanelOptions({ applicationName: DISPLAY_APP_NAME });
@@ -239,7 +265,7 @@ app.whenReady().then(() => {
   // The user quit during startup: do not create a window behind their back.
   if (quitting) return;
 
-  createMainWindow(uiOrigin, loginServices, historyServices, browserSettingsIpc, fixtureBypass);
+  createMainWindow(uiOrigin, loginServices, historyServices, browserSettingsIpc, fixtureBypass, mcpPanelBridge);
 });
 
 app.on("window-all-closed", () => {
@@ -265,5 +291,7 @@ app.on("will-quit", () => {
   historyStore.flushSync();
   historyServices.service.dispose();
   browserSettingsIpc.dispose();
+  unregisterMcpSettingsIpc();
+  mcpService.disposeSync();
   unregisterHistorySuggest();
 });

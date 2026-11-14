@@ -1,4 +1,4 @@
-import { it, expect } from "vitest";
+import { it, expect, describe } from "vitest";
 import {
   initAnswerState,
   isAnswered,
@@ -72,4 +72,23 @@ it("summarizeAnswers maps option values to labels for read-only display", () => 
   const rows = summarizeAnswers([single, multi], state);
   expect(rows[0]).toEqual({ label: "Audience?", display: "Developers" });
   expect(rows[1]).toEqual({ label: "Focus?", display: "Speed, Cost" });
+});
+
+import { buildAnswerState as _buildAnswerState } from "../askUserAnswers";
+
+describe("buildAnswerState (answers from outside the form)", () => {
+  const questions = [
+    { id: "a", label: "A", type: "single" as const, options: [{ value: "x", label: "X" }], required: true },
+    { id: "b", label: "B", type: "multi" as const, options: [{ value: "p", label: "P" }, { value: "q", label: "Q" }] },
+  ];
+  it("builds the form state and wraps a single string for a multi question", () => {
+    const out = _buildAnswerState(questions, [{ id: "a", value: "x" }, { id: "b", value: "p", note: "n" }]);
+    expect(out).toEqual({ state: { a: { value: "x", note: "" }, b: { value: ["p"], note: "n" } } });
+  });
+  it("rejects unknown ids, repeats, a list for a single question and missing required answers", () => {
+    expect(_buildAnswerState(questions, [{ id: "zzz", value: "x" }])).toHaveProperty("error");
+    expect(_buildAnswerState(questions, [{ id: "a", value: "x" }, { id: "a", value: "x" }])).toHaveProperty("error");
+    expect(_buildAnswerState(questions, [{ id: "a", value: ["x"] }])).toHaveProperty("error");
+    expect(_buildAnswerState(questions, [{ id: "b", value: ["p"] }])).toHaveProperty("error");
+  });
 });

@@ -30,6 +30,7 @@ interface Snapshot {
   titleIsAuto: boolean;
   model: string;
   updatedAt: number;
+  source?: "mcp";
 }
 
 interface MetaKey {
@@ -168,6 +169,7 @@ function saveNow(chatId: string, force = false): Promise<unknown> | undefined {
     titleIsAuto: summary.titleIsAuto,
     model: summary.model,
     updatedAt: summary.updatedAt ?? Date.now(),
+    ...(summary.source === "mcp" ? { source: "mcp" as const } : {}),
   };
   pending.set(chatId, snapshot);
   attempted.add(chatId);
@@ -184,6 +186,7 @@ function saveNow(chatId: string, force = false): Promise<unknown> | undefined {
           updatedAt: snapshot.updatedAt,
           rev: (knownRev.get(chatId) ?? 0) + 1,
           messages,
+          ...(snapshot.source ? { source: snapshot.source } : {}),
         };
         try {
           const reply = await withTimeout(bridge.save(body), CHAT_IO_TIMEOUT_MS, "save");
@@ -394,7 +397,7 @@ export async function startDesktopChatPersistence(): Promise<void> {
       const messages = sanitizeStoredMessages(chat.messages);
       initialMessages.set(m.id, messages);
       knownRev.set(m.id, Math.max(m.rev, typeof chat.rev === "number" ? chat.rev : 0));
-      lastSaved.set(m.id, { messages, title: m.title, titleIsAuto: m.titleIsAuto, model: m.model, updatedAt: m.updatedAt });
+      lastSaved.set(m.id, { messages, title: m.title, titleIsAuto: m.titleIsAuto, model: m.model, updatedAt: m.updatedAt, ...(m.source === "mcp" ? { source: "mcp" as const } : {}) });
       summaries.push({
         id: m.id,
         title: m.title,
@@ -405,6 +408,8 @@ export async function startDesktopChatPersistence(): Promise<void> {
         unread: false,
         needsAnswer: false,
         isBusy: false,
+        // Only the exact value is trusted: anything else is a plain chat.
+        ...(m.source === "mcp" ? { source: "mcp" as const } : {}),
       });
     });
     if (summaries.length > 0) {

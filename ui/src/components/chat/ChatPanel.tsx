@@ -39,7 +39,11 @@ import { ChatInput } from "./ChatInput";
 import { ChatList } from "./ChatList";
 import { ConversationFilesPopover } from "./ConversationFilesPopover";
 import { ContextMeter } from "./ContextMeter";
-import { hasPendingAskUser } from "./pendingAskUser";
+import { findPendingAskUser, hasPendingAskUser } from "./pendingAskUser";
+import { buildAnswerState, serializeAnswers } from "./askUserAnswers";
+import { useMcpBridge } from "@/hooks/useMcpBridge";
+import { reportChatActivity } from "@/lib/mcpTasks";
+import type { AskUserQuestion } from "@/types/askUser";
 
 const PARALLEL_COUNT_OPTIONS = [
   { value: "1", label: "x1" },
@@ -169,6 +173,8 @@ function ChatSession({
     clearError,
     retryState,
     addToolOutput,
+    isTurnStopped,
+    isBusyLive,
   } = useDesignChat({ sessionId });
 
   const awaitingAnswer = hasPendingAskUser(messages);
@@ -249,10 +255,26 @@ function ChatSession({
   // Publish export/clear handlers so the chat header's menu can drive this
   // session. A ref keeps the handlers reading the latest messages without
   // re-registering (and re-rendering the chat header) on every streamed token.
-  const sessionDataRef = useRef({ messages, chatTitle, setMessages });
+  const sessionDataRef = useRef({ messages, chatTitle, setMessages, isLoading, error, addToolOutput, stop, submitLaunchPayload, isTurnStopped, isBusyLive });
+  // After an MCP answer / message the chat may not have reported "submitted" yet (the SDK sends on a later
+  // tick): the session reads as busy from the kick until the chat reports a turn or KICK_GRACE_MS pass.
+  const kickedAtRef = useRef<number | null>(null);
+  // True once this session sent or continued a turn in this page lifetime.
+  const ranSinceMountRef = useRef(false);
   useEffect(() => {
-    sessionDataRef.current = { messages, chatTitle, setMessages };
+    if (isLoading) {
+      ranSinceMountRef.current = true;
+      kickedAtRef.current = null;
+    }
+  }, [isLoading]);
+  useEffect(() => {
+    sessionDataRef.current = { messages, chatTitle, setMessages, isLoading, error, addToolOutput, stop, submitLaunchPayload, isTurnStopped, isBusyLive };
   });
+
+  // Tells the MCP bridge (a no-op unless this chat is an MCP task) that the task's state may have changed.
+  useEffect(() => {
+    reportChatActivity(sessionId);
+  }, [sessionId, messages, error, isLoading, awaitingAnswer]);
   const hasMessages = messages.length > 0;
 
   useEffect(() => {
@@ -263,6 +285,47 @@ function ChatSession({
         downloadMarkdown(chatToMarkdown(messages, chatTitle), chatFilename(chatTitle));
       },
       getMessages: () => sessionDataRef.current.messages,
+      getRunState: () => {
+        const { error, isTurnStopped, isBusyLive } = sessionDataRef.current;
+        const live = isBusyLive();
+        if (live) {
+          ranSinceMountRef.current = true;
+          kickedAtRef.current = null;
+        }
+        const kicked = kickedAtRef.current !== null && Date.now() - kickedAtRef.current < KICK_GRACE_MS;
+        return {
+          busy: live || kicked,
+          ranSinceMount: ranSinceMountRef.current,
+          stopped: isTurnStopped(),
+          error: error ? error.message || "Something went wrong" : undefined,
+          launchQueued: useChatStore.getState().launchQueue[sessionId] !== undefined,
+        };
+      },
+      answerAskUser: (answers) => {
+        const { messages, addToolOutput } = sessionDataRef.current;
+        const pending = findPendingAskUser(messages);
+        if (!pending) return { error: "No question is waiting for an answer" };
+        const questions = pending.input.questions as AskUserQuestion[];
+        const built = buildAnswerState(questions, answers);
+        if ("error" in built) return built;
+        void addToolOutput({
+          tool: "ask_user",
+          toolCallId: pending.toolCallId,
+          output: serializeAnswers(questions, built.state),
+        });
+        kickedAtRef.current = Date.now();
+        ranSinceMountRef.current = true;
+        return { ok: true };
+      },
+      sendText: (text) => {
+        const { messages, isLoading, submitLaunchPayload, isBusyLive } = sessionDataRef.current;
+        if (isLoading || isBusyLive() || hasPendingAskUser(messages)) return { error: "The agent is busy" };
+        if (!submitLaunchPayload({ text })) return { error: "The message was not sent" };
+        kickedAtRef.current = Date.now();
+        ranSinceMountRef.current = true;
+        return { ok: true };
+      },
+      stop: () => sessionDataRef.current.stop(),
       clearChat: () => {
         sessionDataRef.current.setMessages([]);
         // An empty transcript has no context usage yet — leaving the old
@@ -385,6 +448,8 @@ function ChatSession({
   );
 }
 
+const KICK_GRACE_MS = 5000;
+
 export function ChatPanelContent({
   variant = "standalone",
   isVisible = true,
@@ -394,6 +459,7 @@ export function ChatPanelContent({
   isVisible?: boolean;
 } = {}) {
   const isStandalone = variant === "standalone";
+  useMcpBridge();
   const model = useChatStore((s) => s.model);
   const setModel = useChatStore((s) => s.setModel);
   const modelOptions = useModelOptions();

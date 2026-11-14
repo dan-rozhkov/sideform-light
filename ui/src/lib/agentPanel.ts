@@ -1,5 +1,6 @@
 import type { BrowseTrace } from "@sideform/browser-agent/agent/session";
 import type { UIMessage } from "ai";
+import type { McpPanelReply, McpPanelRequest } from "@/lib/mcpTypes";
 import type { BrowseTraceSavePayload, BrowseTraceSaveResult, DesktopBrowserBridge, DesktopSettingsApi } from "@/lib/desktopBridge";
 
 /** Preload API of the agent panel view (`preload/agentPanel`), version 3. */
@@ -24,6 +25,13 @@ export interface PenAgentPanelApi {
   settings?: DesktopSettingsApi;
   /** The shell's on-disk chat store. Feature-detect every function. */
   chats?: AgentPanelChatsBridge;
+  /** The MCP agent bridge: external agents give tasks that run as chats of this panel. */
+  mcp?: {
+    /** Registers THE handler (a second call replaces it). Returns an unsubscribe. */
+    onRequest(handler: (req: McpPanelRequest) => Promise<McpPanelReply>): () => void;
+    /** Tells main that a task's state may have changed (wakes waiting get_task calls). */
+    notifyChanged(taskId: string): void;
+  };
   /** Local browse-run traces. */
   traces?: {
     save(payload: BrowseTraceSavePayload): Promise<BrowseTraceSaveResult>;
@@ -48,6 +56,8 @@ export interface StoredChatMeta {
   updatedAt: number;
   rev: number;
   messageCount: number;
+  /** Set only for chats started over MCP. Absent on older chat files. */
+  source?: "mcp";
 }
 
 /** A chat as stored on disk: the meta fields (minus messageCount) plus the AI SDK messages as JSON. */
@@ -59,6 +69,7 @@ export interface StoredChat {
   updatedAt: number;
   rev: number;
   messages: UIMessage[];
+  source?: "mcp";
 }
 
 /** The agent panel's chat storage (`chats:*` IPC). */

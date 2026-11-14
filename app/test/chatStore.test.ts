@@ -273,4 +273,29 @@ describe("chatStore", () => {
     };
     expect(await createChatStore({ rootDir: ROOT, fs }).list()).toEqual({ error: "could not list chats: EIO" });
   });
+
+  describe("source (MCP tasks)", () => {
+    it("is carried through save, read and list when exactly \"mcp\"", async () => {
+      const { store } = setup();
+      expect(await store.save(chat({ source: "mcp" }))).toEqual({ ok: true, rev: 1 });
+      const read = await store.read(ID);
+      expect("chat" in read && read.chat?.source).toBe("mcp");
+      const list = await store.list();
+      expect("chats" in list && list.chats[0].source).toBe("mcp");
+    });
+
+    it("is absent for an ordinary chat and an old meta file still parses", async () => {
+      const { store } = setup();
+      await store.save(chat());
+      const list = await store.list();
+      expect("chats" in list && "source" in list.chats[0]).toBe(false);
+    });
+
+    it("anything else is invalid", async () => {
+      const { store } = setup();
+      for (const source of ["MCP", "", "other", 1, null, true, {}]) {
+        expect(await store.save(chat({ source }))).toEqual({ error: "invalid source" });
+      }
+    });
+  });
 });

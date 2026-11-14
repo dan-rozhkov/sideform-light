@@ -37,6 +37,23 @@ export interface DesktopBrowserSettingsApi {
   set(patch: Partial<DesktopBrowserSettings>): Promise<DesktopBrowserSettings | { error: string }>;
 }
 
+/** What the MCP settings calls return (Settings > MCP). */
+export interface McpSettingsView {
+  enabled: boolean;
+  port: number;
+  /** http://127.0.0.1:<port>/mcp */
+  url: string;
+  /** Shown hidden by the page, copyable. */
+  token: string;
+  status: { state: "off" | "starting" | "listening" | "error"; error?: string };
+}
+
+export interface DesktopMcpSettingsApi {
+  get(): Promise<McpSettingsView | { error: string }>;
+  set(patch: { enabled: boolean }): Promise<McpSettingsView | { error: string }>;
+  regenerateToken(): Promise<McpSettingsView | { error: string }>;
+}
+
 /** Preload API of the trace and settings tabs (`preload/tab`). */
 export interface PenDesktopApi {
   /** Local browse-run traces. `read` returns `{ trace }` with data-URL frames, or `{ error }`. */
@@ -47,6 +64,8 @@ export interface PenDesktopApi {
   settings?: DesktopSettingsApi;
   /** Ad blocking of the built-in browser. Settings tab only. */
   browserSettings?: DesktopBrowserSettingsApi;
+  /** The MCP agent bridge switch, token and status. Settings tab only; absent in an older shell. */
+  mcp?: DesktopMcpSettingsApi;
 }
 
 declare global {

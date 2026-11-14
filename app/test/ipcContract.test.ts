@@ -71,6 +71,17 @@ const CHANNELS: { name: string; direction: "main->renderer" | "renderer->main" }
   // Settings page > Browser (invoke/handle, Settings-tab senders only, registered once). See CLAUDE.md "Ad and tracker blocking".
   { name: "browser-settings:get", direction: "renderer->main" },
   { name: "browser-settings:set", direction: "renderer->main" },
+  // Settings page > MCP (invoke/handle, Settings-tab senders only, registered once). See CLAUDE.md "MCP agent bridge".
+  { name: "mcp-settings:get", direction: "renderer->main" },
+  { name: "mcp-settings:set", direction: "renderer->main" },
+  { name: "mcp-settings:regenerate-token", direction: "renderer->main" },
+  // MCP agent bridge, main <-> agent panel (panel's own page only): the page registers its handler (`panel-ready`), main
+  // forwards a request `{requestId, request}` (`task-request`), the page answers `{requestId, reply}` (`task-reply`) and
+  // pushes `{taskId}` when a task may have changed (`task-changed`).
+  { name: "mcp:panel-ready", direction: "renderer->main" },
+  { name: "mcp:task-reply", direction: "renderer->main" },
+  { name: "mcp:task-changed", direction: "renderer->main" },
+  { name: "mcp:task-request", direction: "main->renderer" },
   // Chat storage (invoke/handle): only the agent panel's own page saves/reads/lists its chats under userData. See CLAUDE.md "Chat storage".
   { name: "chats:list", direction: "renderer->main" },
   { name: "chats:read", direction: "renderer->main" },
@@ -200,6 +211,33 @@ describe("IPC channel contract", () => {
   });
 });
 
+describe("MCP agent bridge wiring", () => {
+  const windowSource = readFileSync(join(SRC, "main/window.ts"), "utf8");
+  const panelPreload = readFileSync(join(SRC, "preload/agentPanel.ts"), "utf8");
+  const tabPreload = readFileSync(join(SRC, "preload/tab.ts"), "utf8");
+
+  it("the panel -> main mcp channels are checked against the panel's own page in window.ts", () => {
+    expect(windowSource).toContain("isMcpPanelSender(");
+    for (const c of ["mcp:panel-ready", "mcp:task-reply", "mcp:task-changed"]) expect(windowSource, c).toContain(`ipcMain.on("${c}"`);
+  });
+
+  it("main sends mcp:task-request to the panel's webContents only", () => {
+    expect(windowSource).toContain('wc.send("mcp:task-request", message)');
+  });
+
+  it("the Settings page channels go through the Settings-tab sender rule", () => {
+    const ipc = readFileSync(join(SRC, "main/mcp/mcpSettingsIpc.ts"), "utf8");
+    expect(ipc).toContain("deps.isSettingsSender(event)");
+    expect(tabPreload).toContain('"mcp-settings:regenerate-token"');
+  });
+
+  it("the panel preload never exposes ipcRenderer or a channel name, only onRequest and notifyChanged", () => {
+    expect(panelPreload).toContain("const mcp = {");
+    expect(panelPreload).toContain("onRequest(");
+    expect(panelPreload).toContain("notifyChanged(");
+  });
+});
+
 describe("browser:command commands", () => {
   // `browser:command` is one channel carrying many commands, so the channel scan
   // above cannot see a command added on one side only. One list
@@ -300,8 +338,8 @@ describe("the quit flush", () => {
 });
 
 describe("removed features leave no channel behind", () => {
-  it("no canvas, doc, workflow, MCP, auth, app icon or menu forwarding channel in src/", () => {
-    for (const prefix of ["canvas:", "canvases:", "doc:", "docs:", "workflow:", "workflows:", "mcp:", "auth:", "app-icon:", "logins:", "menu:", "empty:", "editor:"]) {
+  it("no canvas, doc, workflow, auth, app icon or menu forwarding channel in src/", () => {
+    for (const prefix of ["canvas:", "canvases:", "doc:", "docs:", "workflow:", "workflows:", "auth:", "app-icon:", "logins:", "menu:", "empty:", "editor:"]) {
       expect(source, prefix).not.toContain(`"${prefix}`);
     }
   });

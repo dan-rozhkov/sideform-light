@@ -8,6 +8,7 @@ import {
   isOnUiOrigin,
   isSettingsPageOn,
   isValidSettingsSection,
+  resolveMcpPort,
   isValidTraceId,
   originOf,
   resolveAgentPanelUrl,
@@ -101,15 +102,18 @@ describe("page URLs", () => {
     expect(resolveSettingsTabUrl("app://sideform")).toBe("app://sideform/settings");
     expect(resolveSettingsTabUrl("app://sideform", "browser")).toBe("app://sideform/settings?section=browser");
     expect(resolveSettingsTabUrl("app://sideform", "appearance")).toBe("app://sideform/settings?section=appearance");
+    expect(resolveSettingsTabUrl("app://sideform", "mcp")).toBe("app://sideform/settings?section=mcp");
     expect(resolveSettingsTabUrl("app://sideform", "account")).toBe("app://sideform/settings");
     expect(resolveSettingsTabUrl("app://sideform", 5)).toBe("app://sideform/settings");
   });
 });
 
 describe("settings sections", () => {
-  it("are appearance and browser only", () => {
-    expect([...SETTINGS_SECTIONS]).toEqual(["appearance", "browser"]);
+  it("are appearance, browser and mcp only", () => {
+    expect([...SETTINGS_SECTIONS]).toEqual(["appearance", "browser", "mcp"]);
     expect(isValidSettingsSection("browser")).toBe(true);
+    expect(isValidSettingsSection("mcp")).toBe(true);
+    expect(isValidSettingsSection("MCP")).toBe(false);
     expect(isValidSettingsSection("advanced")).toBe(false);
     expect(isValidSettingsSection(undefined)).toBe(false);
   });
@@ -177,3 +181,19 @@ describe("isAdBlockDisabledByEnv", () => {
   });
 });
 
+
+describe("resolveMcpPort", () => {
+  it("defaults to 47821", () => {
+    expect(resolveMcpPort({})).toBe(47821);
+    expect(resolveMcpPort({ SIDEFORM_LIGHT_MCP_PORT: "" })).toBe(47821);
+    expect(resolveMcpPort({ SIDEFORM_LIGHT_MCP_PORT: "  " })).toBe(47821);
+  });
+  it("takes a whole port number 1..65535 from SIDEFORM_LIGHT_MCP_PORT", () => {
+    expect(resolveMcpPort({ SIDEFORM_LIGHT_MCP_PORT: "50123" })).toBe(50123);
+    expect(resolveMcpPort({ SIDEFORM_LIGHT_MCP_PORT: " 80 " })).toBe(80);
+    expect(resolveMcpPort({ SIDEFORM_LIGHT_MCP_PORT: "65535" })).toBe(65535);
+  });
+  it("anything else falls back to the default", () => {
+    for (const v of ["0", "65536", "-1", "1.5", "abc", "47821x", "1e3", "123456"]) expect(resolveMcpPort({ SIDEFORM_LIGHT_MCP_PORT: v }), v).toBe(47821);
+  });
+});

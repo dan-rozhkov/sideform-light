@@ -36,8 +36,8 @@ describe("agent panel browser bridge", () => {
     expect(body).toContain("...makeBrowser()");
   });
 
-  it("exposes penAgentPanel version 3 with browser, chats, traces and settings only", () => {
-    expect(src).toContain('contextBridge.exposeInMainWorld("penAgentPanel", { version: 3, browser, chats, traces, settings });');
+  it("exposes penAgentPanel version 3 with browser, chats, traces, settings and mcp only", () => {
+    expect(src).toContain('contextBridge.exposeInMainWorld("penAgentPanel", { version: 3, browser, chats, traces, settings, mcp });');
   });
 
   it("carries no desktop-app surface (launchApp, releaseApp, nativeApps, forChat)", () => {

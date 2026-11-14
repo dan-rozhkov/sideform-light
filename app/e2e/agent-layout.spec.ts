@@ -27,9 +27,9 @@ test("the window has a left /agent panel; tabs still work", async () => {
     app.windows().find((p) => p.url().startsWith(`${baseUrl}/agent`)) ??
     (await app.waitForEvent("window", { predicate: (p) => p.url().startsWith(`${baseUrl}/agent`) }));
   await expect(agentPage.locator("#ready")).toHaveText("stub-agent");
-  // The panel keeps the sandboxed preload bridge: browser, chats, traces, settings.
+  // The panel keeps the sandboxed preload bridge: browser, chats, traces, settings, mcp.
   expect(await agentPage.evaluate(() => (window as never as { penAgentPanel?: { version: number } }).penAgentPanel)).toMatchObject({ version: 3 });
-  expect(await agentPage.evaluate(() => Object.keys((window as never as { penAgentPanel: object }).penAgentPanel).sort())).toEqual(["browser", "chats", "settings", "traces", "version"]);
+  expect(await agentPage.evaluate(() => Object.keys((window as never as { penAgentPanel: object }).penAgentPanel).sort())).toEqual(["browser", "chats", "mcp", "settings", "traces", "version"]);
   expect(await agentPage.evaluate(() => typeof (window as never as { penDesktop?: unknown }).penDesktop)).toBe("undefined");
 
   // Empty start: no tab until one is opened (here: the tab bar's newTab, as the "+" button does).

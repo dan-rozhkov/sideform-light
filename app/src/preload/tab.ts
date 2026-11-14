@@ -23,11 +23,20 @@ const browserSettings = {
   set: (patch: { adBlock?: boolean }): Promise<unknown> => ipcRenderer.invoke("browser-settings:set", patch),
 };
 
+// MCP agent bridge settings for the Settings page (`mcp-settings:*`). Same rule as browserSettings: main answers only the
+// top frame of a Settings tab on the settings page, everything else gets `{ error: "Not allowed." }`.
+const mcp = {
+  get: (): Promise<unknown> => ipcRenderer.invoke("mcp-settings:get"),
+  set: (patch: { enabled: boolean }): Promise<unknown> => ipcRenderer.invoke("mcp-settings:set", patch),
+  regenerateToken: (): Promise<unknown> => ipcRenderer.invoke("mcp-settings:regenerate-token"),
+};
+
 // The bridge of the ui's tab pages (the trace viewer and the Settings page). The agent panel has its own preload;
 // no page here can drive the browser.
 const api = {
   traces,
   browserSettings,
+  mcp,
   // Opens (or activates) the Settings tab; `section` is validated in main.
   settings: {
     open: (section?: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("settings:open", section),

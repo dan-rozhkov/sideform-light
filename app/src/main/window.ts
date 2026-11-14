@@ -54,6 +54,8 @@ import type { SuggestItem } from "./browser/historySuggest";
 import { historyKey, type HistoryStore } from "./browser/historyStore";
 import type { HistoryService } from "./historyService";
 import type { BrowserSettingsIpc } from "./browserSettingsIpc";
+import type { PanelBridge } from "./mcp/panelBridge";
+import { isMcpPanelSender } from "./mcp/mcpPanelIpc";
 import { awaitSettled, type FixtureBypassRegistry } from "./browser/adBlock";
 
 const FIXTURE_RELEASE_DRAIN_MS = 30_000;
@@ -145,6 +147,15 @@ export function flushAllForQuit(): Promise<void> {
   });
 }
 
+/** The page URL of a live agent panel by webContents id (`chats:*` and `mcp:*` sender checks); forgets an id the registry no longer knows. */
+function panelUrlOfId(id: number): string | undefined {
+  if (!panelSenders.isPanel(id)) {
+    chatPanelUrls.delete(id);
+    return undefined;
+  }
+  return chatPanelUrls.get(id);
+}
+
 let chatIpcRegistered = false;
 /** `chats:*` handlers: registered ONCE per process (a closing panel flushes its last save late). Removed on `will-quit`. */
 function ensureChatIpc(): void {
@@ -152,13 +163,7 @@ function ensureChatIpc(): void {
   chatIpcRegistered = true;
   const deps: ChatIpcDeps = {
     store: getChatStore(),
-    panelUrlOf: (id) => {
-      if (!panelSenders.isPanel(id)) {
-        chatPanelUrls.delete(id);
-        return undefined;
-      }
-      return chatPanelUrls.get(id);
-    },
+    panelUrlOf: panelUrlOfId,
   };
   const from = (event: Electron.IpcMainInvokeEvent) => ({ id: event.sender.id, frameUrl: event.senderFrame?.url ?? null });
   ipcMain.handle("chats:list", (event) => handleChatList(deps, from(event)));
@@ -249,6 +254,7 @@ export function createMainWindow(
   history: HistoryServices,
   browserSettingsIpc: BrowserSettingsIpc,
   fixtureBypass: FixtureBypassRegistry,
+  mcpPanel: PanelBridge,
 ): BaseWindow {
   const win = new BaseWindow({
     width: 1440,
@@ -338,6 +344,44 @@ export function createMainWindow(
       setTimeout(() => chatPanelUrls.delete(panelId), PANEL_SENDER_GRACE_MS).unref();
     });
   }
+  // --- MCP agent bridge (mcp/panelBridge.ts): this window's panel is THE panel the MCP tools talk to once its page
+  // registers (`mcp:panel-ready`, sent by `penAgentPanel.mcp.onRequest`). Replies and change pushes are accepted only
+  // from this panel's own webContents and page. A navigation or the panel's destruction unregisters it.
+  let unregisterMcpPanel: (() => void) | null = null;
+  const mcpFromPanel = (e: Electron.IpcMainEvent): boolean =>
+    e.sender.id === agentPanelView.webContents.id &&
+    isMcpPanelSender({ panelUrlOf: panelUrlOfId }, { id: e.sender.id, frameUrl: e.senderFrame?.url ?? null });
+  const onMcpPanelReady = (e: Electron.IpcMainEvent) => {
+    if (!mcpFromPanel(e)) return;
+    const wc = agentPanelView.webContents;
+    unregisterMcpPanel?.();
+    unregisterMcpPanel = mcpPanel.registerPanel({
+      id: wc.id,
+      deliver: (message) => {
+        if (wc.isDestroyed()) throw new Error("panel destroyed");
+        wc.send("mcp:task-request", message);
+      },
+    });
+  };
+  const onMcpTaskReply = (e: Electron.IpcMainEvent, payload: unknown) => {
+    if (mcpFromPanel(e)) mcpPanel.handleReply(e.sender.id, payload);
+  };
+  const onMcpTaskChanged = (e: Electron.IpcMainEvent, payload: unknown) => {
+    if (mcpFromPanel(e)) mcpPanel.handleChanged(e.sender.id, payload);
+  };
+  ipcMain.on("mcp:panel-ready", onMcpPanelReady);
+  ipcMain.on("mcp:task-reply", onMcpTaskReply);
+  ipcMain.on("mcp:task-changed", onMcpTaskChanged);
+  agentPanelView.webContents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) {
+      unregisterMcpPanel?.();
+      unregisterMcpPanel = null;
+    }
+  });
+  agentPanelView.webContents.once("destroyed", () => {
+    unregisterMcpPanel?.();
+    unregisterMcpPanel = null;
+  });
   agentPanelView.setBackgroundColor(backgroundColorForTheme(FALLBACK_THEME));
   agentPanelView.setBorderRadius(ISLAND_RADIUS);
   // Anything but the panel's own page is not for the panel: foreign origins go to the system browser,
@@ -2530,6 +2574,11 @@ export function createMainWindow(
   // every tab's WebContentsView (renderer process stays alive).
   win.on("closed", () => {
     livePanels.delete(agentPanelView.webContents);
+    unregisterMcpPanel?.();
+    unregisterMcpPanel = null;
+    ipcMain.removeListener("mcp:panel-ready", onMcpPanelReady);
+    ipcMain.removeListener("mcp:task-reply", onMcpTaskReply);
+    ipcMain.removeListener("mcp:task-changed", onMcpTaskChanged);
     stopPanelTimer();
     liveTabbarIds.delete(tabbarId);
     ipcMain.removeListener("tabbar:omnibox-show", onOmniboxShow);
