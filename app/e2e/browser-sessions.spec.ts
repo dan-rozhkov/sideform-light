@@ -108,11 +108,12 @@ test("two parallel isolated sessions keep separate cookies, network mocks and ta
     expect(setA.error).toBeUndefined();
     expect(setB.error).toBeUndefined();
 
-    // --- session tabs open in the background: the empty start stays the view on top ---
-    // (a session tab the agent drives is awake: visible, but UNDER the active view)
+    // --- the window had no active tab: the FIRST session tab opened active (the empty start gave way
+    // to it), the other one stays in the background. An awake background tab sits UNDER the active view. ---
     const views = await tabViewsBottomToTop(app);
     const onTop = views.filter((v) => v.visible && (v.url.startsWith(site) || v.url.endsWith("/tabbar/empty.html"))).at(-1);
-    expect(onTop?.url.endsWith("/tabbar/empty.html")).toBe(true);
+    expect(onTop?.url.startsWith(`${site}/set`)).toBe(true);
+    expect(views.find((v) => v.url.endsWith("/tabbar/empty.html"))?.visible).toBe(false);
     expect(views.filter((v) => v.url.startsWith(`${site}/set`))).toHaveLength(2);
 
     const [meA, meB] = await Promise.all([
@@ -211,6 +212,27 @@ test("two parallel isolated sessions keep separate cookies, network mocks and ta
     expect(await call(editor, "never", "act", { action: "click", target: "#x" })).toEqual({ error: "no such browser session" });
     expect((await call(editor, "never", "tabs", { action: "new", url: `${site}/me` })).error).toBeUndefined();
     expect(((await call(editor, "never", "tabs", { action: "list" })).tabs ?? []).length).toBe(1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("empty start: the first agent session tab opens active without taking focus, a second stays in the background", async () => {
+  const { app, editor } = await launch();
+  try {
+    expect((await call(editor, "E1", "open", { url: `${site}/set?v=e1` })).error).toBeUndefined();
+    let views = await tabViewsBottomToTop(app);
+    expect(views.find((v) => v.url.endsWith("/tabbar/empty.html"))?.visible).toBe(false);
+    const first = views.filter((v) => v.visible && v.url.startsWith(`${site}/set`));
+    expect(first).toHaveLength(1);
+    // The agent panel keeps the keyboard.
+    expect(await editor.evaluate(() => document.hasFocus())).toBe(true);
+
+    // A later session tab while one is active stays in the background (not on top of the first).
+    expect((await call(editor, "E2", "open", { url: `${site}/me` })).error).toBeUndefined();
+    views = await tabViewsBottomToTop(app);
+    const onTop = views.filter((v) => v.visible && v.url.startsWith(site)).at(-1);
+    expect(onTop?.url.startsWith(`${site}/set`)).toBe(true);
   } finally {
     await app.close();
   }

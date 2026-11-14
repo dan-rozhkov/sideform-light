@@ -74,6 +74,7 @@ import { handleTraceListTabs, handleTraceRead, handleTraceSave, type TraceIpcDep
 import { createTraceStore, nodeTraceFs, TRACE_DIR } from "./traceStore";
 import { FetchRouter } from "./fetchRouting";
 import { BLANK_DOCUMENT_URL, createCommitGate } from "./commitGate";
+import { createTabLoading } from "./tabLoading";
 import * as fixtureSession from "./fixtureSession";
 import { CURSOR_SETTINGS_FILE, type CursorSettings, readCursorSettings, resolveCursorSettings, writeCursorSettings } from "./cursorSettings";
 import { fillLogin } from "./browser/fillLogin";
@@ -615,7 +616,11 @@ export function createMainWindow(
       // No active tab: every tab left is a background session tab (never auto-activated).
       const noActiveTab = s.activeId === null;
       const nextEmpty: EmptyViewState = { visible: noActiveTab, theme: resolvedTheme, sessionTabs: noActiveTab ? s.tabs.length : 0 };
-      const plan = planEmptyViewUpdate(emptyState, nextEmpty, userClosingTab);
+      const plan = planEmptyViewUpdate(emptyState, nextEmpty, userClosingTab, {
+        quiet: s.activeQuiet === true,
+        emptyHadFocus: emptyView.webContents.isFocused(),
+        panelCollapsed,
+      });
       emptyState = nextEmpty;
       if (plan.theme) emptyView.setBackgroundColor(backgroundColorForTheme(plan.theme));
       if (plan.theme || plan.sessionTabs !== undefined) sendEmptyState(emptyView.webContents);
@@ -626,6 +631,7 @@ export function createMainWindow(
       const focusTarget = resolveFocusTarget(plan.focus, panelCollapsed, nextEmpty.visible);
       if (focusTarget === "empty") emptyView.webContents.focus();
       else if (focusTarget === "panel" && !agentPanelView.webContents.isDestroyed()) agentPanelView.webContents.focus();
+      else if (focusTarget === "tab") tabs.activeHandle()?.focus?.();
     }
     loginServices.passwords.setTheme(themeKey, resolvedTheme);
     history.service.setTheme(themeKey, resolvedTheme);
@@ -820,23 +826,18 @@ export function createMainWindow(
           // Kept so handle.loadURL can wait it out: Electron resolves a loadURL() issued while
           // about:blank is still loading at the PLACEHOLDER's finish-load, so `open` would come
           // back "loaded" on about:blank with the real page still to come.
-          // The flag goes up BEFORE loadURL: did-start-loading fires synchronously inside it, and the
-          // tab-strip loading fill must not show for this hidden document.
-          placeholderActive = true;
           const p = view.webContents.loadURL(BLANK_DOCUMENT_URL);
           const settled = p.then(() => undefined, () => undefined);
           placeholderLoad = settled;
           void settled.then(() => {
             if (placeholderLoad === settled) {
               placeholderLoad = null;
-              placeholderActive = false;
             }
           });
           return p;
         },
       });
       let placeholderLoad: Promise<void> | null = null;
-      let placeholderActive = false;
       const ensureDocument = (timeoutMs?: number): Promise<void> =>
         kind === "browser" ? commitGate.ensure(timeoutMs === undefined ? undefined : { timeoutMs }) : Promise.resolve();
       const sendGated = async (method: string, params?: Record<string, unknown>, gateTimeoutMs?: number): Promise<unknown> => {
@@ -1384,7 +1385,6 @@ export function createMainWindow(
           if (placeholderLoad && kind === "browser") {
             commitGate.cancelPlaceholder();
             placeholderLoad = null;
-            placeholderActive = false;
             view.webContents.stop();
           }
           return view.webContents.loadURL(url);
@@ -1442,24 +1442,29 @@ export function createMainWindow(
         // Tab-strip loading fill. The hidden about:blank placeholder (browser tabs) is not
         // something the person waits for.
         onLoadingChanged: (cb) => {
-          view.webContents.on("did-start-loading", () => {
-            if (placeholderActive) return;
-            cb(true);
-          });
-          // A real page replacing an in-flight placeholder by another path than handle.loadURL
-          // (page/CDP navigation, history): the placeholder is over, the real load shows.
-          view.webContents.on("did-start-navigation", (details) => {
-            if (!placeholderActive || !details.isMainFrame || details.isSameDocument || details.url === BLANK_DOCUMENT_URL) return;
-            placeholderActive = false;
-            if (view.webContents.isLoading()) cb(true);
-          });
+          // The decision lives in tabLoading.ts; this only feeds it events.
+          const feed = createTabLoading(cb);
+          const wc = view.webContents;
+          // The commit gate's own listeners (registered at view creation) run first, so
+          // `isPlaceholderNavigation()` already knows whether this start is its placeholder's.
+          wc.on("did-start-navigation", (details) =>
+            feed({
+              type: "navigation-start",
+              url: details.url,
+              isMainFrame: details.isMainFrame,
+              isSameDocument: details.isSameDocument,
+              placeholder: kind === "browser" && commitGate.isPlaceholderNavigation(),
+            }),
+          );
+          wc.on("did-redirect-navigation", (details) => feed({ type: "redirect", url: details.url, isMainFrame: details.isMainFrame }));
+          wc.on("did-navigate", () => feed({ type: "navigated" }));
+          wc.on("dom-ready", () => feed({ type: "dom-ready" }));
           // A stopped load that a newer one superseded (the placeholder) reports its stop late:
           // only an idle view is done loading.
-          view.webContents.on("did-stop-loading", () => {
-            if (!view.webContents.isLoading()) cb(false);
-          });
+          wc.on("did-stop-loading", () => feed({ type: "stop", idle: !wc.isLoading() }));
+          wc.on("did-fail-load", (_e, errorCode, _desc, validatedURL, isMainFrame) => feed({ type: "fail-load", isMainFrame, errorCode, url: validatedURL }));
           // A crash mid-load may never send did-stop-loading.
-          view.webContents.on("render-process-gone", () => cb(false));
+          wc.on("render-process-gone", () => feed({ type: "render-process-gone" }));
         },
         onNavigationStateChanged: (cb) => {
           navListener = cb;
@@ -1751,7 +1756,7 @@ export function createMainWindow(
         if (existing) return existing;
       }
       if (scope !== undefined) requireLiveSession(scope);
-      const id = tabs.newTab("browser", scope);
+      const id = tabs.newTab("browser", scope, { forAgent: true });
       // A freshly created tab becomes the agent's tab outright — there is
       // no other candidate for browserHandle()'s fallback rule to prefer
       // anyway, but this keeps agentBrowserTabId meaningful from the start
@@ -1795,7 +1800,7 @@ export function createMainWindow(
     // the other three tab-management methods, but is unused here now.
     newPage: async () => {
       if (scope !== undefined) requireLiveSession(scope);
-      const id = tabs.newTab("browser", scope);
+      const id = tabs.newTab("browser", scope, { forAgent: true });
       tabs.setAgentBrowserTabId(id, scope);
       const created = tabs.listBrowserTabs(scope).find((t) => t.tabId === id);
       return created ?? { tabId: id, url: "", title: "New Tab", current: true };
@@ -1823,7 +1828,7 @@ export function createMainWindow(
           },
           openBlankTab: async () => {
             if (scope !== undefined) requireLiveSession(scope);
-            tabs.setAgentBrowserTabId(tabs.newTab("browser", scope), scope);
+            tabs.setAgentBrowserTabId(tabs.newTab("browser", scope, { forAgent: true }), scope);
           },
         },
         origins,

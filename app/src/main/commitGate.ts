@@ -90,6 +90,12 @@ export interface CommitGate {
   lastDomReadyWasPlaceholder(): boolean;
   /** Exact: the document shown right now is the placeholder this gate loaded. */
   isPlaceholderShown(): boolean;
+  /**
+   * True once `onStartNavigation` has run for a placeholder navigation (the load requested by
+   * `loadPlaceholder`, or a reload of the shown placeholder) and until that navigation commits or a
+   * real one replaces it. Feed the gate a navigation start BEFORE asking.
+   */
+  isPlaceholderNavigation(): boolean;
   /** A real page sits in front of the placeholder's history entry: remove it, then call `placeholderEntryRemoved`. */
   hasStalePlaceholderEntry(): boolean;
   placeholderEntryRemoved(): void;
@@ -288,6 +294,7 @@ export function createCommitGate(deps: CommitGateDeps): CommitGate {
     },
     lastDomReadyWasPlaceholder: () => lastDomWasPlaceholder,
     isPlaceholderShown: () => showingPlaceholder,
+    isPlaceholderNavigation: () => placeholderNavigating,
     hasStalePlaceholderEntry: () => placeholderEntry && !showingPlaceholder && committed,
     placeholderEntryRemoved() {
       placeholderEntry = false;

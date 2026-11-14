@@ -202,14 +202,19 @@ the tab bar draws no images. The agent's
 cursor arrow replaces the icon while the agent drives a browser tab. Compact paddings, no
 separators, the close "x" only on the active tab and on hover; it reserves no room in the row (absolutely positioned over the end of the title, which fades out under it with a mask).
 Tab strip motion (`tabbar/renderer.ts`, `tabbar.css`): tabs are rendered keyed by id (elements are reused,
-never rebuilt per `tabbar:state`). `TabState.loading` (from the view's `did-start-loading`/`did-stop-loading`
-via `TabViewHandle.onLoadingChanged`, pushed on change only) drives `span.tab-progress`: a fake-progress fill
+never rebuilt per `tabbar:state`). `TabState.loading` (via `TabViewHandle.onLoadingChanged`, pushed on change only) follows the MAIN-FRAME
+document, not every resource (decision in `src/main/tabLoading.ts`, `window.ts` only feeds it raw events): the fill is OWNED by the
+navigation that started it (its url, followed through `did-redirect-navigation`). It starts on a main-frame cross-document
+`did-start-navigation` (a reload too; never a subframe, same-document or the commit gate's placeholder navigation, `commitGate.isPlaceholderNavigation()`)
+and ends at the first of: main-frame `dom-ready` AFTER the owning navigation committed (`did-navigate`; the old document's or the
+placeholder's dom-ready does not count), an idle `did-stop-loading`, a main-frame `did-fail-load` of the OWNING navigation (`validatedURL`, any code
+including -3 aborted; a failure of an older navigation is ignored), `render-process-gone`. `createTabLoading` alone owns "reported on change only". A page whose subresource never completes (`webContents.isLoading()`
+stays true) therefore does not hold the fill at 80%. It drives `span.tab-progress`: a fake-progress fill
 behind the content, 0->80% over ~7s, then 100% in 180ms and a 220ms fade (Web Animations API). New tabs
 animate in; a closed tab becomes a `.tab-ghost` (NOT `.tab`, so e2e `.tab` counts ignore it; aria-hidden,
 inert) that collapses and is removed; ghost rules in `tabbar.css` use `:is(.tab, .tab-ghost)` so a closing
 tab keeps its look. The first render never animates. The hidden `about:blank` placeholder of browser tabs never
-shows the loading fill (`placeholderActive` is set BEFORE its `loadURL`, because `did-start-loading` fires
-inside it). The strip follows the panel slide through `tabbar:strip-left` (see "Sidebar toggle"). All tab motion is off when
+shows the loading fill (the gate knows its navigation: `isPlaceholderNavigation()`). The strip follows the panel slide through `tabbar:strip-left` (see "Sidebar toggle"). All tab motion is off when
 `tabbar:state` `motion` is false (env `SIDEFORM_LIGHT_NO_ANIMATIONS=1` or OS reduced motion) or under
 `prefers-reduced-motion: reduce` in the tab bar page (the loading fill becomes a static full-width fill). The empty
 view's fade is CSS-only (`empty.css`, `prefers-reduced-motion`) and ignores the env opt-out. The agent cursor stays static.
@@ -235,7 +240,7 @@ screenshot of the views).
 
 **Trace tabs (`TabKind` `"trace"`).** The ui's viewer for a recorded browse run, `<ui origin>/trace/<id>?src=local` (`resolveTraceTabUrl`). The panel stores a finished run over `traces:save` (`traceStore.ts`, `<userData>/browse-traces/<id>/trace.json` + frame files; panel only), opens its tab over `traces:open` (`traceOpen.ts`: panel only, no keyboard focus; an open tab for the id is activated instead), lists open trace tabs over `traces:list-tabs` and reads over `traces:read` (the panel, and a trace tab itself). Title follows the page title. A trace tab has the origin clamp (`attachNavigationPolicy`): other http(s) origins go to the system browser.
 
-**Empty start (zero tabs).** With no active tab the window shows ONLY the agent panel and the empty-start view (`src/tabbar/empty.html`, preload `preload/empty.ts`): a headline and one card, "New browser tab". Its button sends `tabbar:new-browser` (the "+" button sends the same); the page also shows a note while only background session tabs remain. The view is shown and hidden by `planEmptyViewUpdate` (`emptyView.ts`); focus goes to the placeholder only when the PERSON closed the last tab, otherwise to the chat. Cmd/Ctrl+T is File ▸ New Browser Tab.
+**Empty start (zero tabs).** With no active tab the window shows ONLY the agent panel and the empty-start view (`src/tabbar/empty.html`, preload `preload/empty.ts`): a headline and one card, "New browser tab". Its button sends `tabbar:new-browser` (the "+" button sends the same); the page also shows a note while only background session tabs remain. A browser tab created FOR THE AGENT while this view is showing becomes the active tab (so the work is visible): a session tab (`newTab(..., { forAgent: true })`, decided by `planNewTab`) without keyboard focus and without the address-bar auto-focus (`TabsSnapshot.activeQuiet`, honoured by `shouldFocusAddressBar`; set ONLY by the `planNewTab` quiet path, never by other `focus:false` activations such as trace/settings or a promoted `activate:false` tab); a shared agent tab with focus, as it always did. The view is shown and hidden by `planEmptyViewUpdate` (`emptyView.ts`); focus goes to the placeholder only when the PERSON closed the last tab, otherwise to the chat. When a QUIET activation (the agent session tab) hides the view while it held focus, or the panel is collapsed, focus goes to the visible agent panel, else to the new active tab (`decideQuietFocus`). Cmd/Ctrl+T is File ▸ New Browser Tab.
 
 **Reveal in Finder.** A trace tab has a folder on disk: File ▸ Reveal in Finder (Show in Explorer / Show in Folder; enabled only while the active tab is a trace tab) and the tab's right-click menu (`tabbar:tab-menu`, native `buildTabContextMenuTemplate`) call `revealInFolder` (`revealInFolder.ts`; the target is `{kind: "trace", id}`, the id validated by `isValidTraceId`; file missing → the folder is opened). Right-clicking a tab does not activate it.
 
@@ -1000,9 +1005,16 @@ without sharing cookies, tabs, fixtures or mocks. The shared browser
   activate/focus). A user click or tab-cycle on a session tab does not repoint the
   session's agent tab (only shared tabs follow the user's focus). Closing the active
   tab never auto-activates a session tab: with only session tabs left the window
-  stays at zero active tabs (the empty start shows).
-- **Background tabs.** A session tab never becomes active and gets no address-bar
-  focus; the active view keeps focus. It opens `setVisible(false)`. While the agent
+  stays at zero active tabs (the empty start shows). Exception: a session tab the agent
+  creates while there is NO active tab (the empty start shows) becomes the active tab
+  (`planNewTab`; see "Background tabs"); it is pinned and scoped like any session tab, and closing it falls back as usual.
+- **Background tabs.** A session tab does not become active while ANOTHER tab is active
+  and never gets address-bar focus; the active view keeps focus. It opens `setVisible(false)`.
+  Exception (decided): when the window has NO active tab (the empty start is showing), the
+  session tab the agent creates becomes the active tab: `shown`, laid out, address row, but with no
+  keyboard focus (the agent panel keeps it; if the empty view or a collapsed panel held it, see "Empty start") and no address-bar auto-focus. A SHARED agent tab activates with focus
+  as it always did (a page without focus leaves a native `<select>` popup hanging the next command). Later session tabs
+  stay background while one is active; a person's click on another tab works as before. While the agent
   drives it, it is awake: visible but under the active tab (see "Awake agent tabs"),
   so it renders and screenshots. After the 60 s hold it hides again. The user clicks
   it to watch. Shared tabs behave as before.

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   TabManager,
   shouldFocusAddressBar,
+  planNewTab,
   parseReorderPayload,
   type TabKind,
   type TabViewHandle,
@@ -93,7 +94,7 @@ describe("TabManager", () => {
     });
   });
 
-  it("loading flag follows the view, and pushes state only when it changes", () => {
+  it("loading flag follows the view, one push per reported flip", () => {
     const e = tm.newTab("settings");
     const b = tm.newTab("browser");
     expect(tm.getSnapshot().tabs.every((t) => !t.loading)).toBe(true);
@@ -102,8 +103,7 @@ describe("TabManager", () => {
     expect(states.length).toBe(before + 1);
     expect(tm.getSnapshot().tabs.find((t) => t.id === b)?.loading).toBe(true);
     expect(tm.getSnapshot().tabs.find((t) => t.id === e)?.loading).toBeFalsy();
-    views[1].emitLoading(true); // repeat: no push
-    expect(states.length).toBe(before + 1);
+    // The view handle reports flips only (createTabLoading owns "on change only", see tabLoading.test.ts).
     views[1].emitLoading(false);
     expect(states.length).toBe(before + 2);
     expect(tm.getSnapshot().tabs.find((t) => t.id === b)?.loading).toBeFalsy();
@@ -1284,9 +1284,129 @@ describe("TabManager with zero tabs (closing the last tab leaves the window empt
     expect(decideActivationFocus(undefined)).toBe(true);
   });
 
-  it("an isolated session tab never becomes active, even from zero tabs", () => {
+  it("an isolated session tab that is not for the agent (a popup) stays in the background even from zero tabs", () => {
     const { tm } = make();
     tm.newTab("browser", "sess");
     expect(tm.getSnapshot().activeId).toBeNull();
+  });
+
+  it("an agent session tab becomes active from the empty start, without keyboard focus or address-bar focus; later ones stay in the background", () => {
+    const views: ReturnType<typeof makeFakeView>[] = [];
+    const tm = new TabManager({
+      createView: () => {
+        const v = makeFakeView();
+        views.push(v);
+        return v;
+      },
+      uiOrigin: "u",
+      onStateChanged: () => {},
+    });
+    const a = tm.newTab("browser", "sess", { forAgent: true });
+    expect(tm.getSnapshot().activeId).toBe(a);
+    expect(tm.getSnapshot().activeKind).toBe("browser");
+    expect(tm.getSnapshot().activeQuiet).toBe(true);
+    expect(shouldFocusAddressBar(null, tm.getSnapshot())).toBe(false);
+    expect(views[0].setVisible).toHaveBeenLastCalledWith(true);
+    expect(views[0].focus).not.toHaveBeenCalled();
+    const b = tm.newTab("browser", "other", { forAgent: true });
+    expect(tm.getSnapshot().activeId).toBe(a);
+    expect(views[1].setVisible).toHaveBeenLastCalledWith(false);
+    const c = tm.newTab("browser", "sess", { forAgent: true });
+    expect(tm.getSnapshot().activeId).toBe(a);
+    expect([a, b, c]).toHaveLength(3);
+  });
+
+  it("the active agent session tab keeps its scope pin and an awake mark does not hide it", () => {
+    const { tm } = make();
+    const a = tm.newTab("browser", "sess", { forAgent: true });
+    tm.setAgentBrowserTabId(a, "sess");
+    tm.setAgentTabAwake(a, true);
+    expect(tm.currentBrowserTabId("sess")).toBe(a);
+    expect(tm.currentBrowserTabId()).toBeNull();
+    expect(tm.getSnapshot().activeId).toBe(a);
+  });
+
+  it("closing the active agent session tab falls back to the empty start when only session tabs remain", () => {
+    const { tm } = make();
+    const a = tm.newTab("browser", "sess", { forAgent: true });
+    tm.newTab("browser", "other", { forAgent: true });
+    tm.closeTab(a);
+    expect(tm.getSnapshot().activeId).toBeNull();
+  });
+
+  it("closing the active agent session tab falls back to a normal neighbour when one exists", () => {
+    const { tm } = make();
+    const a = tm.newTab("browser", "sess", { forAgent: true });
+    const user = tm.newTab("settings");
+    tm.activate(a);
+    tm.closeTab(a);
+    expect(tm.getSnapshot().activeId).toBe(user);
+  });
+
+  it("clicking another tab works: the quiet mark is dropped", () => {
+    const { tm } = make();
+    const a = tm.newTab("browser", "sess", { forAgent: true });
+    const s = tm.newTab("settings");
+    expect(tm.getSnapshot().activeId).toBe(s);
+    expect(tm.getSnapshot().activeQuiet).toBeUndefined();
+    tm.activate(a);
+    expect(tm.getSnapshot().activeId).toBe(a);
+    expect(tm.getSnapshot().activeQuiet).toBeUndefined();
+  });
+
+  it("a shared agent tab activates with focus, from the empty start and with an active tab (unchanged)", () => {
+    const views: ReturnType<typeof makeFakeView>[] = [];
+    const tm = new TabManager({
+      createView: () => {
+        const v = makeFakeView();
+        views.push(v);
+        return v;
+      },
+      uiOrigin: "u",
+      onStateChanged: () => {},
+    });
+    const a = tm.newTab("browser", undefined, { forAgent: true });
+    expect(tm.getSnapshot().activeId).toBe(a);
+    expect(views[0].focus).toHaveBeenCalledTimes(1);
+    const b = tm.newTab("browser", undefined, { forAgent: true });
+    expect(tm.getSnapshot().activeId).toBe(b);
+    expect(views[1].focus).toHaveBeenCalledTimes(1);
+    expect(tm.getSnapshot().activeQuiet).toBeUndefined();
+  });
+
+  it("planNewTab", () => {
+    const base = { isSessionTab: false, requestedActivate: undefined, requestedFocus: undefined, forAgent: false, hasActive: true };
+    expect(planNewTab(base)).toEqual({ background: false, focus: true, quiet: false });
+    expect(planNewTab({ ...base, isSessionTab: true })).toEqual({ background: true, focus: true, quiet: false });
+    expect(planNewTab({ ...base, isSessionTab: true, forAgent: true })).toEqual({ background: true, focus: true, quiet: false });
+    expect(planNewTab({ ...base, isSessionTab: true, forAgent: true, hasActive: false })).toEqual({ background: false, focus: false, quiet: true });
+    expect(planNewTab({ ...base, isSessionTab: true, hasActive: false })).toEqual({ background: true, focus: true, quiet: false });
+    // A shared agent tab from the empty start activates with focus, as before.
+    expect(planNewTab({ ...base, forAgent: true, hasActive: false })).toEqual({ background: false, focus: true, quiet: false });
+    expect(planNewTab({ ...base, requestedActivate: false })).toEqual({ background: true, focus: false, quiet: false });
+    // A non-session tab promoted because none was active: no focus, but NOT quiet (address bar auto-focus as before).
+    expect(planNewTab({ ...base, requestedActivate: false, hasActive: false })).toEqual({ background: false, focus: false, quiet: false });
+  });
+
+  it("only the agent session tab from the empty start is quiet: other focus:false activations auto-focus the address bar", () => {
+    const { tm } = make();
+    // A non-session browser tab promoted because none was active (activate:false).
+    const promoted = tm.newTab("browser", undefined, { activate: false });
+    expect(tm.getSnapshot().activeId).toBe(promoted);
+    expect(tm.getSnapshot().activeQuiet).toBeUndefined();
+    expect(shouldFocusAddressBar(null, tm.getSnapshot())).toBe(true);
+    // activate(..., { focus: false }) on a browser tab.
+    const other = tm.newTab("browser");
+    tm.activate(promoted, { focus: false });
+    expect(tm.getSnapshot().activeQuiet).toBeUndefined();
+    expect(shouldFocusAddressBar(null, tm.getSnapshot())).toBe(true);
+    expect(other).not.toBe(promoted);
+  });
+
+  it("a trace or settings tab opened with focus:false is not quiet", () => {
+    const { tm } = make();
+    const t = tm.newTab("settings", undefined, { focus: false });
+    expect(tm.getSnapshot().activeId).toBe(t);
+    expect(tm.getSnapshot().activeQuiet).toBeUndefined();
   });
 });

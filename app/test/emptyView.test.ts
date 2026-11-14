@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideEmptyFocus, isTabCreationSender, planEmptyViewUpdate } from "../src/main/emptyView";
+import { decideEmptyFocus, decideQuietFocus, isTabCreationSender, planEmptyViewUpdate } from "../src/main/emptyView";
 
 describe("emptyView decisions", () => {
   it("applies visibility, theme and session count only on change", () => {
@@ -51,5 +51,34 @@ describe("focus with a collapsed agent panel", () => {
   it("collapsing while the panel has focus moves it to the placeholder or the active tab", () => {
     expect(focusAfterCollapse(true)).toBe("empty");
     expect(focusAfterCollapse(false)).toBe("tab");
+  });
+});
+
+describe("quiet activation hides the empty view", () => {
+  const shown = { visible: true, theme: "light" as const, sessionTabs: 0 };
+  const hidden = { ...shown, visible: false };
+  const ctx = { quiet: true, emptyHadFocus: false, panelCollapsed: false };
+
+  it("keeps focus where it is when the panel is visible and the empty view had none", () => {
+    expect(decideQuietFocus(ctx)).toBe("none");
+    expect(planEmptyViewUpdate(shown, hidden, false, ctx)).toEqual({ focus: "none", visible: false });
+  });
+  it("the empty view had focus: the visible agent panel takes it", () => {
+    expect(planEmptyViewUpdate(shown, hidden, false, { ...ctx, emptyHadFocus: true })).toEqual({ focus: "panel", visible: false });
+  });
+  it("the panel is collapsed: the new active tab takes it", () => {
+    expect(decideQuietFocus({ ...ctx, panelCollapsed: true })).toBe("tab");
+    expect(decideQuietFocus({ ...ctx, panelCollapsed: true, emptyHadFocus: true })).toBe("tab");
+  });
+  it("a normal (focused) activation or no context never moves focus here", () => {
+    expect(decideQuietFocus({ ...ctx, quiet: false, emptyHadFocus: true, panelCollapsed: true })).toBe("none");
+    expect(planEmptyViewUpdate(shown, hidden, false)).toEqual({ focus: "none", visible: false });
+  });
+  it("only the moment the view hides: no move when it stays hidden or stays visible", () => {
+    expect(planEmptyViewUpdate(hidden, hidden, false, { ...ctx, emptyHadFocus: true })).toEqual({ focus: "none" });
+    expect(planEmptyViewUpdate(shown, shown, false, { ...ctx, emptyHadFocus: true })).toEqual({ focus: "none" });
+  });
+  it("resolveFocusTarget passes the tab target through", () => {
+    expect(resolveFocusTarget("tab", true, false)).toBe("tab");
   });
 });

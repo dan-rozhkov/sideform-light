@@ -1,7 +1,7 @@
 import type { UITheme } from "./tabManager";
 
 /** Where keyboard focus goes when the empty view appears (see `decideEmptyFocus`). */
-export type EmptyFocusTarget = "empty" | "panel" | "none";
+export type EmptyFocusTarget = "empty" | "panel" | "tab" | "none";
 
 export interface EmptyViewState {
   visible: boolean;
@@ -21,7 +21,7 @@ export interface EmptyViewUpdate {
   visible?: boolean;
   /** Set only when the session-tab count changed. */
   sessionTabs?: number;
-  /** Where keyboard focus moves (only ever not "none" when the view just appeared). */
+  /** Where keyboard focus moves (not "none" only when the view just appeared, or a quiet activation just hid it with focus on it). */
   focus: EmptyFocusTarget;
 }
 
@@ -37,6 +37,25 @@ export function decideEmptyFocus(appeared: boolean, userClosedTab: boolean): Emp
   return userClosedTab ? "empty" : "panel";
 }
 
+export interface QuietActivationContext {
+  /** The tab that replaced the empty view was activated quietly (no keyboard focus of its own). */
+  quiet: boolean;
+  /** The empty view held keyboard focus just before it was hidden. */
+  emptyHadFocus: boolean;
+  panelCollapsed: boolean;
+}
+
+/**
+ * A quiet activation hides the empty view without focusing the new tab. If the keyboard sat on the
+ * now hidden view (the person closed the last tab) or the panel is hidden (nothing visible holds
+ * it), focus would be lost: the visible agent panel takes it, else the new active tab. Otherwise
+ * the person keeps typing where they are.
+ */
+export function decideQuietFocus(ctx: QuietActivationContext): EmptyFocusTarget {
+  if (!ctx.quiet || !(ctx.emptyHadFocus || ctx.panelCollapsed)) return "none";
+  return ctx.panelCollapsed ? "tab" : "panel";
+}
+
 /**
  * Diffs the view's last applied state against the wanted one, so each side
  * effect runs only on change. Also the single place that turns "no active tab"
@@ -46,8 +65,13 @@ export function planEmptyViewUpdate(
   prev: EmptyViewState,
   next: EmptyViewState,
   userClosedTab: boolean,
+  quiet?: QuietActivationContext,
 ): EmptyViewUpdate {
-  const update: EmptyViewUpdate = { focus: decideEmptyFocus(next.visible && !prev.visible, userClosedTab) };
+  const appeared = next.visible && !prev.visible;
+  const disappeared = prev.visible && !next.visible;
+  const update: EmptyViewUpdate = {
+    focus: appeared ? decideEmptyFocus(true, userClosedTab) : disappeared && quiet ? decideQuietFocus(quiet) : "none",
+  };
   if (prev.theme !== next.theme) update.theme = next.theme;
   if (prev.visible !== next.visible) update.visible = next.visible;
   if (prev.sessionTabs !== next.sessionTabs) update.sessionTabs = next.sessionTabs;

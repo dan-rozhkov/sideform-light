@@ -74,6 +74,18 @@ describe("commitGate: placeholder", () => {
     expect(gate.isPlaceholderShown()).toBe(true);
   });
 
+  it("isPlaceholderNavigation: true from the placeholder's start until it commits; a real navigation replaces it", () => {
+    const { gate } = setup();
+    gate.startPlaceholderIfIdle();
+    expect(gate.isPlaceholderNavigation()).toBe(false);
+    gate.onStartNavigation("about:blank");
+    expect(gate.isPlaceholderNavigation()).toBe(true);
+    gate.onStartNavigation("https://a.test/");
+    expect(gate.isPlaceholderNavigation()).toBe(false);
+    gate.onNavigated("https://a.test/");
+    expect(gate.isPlaceholderNavigation()).toBe(false);
+  });
+
   it("a waiter on the placeholder also waits for its dom-ready (a late one must not satisfy a following open)", async () => {
     const { gate } = setup();
     gate.startPlaceholderIfIdle();

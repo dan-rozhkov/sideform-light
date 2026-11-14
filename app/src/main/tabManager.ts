@@ -5,6 +5,12 @@ export type UITheme = "light" | "dark";
 /** How a tab becomes the active one. `focus: false` shows it without moving keyboard focus into it. */
 export interface ActivationOptions {
   focus?: boolean;
+  /**
+   * Set ONLY by `newTab` for the `planNewTab` quiet path (an agent session tab opened from the empty
+   * start): the tab never pulls focus to the address bar. A plain `focus: false` (trace, settings,
+   * a promoted non-session tab) is not quiet and auto-focuses the address bar as before.
+   */
+  quiet?: boolean;
 }
 
 /**
@@ -15,6 +21,36 @@ export interface ActivationOptions {
  */
 export function decideActivationFocus(requestedActivate: boolean | undefined): boolean {
   return requestedActivate !== false;
+}
+
+export interface NewTabPlan {
+  /** The tab opens hidden/awake-only and the active tab is untouched. */
+  background: boolean;
+  /** Only meaningful when not background: whether the new active tab takes keyboard focus. */
+  focus: boolean;
+  /** The agent session tab opened from the empty start: no keyboard focus and no address-bar auto-focus. */
+  quiet: boolean;
+}
+
+/**
+ * What a new tab does to the active tab. `forAgent` = the browser tab was created for the agent
+ * (shared or isolated session). With NO active tab (the empty start is showing) it becomes the
+ * active tab, shown but WITHOUT keyboard focus (the person is in the agent panel), so the work is
+ * visible. With an active tab nothing changes: a session tab stays in the background, a shared
+ * agent tab activates as before. A non-agent session tab (a popup of one) always stays in the background.
+ */
+export function planNewTab(input: {
+  isSessionTab: boolean;
+  requestedActivate: boolean | undefined;
+  requestedFocus: boolean | undefined;
+  forAgent: boolean;
+  hasActive: boolean;
+}): NewTabPlan {
+  const { isSessionTab, requestedActivate, requestedFocus, forAgent, hasActive } = input;
+  // Only an isolated session tab: a shared agent tab already activated from the empty start, with focus, as before.
+  if (!hasActive && forAgent && isSessionTab) return { background: false, focus: false, quiet: true };
+  const background = isSessionTab || (requestedActivate === false && hasActive);
+  return { background, focus: requestedFocus !== false && decideActivationFocus(requestedActivate), quiet: false };
 }
 
 /**
@@ -260,6 +296,8 @@ export function shouldFocusAddressBar(
   next: TabsSnapshot,
 ): boolean {
   if (next.activeKind !== "browser") return false;
+  // Activated without keyboard focus (an agent opened it from the empty start): the person is typing elsewhere.
+  if (next.activeQuiet) return false;
   if (previous !== null && previous.activeId === next.activeId) return false;
   const active = next.tabs.find((t) => t.id === next.activeId);
   return (active?.url ?? "") === "";
@@ -298,6 +336,8 @@ export interface TabsSnapshot {
    * channel instead of adding a new one.
    */
   focusAddressBar?: boolean;
+  /** The active tab was activated without taking keyboard focus (agent-opened from the empty start); it never pulls focus to the address bar. */
+  activeQuiet?: boolean;
   /**
    * Window x (CSS px) where the tab strip starts inside the tab bar: the agent
    * panel's right edge, 0 without a panel. Like `focusAddressBar`, filled in by
@@ -364,6 +404,8 @@ export class TabManager {
    * the user's tabs.
    */
   private readonly sessionAgentTabIds = new Map<string, number>();
+  /** The active tab when it was activated without keyboard focus (see `TabsSnapshot.activeQuiet`). */
+  private quietActiveId: number | null = null;
 
   constructor(
     private readonly opts: {
@@ -376,14 +418,16 @@ export class TabManager {
 
   /**
    * `opts.activate: false` creates the tab in the background: it is hidden and
-   * never becomes active, the agent's pin is untouched. Isolated session tabs always open that way.
+   * never becomes active, the agent's pin is untouched. Isolated session tabs open that way too, except an agent-created one with no active tab (`forAgent`, see `planNewTab`).
    * Exception: with NO active tab (the zero-tab state), a non-session tab
    * becomes active even when requested in the background, so the window never
    * holds tabs with none active (keyboard cycling, close and MCP need one).
    * That tab is shown without taking keyboard focus (`ActivationOptions`).
+   * `opts.forAgent` (a browser tab the agent asked for, shared or session): with no active tab it
+   * becomes active too, without keyboard focus or address-bar focus (`planNewTab`).
    * `opts.focus: false` makes a normally activated tab visible without taking keyboard focus (`traces:open`).
    */
-  newTab(kind: TabKind = "browser", session?: string, opts: { activate?: boolean; traceId?: string; section?: string; focus?: boolean } = {}): number {
+  newTab(kind: TabKind = "browser", session?: string, opts: { activate?: boolean; traceId?: string; section?: string; focus?: boolean; forAgent?: boolean } = {}): number {
     // A trace tab is always opened for one trace (`traces:open`): no id, no tab (and no view is created).
     if (kind === "trace" && !isValidTraceId(opts.traceId)) throw new Error("trace tab needs a valid trace id");
     const id = this.nextId++;
@@ -400,7 +444,7 @@ export class TabManager {
       canGoForward: kind === "browser" ? false : undefined,
     };
     view.onLoadingChanged?.((loading) => {
-      if ((entry.loading ?? false) === loading) return;
+      // The view handle reports flips only (createTabLoading owns that), so no filter here.
       entry.loading = loading || undefined;
       // did-start-loading fires synchronously inside loadURL below, before the entry is in
       // `this.tabs`: record it, and let the push that adds the tab carry it.
@@ -433,8 +477,14 @@ export class TabManager {
     this.tabs.push(entry);
     if (this.lastLayout) this.applyLayout(entry);
     const isSessionTab = kind === "browser" && session !== undefined;
-    const background = isSessionTab || (opts.activate === false && this.activeId !== null);
-    if (background) {
+    const plan = planNewTab({
+      isSessionTab,
+      requestedActivate: opts.activate,
+      requestedFocus: opts.focus,
+      forAgent: kind === "browser" && opts.forAgent === true,
+      hasActive: this.activeId !== null,
+    });
+    if (plan.background) {
       // An isolated session's tab (or an explicit background open) opens in the
       // BACKGROUND: the active tab keeps focus. The user can click it to watch.
       this.applyViewMode(entry);
@@ -443,7 +493,7 @@ export class TabManager {
       // A background request that only became active because the window had no
       // active tab is shown WITHOUT taking keyboard focus: the person is
       // typing in the agent panel (see decideActivationFocus).
-      this.setActive(id, { focus: opts.focus !== false && decideActivationFocus(opts.activate) });
+      this.setActive(id, { focus: plan.focus, quiet: plan.quiet });
     }
     return id;
   }
@@ -825,6 +875,7 @@ export class TabManager {
       })),
       activeId: this.activeId,
       activeKind: active?.kind ?? null,
+      activeQuiet: this.activeId !== null && this.quietActiveId === this.activeId ? true : undefined,
       agentTabIds: [...this.agentWorkingTabs].filter((id) => this.isLiveBrowserTab(id)),
     };
   }
@@ -897,6 +948,7 @@ export class TabManager {
 
   private setActive(id: number, opts: ActivationOptions = {}): void {
     this.activeId = id;
+    this.quietActiveId = opts.quiet ? id : null;
     for (const tab of this.tabs) this.applyViewMode(tab);
     const active = this.tabs.find((t) => t.id === id);
     if (opts.focus !== false) active?.view.focus();
