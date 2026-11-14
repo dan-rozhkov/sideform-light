@@ -29,9 +29,18 @@ describe("resolveAppRequest", () => {
     expect(resolve("app://sideform")).toEqual(INDEX);
   });
 
-  it("falls back to index.html for a missing file and for a directory", () => {
-    expect(resolve("app://sideform/assets/missing.js")).toEqual(INDEX);
-    expect(resolve("app://sideform/assets")).toEqual(INDEX);
+  it("answers 404 for a missing file (any extension) and for anything under /assets/", () => {
+    expect(resolve("app://sideform/assets/missing.js")).toEqual({ status: 404 });
+    expect(resolve("app://sideform/assets")).toEqual({ status: 404 });
+    expect(resolve("app://sideform/assets/")).toEqual({ status: 404 });
+    expect(resolve("app://sideform/assets/chunks/deep")).toEqual({ status: 404 });
+    expect(resolve("app://sideform/missing.css")).toEqual({ status: 404 });
+    expect(resolve("app://sideform/trace/abc.json")).toEqual({ status: 404 });
+  });
+
+  it("still falls back for a route-like path (no extension) outside /assets/", () => {
+    expect(resolve("app://sideform/assetsx")).toEqual(INDEX);
+    expect(resolve("app://sideform/settings/browser")).toEqual(INDEX);
   });
 
   it("rejects any host but sideform", () => {
@@ -90,10 +99,10 @@ describe("mimeTypeFor", () => {
 describe("buildCsp", () => {
   it("is the contract policy with the backend origin in connect-src", () => {
     expect(buildCsp("http://localhost:3001")).toBe(
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' http://localhost:3001; frame-src 'none'; object-src 'none'; base-uri 'none'",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' data: blob: http://localhost:3001; frame-src 'none'; object-src 'none'; base-uri 'none'",
     );
   });
   it("names the configured backend", () => {
-    expect(buildCsp("https://api.example.com")).toContain("connect-src 'self' https://api.example.com;");
+    expect(buildCsp("https://api.example.com")).toContain("connect-src 'self' data: blob: https://api.example.com;");
   });
 });

@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { APP_ORIGIN } from "./config";
 import { nodeStoreFs, type StoreFs } from "./storeUtils";
 import { createKeyedChain, isObject, message, sweepStaleTmp } from "./storeUtils";
 
@@ -18,6 +19,14 @@ export const DEV_CHAT_DIR = "chats-dev";
 /** The chats directory name: `chats-dev` when the editor URL is overridden, else `chats`. */
 export function chatDirFor(overrideActive: boolean): string {
   return overrideActive ? DEV_CHAT_DIR : CHAT_DIR;
+}
+
+/**
+ * The chats directory for the RESOLVED ui origin (`resolveUiOrigin`): `chats-dev` for any origin but the bundled
+ * `app://sideform`. An invalid `SIDEFORM_LIGHT_UI_URL` already resolves to the bundled ui, so it keeps `chats`.
+ */
+export function chatDirForUiOrigin(uiOrigin: string): string {
+  return chatDirFor(uiOrigin !== APP_ORIGIN);
 }
 
 export const MAX_CHAT_TITLE_CHARS = 10_000;

@@ -44,11 +44,17 @@ export function buildCsp(backendOrigin: string): string {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https: http:",
     "font-src 'self' data:",
-    `connect-src 'self' ${backendOrigin}`,
+    `connect-src 'self' data: blob: ${backendOrigin}`,
     "frame-src 'none'",
     "object-src 'none'",
     "base-uri 'none'",
   ].join("; ");
+}
+
+/** A path the SPA fallback may answer: not under `/assets/` and no file extension in the last segment. */
+export function isSpaRoute(pathname: string): boolean {
+  if (pathname === "/assets" || pathname.startsWith("/assets/")) return false;
+  return path.posix.extname(pathname) === "";
 }
 
 export type AppRequestResolution = { status: 404 } | { status: 200; filePath: string; mimeType: string };
@@ -58,7 +64,8 @@ export type AppRequestResolution = { status: 404 } | { status: 200; filePath: st
  * - not `app://sideform/...` (wrong scheme or host) -> 404;
  * - the path (percent-decoded) leaves `distDir` -> 404;
  * - it names an existing file inside `distDir` -> that file;
- * - anything else (no such file, a directory) -> `index.html` (SPA fallback).
+ * - anything else is a missing file: a path under `/assets/` or whose last segment has a file extension -> 404
+ *   (a stale hashed chunk must fail, not load HTML as a script); a route-like path -> `index.html` (SPA fallback).
  * `isFile` is injected (a synchronous stat) so the rule is testable without a disk.
  */
 export function resolveAppRequest(rawUrl: string, distDir: string, isFile: (absolutePath: string) => boolean): AppRequestResolution {
@@ -80,6 +87,7 @@ export function resolveAppRequest(rawUrl: string, distDir: string, isFile: (abso
   const target = path.resolve(root, `.${pathname}`);
   if (target !== root && !target.startsWith(root + path.sep)) return { status: 404 };
   if (target !== root && isFile(target)) return { status: 200, filePath: target, mimeType: mimeTypeFor(target) };
+  if (!isSpaRoute(pathname)) return { status: 404 };
   const index = path.join(root, "index.html");
   return { status: 200, filePath: index, mimeType: mimeTypeFor(index) };
 }

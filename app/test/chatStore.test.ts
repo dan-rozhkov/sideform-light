@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as path from "node:path";
-import { chatDirFor, createChatStore, isValidChatId, MAX_CHAT_MODEL_CHARS, MAX_CHAT_TITLE_CHARS } from "../src/main/chatStore";
+import { resolveUiOrigin } from "../src/main/config";
+import { chatDirFor, chatDirForUiOrigin, createChatStore, isValidChatId, MAX_CHAT_MODEL_CHARS, MAX_CHAT_TITLE_CHARS } from "../src/main/chatStore";
 import type { StoreFs } from "../src/main/storeUtils";
 
 const ROOT = "/ud/chats";
@@ -67,6 +68,13 @@ describe("chatStore", () => {
   it("names the dev dir while the editor URL is overridden", () => {
     expect(chatDirFor(false)).toBe("chats");
     expect(chatDirFor(true)).toBe("chats-dev");
+  });
+
+  it("chatDirForUiOrigin follows the resolved ui origin, not the raw env value", () => {
+    expect(chatDirForUiOrigin(resolveUiOrigin({}))).toBe("chats");
+    expect(chatDirForUiOrigin(resolveUiOrigin({ SIDEFORM_LIGHT_UI_URL: "not a url" }))).toBe("chats");
+    expect(chatDirForUiOrigin(resolveUiOrigin({ SIDEFORM_LIGHT_UI_URL: "ftp://x" }))).toBe("chats");
+    expect(chatDirForUiOrigin(resolveUiOrigin({ SIDEFORM_LIGHT_UI_URL: "http://localhost:5174/x" }))).toBe("chats-dev");
   });
 
   it("accepts frontend chat ids and refuses unsafe ones", () => {
