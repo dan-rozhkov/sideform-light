@@ -19,6 +19,8 @@ export const toolDisplayNames: Record<string, MessageKey> = {
   qa_verdict: "tools.name.qa_verdict",
   qa_assert: "tools.name.qa_assert",
   ask_user: "tools.name.ask_user",
+  schedule_list: "tools.name.schedule_list",
+  schedule_create: "tools.name.schedule_create",
 };
 
 export function getToolDisplayName(toolName: string): string {

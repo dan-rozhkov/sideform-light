@@ -19,6 +19,8 @@ export const tools = {
   "tools.name.qa_verdict": "QA Verdict",
   "tools.name.qa_assert": "QA Assert",
   "tools.name.ask_user": "Ask a question",
+  "tools.name.schedule_list": "List Schedules",
+  "tools.name.schedule_create": "Create Schedule",
   "tools.status.running": "Running...",
   "tools.status.done": "Done",
   "tools.status.error": "Error",

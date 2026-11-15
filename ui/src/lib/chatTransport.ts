@@ -25,6 +25,9 @@ export const CLIENT_CAPABILITIES = {
   browseAssert: browseAssertAvailable(),
   // The shell can list and read open browse-run trace tabs: the backend then offers trace_list / trace_read.
   traceTabs: getAgentPanelTraceTabsBridge() !== undefined,
+  // The shell can list and create schedules: the backend then offers schedule_list / schedule_create.
+  // Only when the bridge exists (the key is absent otherwise).
+  ...(window.penAgentPanel?.schedules ? { schedules: true } : {}),
 } as const;
 
 // Exported for tests.

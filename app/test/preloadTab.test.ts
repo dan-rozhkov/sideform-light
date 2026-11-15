@@ -138,10 +138,21 @@ describe("preload/tab.ts (trace and settings pages)", () => {
 describe("preload/agentPanel.ts (penAgentPanel v3)", () => {
   beforeEach(() => load("agentPanel"));
 
-  it("exposes version 3 with browser, chats, traces, settings and mcp only", () => {
+  it("exposes version 3 with browser, chats, traces, settings, mcp and schedules only", () => {
     expect(exposedName).toBe("penAgentPanel");
     expect(exposedApi.version).toBe(3);
-    expect(Object.keys(exposedApi).sort()).toEqual(["browser", "chats", "mcp", "settings", "traces", "version"]);
+    expect(Object.keys(exposedApi).sort()).toEqual(["browser", "chats", "mcp", "schedules", "settings", "traces", "version"]);
+  });
+
+  describe("schedules (agent tools)", () => {
+    it("has exactly list and create, over the panel-only channels", async () => {
+      expect(Object.keys(exposedApi.schedules).sort()).toEqual(["create", "list"]);
+      await exposedApi.schedules.list();
+      expect(invokeMock).toHaveBeenLastCalledWith("schedules:panel-list");
+      const input = { name: "n", prompt: "p", cron: "0 9 * * *" };
+      await exposedApi.schedules.create(input);
+      expect(invokeMock).toHaveBeenLastCalledWith("schedules:panel-create", input);
+    });
   });
 
   describe("mcp (agent bridge)", () => {

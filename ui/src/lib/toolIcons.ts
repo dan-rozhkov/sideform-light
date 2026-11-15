@@ -11,6 +11,7 @@ import {
   ImageIcon,
   ImagesSquareIcon,
   KeyIcon,
+  ClockIcon,
   ListChecksIcon,
   QuestionIcon,
   StackIcon,
@@ -39,6 +40,8 @@ const toolIcons: Record<string, Icon> = {
   qa_verdict: FlagCheckeredIcon,
   qa_assert: FlagCheckeredIcon,
   ask_user: QuestionIcon,
+  schedule_list: ClockIcon,
+  schedule_create: ClockIcon,
 };
 
 /** Falls back to a generic tool icon for anything unmapped. */

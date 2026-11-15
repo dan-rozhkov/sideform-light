@@ -6,6 +6,7 @@ import { applyLoopGuard } from "@sideform/browser-agent/loop";
 import { analyzeImage } from "./tools/analyzeImage";
 import { traceFrame, traceList, traceRead } from "./tools/traceTools";
 import { askUser } from "./tools/askUser";
+import { scheduleCreate, scheduleList } from "./tools/schedules";
 import { browseOpen } from "./tools/browser/browseOpen";
 import { browseAct } from "./tools/browser/browseAct";
 import { browseFindImages } from "./tools/browser/browseFindImages";
@@ -59,6 +60,9 @@ function withBrowseLoopGuard(toolName: string, handler: ToolHandler): ToolHandle
 
 export const toolHandlers: Record<string, ToolHandler> = {
   ask_user: askUser,
+  schedule_list: scheduleList,
+  // Pending until the person confirms in the chat card (useDesignChat.onToolCall); this is the fallback.
+  schedule_create: scheduleCreate,
   analyze_image: analyzeImage,
   // Read-only: past browse-run traces.
   trace_list: traceList,

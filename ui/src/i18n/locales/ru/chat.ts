@@ -40,6 +40,7 @@ export const chat: Translation<typeof en> = {
   "chat.nextImage": "Следующее изображение",
   "chat.inputPlaceholder": "Спросите Sideform Light…",
   "chat.inputPlaceholderAnswer": "Ответьте на вопрос выше, чтобы продолжить…",
+  "chat.inputPlaceholderSchedule": "Подтвердите или отклоните расписание выше, чтобы продолжить…",
   "chat.stop": "Остановить",
   "chat.send": "Отправить",
   "chat.sendNow": "Отправить сейчас",

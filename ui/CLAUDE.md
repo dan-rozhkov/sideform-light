@@ -8,7 +8,7 @@ The frontend of Sideform Light: a small Vite + React 19 + Zustand + Tailwind v4 
 |---|---|---|
 | `/agent` | `routes/AgentPage.tsx` renders `ChatPanelContent variant="standalone"` | `window.penAgentPanel` |
 | `/trace/:id` | `routes/TracePage.tsx` (local traces only, `?step=N` deep link) | `window.penDesktop` |
-| `/settings?section=appearance\|browser` | `routes/SettingsPage.tsx` | `window.penDesktop` |
+| `/settings?section=appearance\|browser\|mcp\|schedules` (Schedules: list + modal `ScheduleDialog`) | `routes/SettingsPage.tsx` | `window.penDesktop` |
 
 Anything else redirects to `/agent`. Each page is its own lazy chunk.
 
@@ -23,7 +23,7 @@ npm test         # Vitest + happy-dom (Node 26: NODE_OPTIONS=--no-experimental-w
 
 ## How the agent runs (split execution)
 
-Tool schemas live on the backend (`pen-editor-backend`); tool execution happens here, in the panel. `hooks/useDesignChat.ts` sends the chat to `POST /api/chat` with `agentMode: "browser"`, `model`, `userId` (anonymous `pen.userId`) and `clientCapabilities` (`lib/chatTransport.ts`, exactly the contract object). Each tool call is dispatched through `lib/toolRegistry.ts`, which handles only `ask_user`, `analyze_image`, `browse_*`, `qa_*` and `trace_*`. The browse handlers drive the shell's browser through `window.penAgentPanel.browser` (`lib/tools/browser/bridge.ts`); `browse_agent` runs a nested headless chat with `agentMode: "browse"` (`lib/tools/browser/browseAgent.ts`). Adding or removing a tool means changing the backend schema and this registry together.
+Tool schemas live on the backend (`pen-editor-backend`); tool execution happens here, in the panel. `hooks/useDesignChat.ts` sends the chat to `POST /api/chat` with `agentMode: "browser"`, `model`, `userId` (anonymous `pen.userId`) and `clientCapabilities` (`lib/chatTransport.ts`, exactly the contract object). Each tool call is dispatched through `lib/toolRegistry.ts`, which handles only `ask_user`, `schedule_*` (`schedule_create` waits for an in-chat confirmation card like `ask_user`; both are listed in `components/chat/waitingForPerson.ts`), `analyze_image`, `browse_*`, `qa_*` and `trace_*`. The browse handlers drive the shell's browser through `window.penAgentPanel.browser` (`lib/tools/browser/bridge.ts`); `browse_agent` runs a nested headless chat with `agentMode: "browse"` (`lib/tools/browser/browseAgent.ts`). Adding or removing a tool means changing the backend schema and this registry together.
 
 ## Rules that keep Light small
 

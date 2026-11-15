@@ -39,6 +39,8 @@ interface ChatInputProps {
   stop: () => void;
   /** True while an ask_user question is unanswered — blocks sending so the answer isn't stranded. */
   awaitingAnswer?: boolean;
+  /** Placeholder while `awaitingAnswer` (depends on what is pending: a question or a schedule card). */
+  awaitingPlaceholder?: string;
   /** True while this composer is actually on screen (agents section active
    * AND, on mobile, the left panel is open) — drives both autofocus and a
    * re-measure of the textarea height on becoming visible. The mobile panel
@@ -119,6 +121,7 @@ export function ChatInput({
   isLoading,
   stop,
   awaitingAnswer,
+  awaitingPlaceholder,
   shouldFocus = false,
   renderFooter,
 }: ChatInputProps) {
@@ -380,7 +383,7 @@ export function ChatInput({
           }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          placeholder={awaitingAnswer ? t("chat.inputPlaceholderAnswer") : t("chat.inputPlaceholder")}
+          placeholder={awaitingAnswer ? (awaitingPlaceholder ?? t("chat.inputPlaceholderAnswer")) : t("chat.inputPlaceholder")}
           rows={1}
           disabled={awaitingAnswer}
           className="flex-1 resize-none bg-transparent pl-2 text-sm text-text-primary placeholder:text-text-disabled outline-none min-h-[29px] max-h-[96px] py-1 leading-normal"

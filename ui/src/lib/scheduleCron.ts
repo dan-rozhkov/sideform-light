@@ -1,7 +1,9 @@
 // Frequency presets of the Schedules editor <-> five-field cron strings (local time), and the human
 // description of a cron. Pure. Anything the presets cannot express stays "custom" (the raw cron).
 
-import { currentLocale, t, type MessageKey } from "@/i18n";
+import { currentLocale, t } from "@/i18n";
+import { intlLocale, type Language } from "@/i18n/languages";
+import { translate, type MessageKey } from "@/i18n/messages";
 
 export type Frequency =
   | { kind: "hourly"; minute: number }
@@ -12,26 +14,18 @@ export type Frequency =
 
 export type FrequencyKind = Frequency["kind"];
 
-/** Name of a cron day-of-week (0 = Sunday) in the interface language, as it reads inside a sentence. */
-export function dayName(day: number): string {
+/** Name of a cron day-of-week (0 = Sunday) in the interface language (or `locale`), as it reads inside a sentence. */
+export function dayName(day: number, locale: string = currentLocale()): string {
   // 2024-01-07 was a Sunday.
-  return new Intl.DateTimeFormat(currentLocale(), { weekday: "long" }).format(new Date(2024, 0, 7 + (day % 7)));
+  return new Intl.DateTimeFormat(locale, { weekday: "long" }).format(new Date(2024, 0, 7 + (day % 7)));
 }
 
-/** `dayName` with a capital first letter, for a list or a button. */
-export function dayLabel(day: number): string {
-  const name = dayName(day);
-  return name.charAt(0).toLocaleUpperCase(currentLocale()) + name.slice(1);
+/** Short weekday name with a capital first letter, for a button ("Mon" / "Пн"). */
+export function dayShortLabel(day: number): string {
+  const locale = currentLocale();
+  const name = new Intl.DateTimeFormat(locale, { weekday: "short" }).format(new Date(2024, 0, 7 + (day % 7)));
+  return name.charAt(0).toLocaleUpperCase(locale) + name.slice(1);
 }
-
-/** Message keys (translate at render, never at module load). */
-export const FREQUENCY_LABEL_KEYS: Record<FrequencyKind, MessageKey> = {
-  hourly: "schedules.frequency.hourly",
-  daily: "schedules.frequency.daily",
-  weekdays: "schedules.frequency.weekdays",
-  weekly: "schedules.frequency.weekly",
-  custom: "schedules.frequency.custom",
-};
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -90,37 +84,29 @@ export function fromCron(cron: string): Frequency {
   return { kind: "weekly", day: d === 7 ? 0 : d, hour: h, minute };
 }
 
-/** "Every weekday at 09:00" in the interface language, or the raw cron when no preset fits. */
-export function describeCron(cron: string): string {
+/**
+ * "Every weekday at 09:00" in the interface language, or in `language` when given (English for text the model
+ * reads), or the raw cron when no preset fits.
+ */
+export function describeCron(cron: string, language?: Language): string {
   const f = fromCron(cron);
+  const say: (key: MessageKey, params: Record<string, string>) => string = language
+    ? (key, params) => translate(language, key, params)
+    : (key, params) => t(key, params);
   switch (f.kind) {
     case "hourly":
-      return t("schedules.describe.hourly", { minute: pad(f.minute) });
+      return say("schedules.describe.hourly", { minute: pad(f.minute) });
     case "daily":
-      return t("schedules.describe.daily", { time: formatTime(f.hour, f.minute) });
+      return say("schedules.describe.daily", { time: formatTime(f.hour, f.minute) });
     case "weekdays":
-      return t("schedules.describe.weekdays", { time: formatTime(f.hour, f.minute) });
+      return say("schedules.describe.weekdays", { time: formatTime(f.hour, f.minute) });
     case "weekly":
-      return t("schedules.describe.weekly", { day: dayName(f.day), time: formatTime(f.hour, f.minute) });
+      return say("schedules.describe.weekly", {
+        day: dayName(f.day, language ? intlLocale(language) : undefined),
+        time: formatTime(f.hour, f.minute),
+      });
     case "custom":
       return cron.trim();
-  }
-}
-
-/** A default frequency for each kind, keeping the time the person already picked. */
-export function withKind(kind: FrequencyKind, prev: Frequency): Frequency {
-  const hour = "hour" in prev ? prev.hour : 9;
-  const minute = "minute" in prev ? prev.minute : 0;
-  switch (kind) {
-    case "hourly":
-      return { kind, minute };
-    case "daily":
-    case "weekdays":
-      return { kind, hour, minute };
-    case "weekly":
-      return { kind, day: "day" in prev ? prev.day : 1, hour, minute };
-    case "custom":
-      return { kind, cron: prev.kind === "custom" ? prev.cron : toCron(prev) };
   }
 }
 
@@ -136,4 +122,33 @@ export function formatUntil(timestamp: number, now: number = Date.now()): string
   if (delta < HOUR_MS) return t("schedules.until.minutes", { count: Math.floor(delta / MINUTE_MS) });
   if (delta < DAY_MS) return t("schedules.until.hours", { count: Math.floor(delta / HOUR_MS) });
   return t("schedules.until.days", { count: Math.floor(delta / DAY_MS) });
+}
+
+/**
+ * The first run strictly after `now` (ms, local time) of a preset frequency, or null for `custom`
+ * (the cron is evaluated by the app, not here) and for a malformed time.
+ */
+export function nextRunOfFrequency(frequency: Frequency, now: number): number | null {
+  if (frequency.kind === "custom") return null;
+  const { minute } = frequency;
+  if (!Number.isInteger(minute) || minute < 0 || minute > 59) return null;
+  if (frequency.kind === "hourly") {
+    const candidate = new Date(now);
+    candidate.setMinutes(minute, 0, 0);
+    const at = candidate.getTime();
+    return at > now ? at : at + HOUR_MS;
+  }
+  const { hour } = frequency;
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return null;
+  for (let ahead = 0; ahead <= 7; ahead += 1) {
+    const candidate = new Date(now);
+    candidate.setDate(candidate.getDate() + ahead);
+    candidate.setHours(hour, minute, 0, 0);
+    if (candidate.getTime() <= now) continue;
+    const day = candidate.getDay();
+    if (frequency.kind === "weekdays" && (day === 0 || day === 6)) continue;
+    if (frequency.kind === "weekly" && day !== frequency.day) continue;
+    return candidate.getTime();
+  }
+  return null;
 }

@@ -1,7 +1,7 @@
 import type { BrowseTrace } from "@sideform/browser-agent/agent/session";
 import type { UIMessage } from "ai";
 import type { McpPanelReply, McpPanelRequest } from "@/lib/mcpTypes";
-import type { BrowseTraceSavePayload, BrowseTraceSaveResult, DesktopBrowserBridge, DesktopSettingsApi } from "@/lib/desktopBridge";
+import type { BrowseTraceSavePayload, BrowseTraceSaveResult, DesktopBrowserBridge, DesktopSettingsApi, ScheduleView } from "@/lib/desktopBridge";
 
 /** Preload API of the agent panel view (`preload/agentPanel`), version 3. */
 export interface PenAgentPanelApi {
@@ -31,6 +31,11 @@ export interface PenAgentPanelApi {
     onRequest(handler: (req: McpPanelRequest) => Promise<McpPanelReply>): () => void;
     /** Tells main that a task's state may have changed (wakes waiting get_task calls). */
     notifyChanged(taskId: string): void;
+  };
+  /** Schedules for the schedule_list / schedule_create agent tools (`schedules:panel-list|panel-create`). */
+  schedules?: {
+    list(): Promise<{ schedules: ScheduleView[] } | { error: string }>;
+    create(input: { name: string; prompt: string; cron: string }): Promise<{ schedule: ScheduleView } | { error: string }>;
   };
   /** Local browse-run traces. */
   traces?: {

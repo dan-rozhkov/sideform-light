@@ -35,6 +35,7 @@ export const chat: Translation<typeof en> = {
   "chat.nextImage": "Image suivante",
   "chat.inputPlaceholder": "Demandez à Sideform Light…",
   "chat.inputPlaceholderAnswer": "Répondez à la question ci-dessus pour continuer…",
+  "chat.inputPlaceholderSchedule": "Confirmez ou annulez la planification ci-dessus pour continuer…",
   "chat.stop": "Arrêter",
   "chat.send": "Envoyer",
   "chat.sendNow": "Envoyer maintenant",

@@ -52,12 +52,12 @@ Local shell HTML (tab bar, empty start, passwords, history, omnibox) stays on `f
 - Endpoints Light uses (nothing else): `POST /api/chat`, `GET /api/models`, `POST /api/browse/step`, `POST /api/browse/plan`, `POST /api/browse/locate`, `POST /api/browse/judge`. No auth, no cookies (`credentials: "omit"`), no PostHog, no memory, no user skills, no Mobbin, no cloud browser, no cloud traces, no uploads.
 - Identity: anonymous `pen.userId` from localStorage, sent as `userId` in the body as today.
 - Agent mode: the main chat sends `agentMode: "browser"` (NEW mode in pen-editor-backend). The nested browse_agent chat keeps sending `agentMode: "browse"` as today.
-- `clientCapabilities` sent by Light: `{ desktopBrowser: true, browser: "desktop", browseQa: true, browseIsolation: true, browseAssert: true, traceTabs: true }` and NOTHING about canvas/docs/workflows/apps/native apps (`canvasTabs`, `docTabs`, `workflowTabs`, `browseApps`, `browseNativeApps` are absent or false).
+- `clientCapabilities` sent by Light: `{ desktopBrowser: true, browser: "desktop", browseQa: true, browseIsolation: true, browseAssert: true, traceTabs: true, schedules: true }` (`schedules` only when `penAgentPanel.schedules` exists) and NOTHING about canvas/docs/workflows/apps/native apps (`canvasTabs`, `docTabs`, `workflowTabs`, `browseApps`, `browseNativeApps` are absent or false).
 
 ### Backend mode `browser` (pen-editor-backend)
 
 - Added to `AGENT_MODES`. A system prompt for a browser assistant (no design/canvas wording): it uses `browse_agent` for web tasks, may run several `browse_agent` calls in parallel with isolated sessions, uses `ask_user` when it must ask, `analyze_image` for images, `trace_*` to read past runs.
-- Tool set for the main model: `browse_agent`, `ask_user`, `analyze_image`, `trace_list`, `trace_read` (and `trace_frame` if it exists and needs no canvas). Exactly the browse tools the existing "edits" mode would offer for these capabilities — but NO canvas/design/doc/workflow/prototype/image-generation/vector/repo/showcase tools, no `get_guidelines`/style guides, no canvasContext.
+- Tool set for the main model: `browse_agent`, `ask_user`, `analyze_image`, `trace_list`, `trace_read`, plus `schedule_create` and `schedule_list` when `clientCapabilities.schedules` is true (see "Scheduled chats") (and `trace_frame` if it exists and needs no canvas). Exactly the browse tools the existing "edits" mode would offer for these capabilities — but NO canvas/design/doc/workflow/prototype/image-generation/vector/repo/showcase tools, no `get_guidelines`/style guides, no canvasContext.
 - canvasContext is ignored in this mode. Memory and user skills: OFF in v1 (behave as in `browse`).
 - Model: the normal chat model (`CHAT_MODEL` / the picked model), NOT the browse subagent model.
 
@@ -75,6 +75,7 @@ window.penAgentPanel = {
   traces,             // save, open, listTabs, read
   settings,           // open(section?: "appearance" | "browser" | "mcp" | "schedules")
   mcp,                // onRequest(handler), notifyChanged(taskId): the MCP agent bridge, see below
+  schedules,          // list(), create({ name, prompt, cron }): for the schedule_* agent tools, see "Scheduled chats"
 }
 ```
 
@@ -167,6 +168,18 @@ schedules: {
   onChanged(cb: () => void): () => void;
 }
 ```
+
+**Agent tools (`schedule_create`, `schedule_list`).** Design: `docs/superpowers/specs/2026-11-15-schedule-agent-tool-design.md`. Client-executed, NOT in the backend's `penTools` (pen-editor never sees them): the backend adds them only to an `agentMode: "browser"` turn whose `clientCapabilities.schedules` is true.
+
+```ts
+schedule_create: { name: string /* 1..100 */; prompt: string /* 1..20000 */; cron: string /* 1..100 */ }
+  // -> { status: "created"; schedule: ScheduleSummary } | { status: "declined" } | { status: "error"; error: string }
+schedule_list: {} // -> { schedules: ScheduleSummary[] } | { status: "error"; error: string }
+interface ScheduleSummary { id: string; name: string; cron: string; description: string; enabled: boolean;
+  nextRun?: string; lastRun?: { status: string; at: string } }   // times as local readable strings
+```
+
+`schedule_create` waits for the person: the chat shows a confirmation card, and only "Create schedule" creates it. In a background chat (`source` `mcp` or `schedule`) it answers `{ status: "error" }` without a card. The panel creates through `penAgentPanel.schedules.create` = `schedules:panel-create` (and `list` = `schedules:panel-list`), invoke channels accepted only from the agent panel's own webContents and page (the `chats:*` rule), else `{ error: "Not allowed." }`; `create` validates like `schedules:save`, stores the schedule enabled and pushes `schedules:changed`.
 
 ## Branding
 

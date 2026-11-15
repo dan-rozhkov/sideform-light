@@ -24,6 +24,9 @@ import { ThinkingIndicator } from "./ThinkingIndicator";
 import { ImageLightbox } from "./ImageLightbox";
 import { AskUserForm } from "./AskUserForm";
 import { useT } from "@/i18n";
+import { ScheduleConfirmCard } from "./ScheduleConfirmCard";
+import { parseScheduleCreateInput } from "@/lib/tools/schedules";
+import { isPendingScheduleCreatePart } from "./pendingScheduleCreate";
 
 interface ImagePreviewProps {
   url: string;
@@ -296,6 +299,24 @@ export function MessageList({
                         state={tp.state === "output-available" ? "output" : "input"}
                         onSubmit={(output) =>
                           addToolOutput?.({ tool: "ask_user", toolCallId: tp.toolCallId, output })
+                        }
+                      />
+                    );
+                  }
+                }
+                if (part.type === "tool-schedule_create") {
+                  const tp = part as { toolCallId: string; state?: string; input?: unknown; output?: unknown };
+                  const input = parseScheduleCreateInput(tp.input);
+                  // The pending card is drawn by the same rule that blocks the composer (isPendingScheduleCreatePart).
+                  if (input && (isPendingScheduleCreatePart(part) || tp.state === "output-available")) {
+                    return (
+                      <ScheduleConfirmCard
+                        key={tp.toolCallId}
+                        input={input}
+                        state={tp.state === "output-available" ? "output" : "input"}
+                        output={tp.output}
+                        onResolve={(output) =>
+                          addToolOutput?.({ tool: "schedule_create", toolCallId: tp.toolCallId, output })
                         }
                       />
                     );

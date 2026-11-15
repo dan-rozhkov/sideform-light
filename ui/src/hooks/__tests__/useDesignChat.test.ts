@@ -32,6 +32,16 @@ describe("buildChatBody (main chat request body)", () => {
     });
     expect((buildChatBody("bg") as { model: string }).model).toBe("background/model");
   });
+
+  it.each(["mcp", "schedule"] as const)("a %s background chat does not report schedules; the rest is unchanged", (source) => {
+    useChatStore.setState({
+      chats: [{ id: "bgtask", title: "t", model: "m", parallelCount: 1, createdAt: 0, updatedAt: 0, unread: false, needsAnswer: false, isBusy: false, source } as never],
+    });
+    const caps = (buildChatBody("bgtask") as { clientCapabilities: Record<string, unknown> }).clientCapabilities;
+    expect("schedules" in caps).toBe(false);
+    const { schedules: _omit, ...rest } = CLIENT_CAPABILITIES as Record<string, unknown>;
+    expect(caps).toEqual(rest);
+  });
 });
 
 describe("tool timeouts", () => {
@@ -140,6 +150,43 @@ describe("answering ask_user after a Stop", () => {
     });
     expect(result.current.isTurnStopped()).toBe(false);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  });
+
+  it("answering a pending schedule_create card after a stream error re-arms and continues", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockImplementation(async () => textTurn("continuing"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDesignChat({ sessionId: "error-schedule" }));
+    await act(async () => {
+      result.current.submitLaunchPayload({ text: "schedule it" });
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    await waitFor(() => expect(result.current.isTurnStopped()).toBe(true));
+    const calls = fetchMock.mock.calls.length;
+    act(() =>
+      result.current.setMessages([
+        { id: "u", role: "user", parts: [{ type: "text", text: "go" }] },
+        {
+          id: "a",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-schedule_create",
+              toolCallId: "s1",
+              state: "input-available",
+              input: { name: "Digest", prompt: "Summarize", cron: "0 9 * * *" },
+            },
+          ],
+        } as UIMessage,
+      ]),
+    );
+    await act(async () => {
+      await result.current.addToolOutput({ tool: "schedule_create", toolCallId: "s1", output: '{"status":"declined"}' });
+    });
+    expect(result.current.isTurnStopped()).toBe(false);
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(calls));
   });
 
   it("an ask_user output with an unknown id keeps the Stop gate", async () => {

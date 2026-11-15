@@ -127,6 +127,13 @@ const settings = {
   open: (section?: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("settings:open", section),
 };
 
+// Schedules for the agent tools `schedule_list` / `schedule_create`: main accepts these only from this panel's own
+// page and validates `create` like `schedules:save` (always stored enabled).
+const schedules = {
+  list: (): Promise<unknown> => ipcRenderer.invoke("schedules:panel-list"),
+  create: (input: { name: string; prompt: string; cron: string }): Promise<unknown> => ipcRenderer.invoke("schedules:panel-create", input),
+};
+
 // MCP agent bridge (src/main/mcp/): main forwards a request of an external MCP client (`mcp:task-request`
 // `{ requestId, request }`); the page's handler answers it and the reply goes back as `mcp:task-reply`
 // `{ requestId, reply }`. `notifyChanged` pushes "this task's state may have changed" (`mcp:task-changed`), which wakes
@@ -162,7 +169,7 @@ const mcp = {
   },
 };
 
-contextBridge.exposeInMainWorld("penAgentPanel", { version: 3, browser, chats, traces, settings, mcp });
+contextBridge.exposeInMainWorld("penAgentPanel", { version: 3, browser, chats, traces, settings, mcp, schedules });
 
 // Theme report for main (channel `panel:theme`): the page paints the stored ui theme as the
 // class `dark` on <html>. Initial read on DOMContentLoaded, then a MutationObserver on that class.

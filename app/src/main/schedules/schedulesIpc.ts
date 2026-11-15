@@ -1,6 +1,7 @@
 import { NOT_ALLOWED, type BrowserSettingsEvent } from "../browserSettingsIpc";
 import { TASK_ID_RE, type McpPanelPort } from "../mcp/types";
 import { parseScheduleInput } from "./store";
+import { parseCron } from "./cron";
 import type { Scheduler } from "./scheduler";
 
 export interface SchedulesIpcDeps {
@@ -12,11 +13,16 @@ export interface SchedulesIpcDeps {
   panel: Pick<McpPanelPort, "request">;
   /** Same rule as `mcp-settings:*`: the top frame of a Settings tab on the settings page. */
   isSettingsSender(event: BrowserSettingsEvent): boolean;
+  /** The agent panel's own webContents and page (the `chats:*` rule, with a live frame). */
+  isPanelSender(event: BrowserSettingsEvent): boolean;
   /** Sends `schedules:changed` to every open Settings tab. */
   pushChanged(): void;
   /** Brings the agent panel into view (a collapsed panel is expanded). */
   showPanel(): void;
 }
+
+const PANEL_KEYS = ["name", "prompt", "cron"];
+const CRON_HINT = " Use 5 fields: minute hour day-of-month month day-of-week, for example \"0 9 * * 1-5\".";
 
 const FAILED = { error: "Could not complete the request." } as const;
 
@@ -34,6 +40,14 @@ export function registerSchedulesIpc(deps: SchedulesIpcDeps): () => void {
       return FAILED;
     }
   };
+  const panelGuard = async (event: BrowserSettingsEvent, run: () => unknown): Promise<unknown> => {
+    if (!deps.isPanelSender(event)) return NOT_ALLOWED;
+    try {
+      return await run();
+    } catch {
+      return FAILED;
+    }
+  };
   const idOf = (raw: unknown): string | null => (typeof raw === "string" && TASK_ID_RE.test(raw) ? raw : null);
 
   const offChanged = deps.scheduler.onChanged(() => {
@@ -45,6 +59,23 @@ export function registerSchedulesIpc(deps: SchedulesIpcDeps): () => void {
   });
 
   deps.ipcMain.handle("schedules:list", (e) => guard(e, () => ({ schedules: deps.scheduler.list() })));
+  deps.ipcMain.handle("schedules:panel-list", (e) => panelGuard(e, () => ({ schedules: deps.scheduler.list() })));
+  deps.ipcMain.handle("schedules:panel-create", (e, payload) =>
+    panelGuard(e, () => {
+      if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return { error: "Invalid schedule." };
+      const proto = Object.getPrototypeOf(payload);
+      if (proto !== Object.prototype && proto !== null) return { error: "Invalid schedule." };
+      const raw = payload as Record<string, unknown>;
+      const keys = Object.keys(raw);
+      if (keys.length !== PANEL_KEYS.length || !PANEL_KEYS.every((k) => keys.includes(k) && typeof raw[k] === "string")) {
+        return { error: "Invalid schedule." };
+      }
+      const cron = parseCron(raw.cron as string);
+      if ("error" in cron) return { error: `${cron.error}${CRON_HINT}` };
+      const parsed = parseScheduleInput({ name: raw.name, prompt: raw.prompt, cron: raw.cron, enabled: true });
+      return "error" in parsed ? parsed : deps.scheduler.save(parsed.input);
+    }),
+  );
   deps.ipcMain.handle("schedules:save", (e, payload) =>
     guard(e, () => {
       const parsed = parseScheduleInput(payload);
@@ -77,6 +108,8 @@ export function registerSchedulesIpc(deps: SchedulesIpcDeps): () => void {
   return () => {
     offChanged();
     deps.ipcMain.removeHandler("schedules:list");
+    deps.ipcMain.removeHandler("schedules:panel-list");
+    deps.ipcMain.removeHandler("schedules:panel-create");
     deps.ipcMain.removeHandler("schedules:save");
     deps.ipcMain.removeHandler("schedules:remove");
     deps.ipcMain.removeHandler("schedules:run-now");

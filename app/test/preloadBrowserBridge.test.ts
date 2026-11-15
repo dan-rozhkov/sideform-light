@@ -36,8 +36,16 @@ describe("agent panel browser bridge", () => {
     expect(body).toContain("...makeBrowser()");
   });
 
-  it("exposes penAgentPanel version 3 with browser, chats, traces, settings and mcp only", () => {
-    expect(src).toContain('contextBridge.exposeInMainWorld("penAgentPanel", { version: 3, browser, chats, traces, settings, mcp });');
+  it("exposes penAgentPanel version 3 with browser, chats, traces, settings, mcp and schedules only", () => {
+    expect(src).toContain('contextBridge.exposeInMainWorld("penAgentPanel", { version: 3, browser, chats, traces, settings, mcp, schedules });');
+  });
+
+  it("schedules is exactly list and create over the panel-only channels", () => {
+    const start = src.indexOf("const schedules = {");
+    const body = src.slice(start, src.indexOf("\n};", start)).replace(/^\s*\/\/.*$/gm, "");
+    expect([...body.matchAll(/^ {2}(\w+)[:(]/gm)].map((m) => m[1]).sort()).toEqual(["create", "list"]);
+    expect(body).toContain('"schedules:panel-list"');
+    expect(body).toContain('"schedules:panel-create"');
   });
 
   it("carries no desktop-app surface (launchApp, releaseApp, nativeApps, forChat)", () => {

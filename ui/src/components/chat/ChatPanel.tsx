@@ -39,7 +39,8 @@ import { ChatInput } from "./ChatInput";
 import { ChatList } from "./ChatList";
 import { ConversationFilesPopover } from "./ConversationFilesPopover";
 import { ContextMeter } from "./ContextMeter";
-import { findPendingAskUser, hasPendingAskUser } from "./pendingAskUser";
+import { findPendingAskUser } from "./pendingAskUser";
+import { hasPendingWaitingCall, waitingPlaceholder } from "./waitingForPerson";
 import { buildAnswerState, serializeAnswers } from "./askUserAnswers";
 import { useMcpBridge } from "@/hooks/useMcpBridge";
 import { reportChatActivity } from "@/lib/mcpTasks";
@@ -181,7 +182,7 @@ function ChatSession({
     isBusyLive,
   } = useDesignChat({ sessionId });
 
-  const awaitingAnswer = hasPendingAskUser(messages);
+  const awaitingAnswer = hasPendingWaitingCall(messages);
   const parallelCount = useChatStore((s) => s.parallelCount);
   const setParallelCount = useChatStore((s) => s.setParallelCount);
   const createChat = useChatStore((s) => s.createChat);
@@ -325,7 +326,7 @@ function ChatSession({
       },
       sendText: (text) => {
         const { messages, isLoading, submitLaunchPayload, isBusyLive } = sessionDataRef.current;
-        if (isLoading || isBusyLive() || hasPendingAskUser(messages)) return { error: "The agent is busy" };
+        if (isLoading || isBusyLive() || hasPendingWaitingCall(messages)) return { error: "The agent is busy" };
         if (!submitLaunchPayload({ text })) return { error: "The message was not sent" };
         kickedAtRef.current = Date.now();
         ranSinceMountRef.current = true;
@@ -445,6 +446,7 @@ function ChatSession({
           stop={stop}
           shouldFocus={isVisible}
           awaitingAnswer={awaitingAnswer}
+          awaitingPlaceholder={waitingPlaceholder(messages)}
           renderFooter={(footerProps) => (
             <div className="flex items-center gap-0.5 px-2 pb-1.5 pt-1">
               {composerControls(footerProps)}

@@ -6,7 +6,7 @@ import type { McpPanelReply } from "../src/main/mcp/types";
 const VIEW = { id: "s1", name: "n", prompt: "p", cron: "* * * * *", enabled: true, createdAt: 1, updatedAt: 1, nextRunAt: 5 };
 const INPUT = { name: "n", prompt: "p", cron: "* * * * *", enabled: true };
 
-function setup(allowed = true) {
+function setup(allowed = true, panelAllowed = false) {
   const handlers = new Map<string, (e: BrowserSettingsEvent, ...a: unknown[]) => unknown>();
   const ipcMain = { handle: (c: string, l: never) => void handlers.set(c, l), removeHandler: vi.fn((c: string) => void handlers.delete(c)) };
   let changed: () => void = () => undefined;
@@ -22,16 +22,18 @@ function setup(allowed = true) {
   const panel = { request: vi.fn(async () => reply) };
   const pushChanged = vi.fn();
   const showPanel = vi.fn();
-  const off = registerSchedulesIpc({ ipcMain, scheduler, panel, isSettingsSender: () => allowed, pushChanged, showPanel });
+  const off = registerSchedulesIpc({ ipcMain, scheduler, panel, isSettingsSender: () => allowed, isPanelSender: () => panelAllowed, pushChanged, showPanel });
   const ev = { sender: { id: 1 } } as BrowserSettingsEvent;
   return { handlers, scheduler, panel, pushChanged, showPanel, off, ev, ipcMain, offChanged, fireChanged: () => changed(), setReply: (r: McpPanelReply) => void (reply = r) };
 }
 const CHANNELS = ["schedules:list", "schedules:open-chat", "schedules:remove", "schedules:run-now", "schedules:save"];
+const PANEL_CHANNELS = ["schedules:panel-create", "schedules:panel-list"];
+const PANEL_INPUT = { name: "n", prompt: "p", cron: "0 9 * * *" };
 
 describe("schedules IPC", () => {
-  it("registers exactly the five channels and removes them", () => {
+  it("registers exactly the seven channels and removes them", () => {
     const s = setup();
-    expect([...s.handlers.keys()].sort()).toEqual(CHANNELS);
+    expect([...s.handlers.keys()].sort()).toEqual([...CHANNELS, ...PANEL_CHANNELS].sort());
     s.off();
     expect(s.handlers.size).toBe(0);
     expect(s.offChanged).toHaveBeenCalled();
@@ -121,5 +123,69 @@ describe("schedules IPC", () => {
       throw new Error("x");
     });
     expect(() => s.fireChanged()).not.toThrow();
+  });
+  describe("panel channels", () => {
+    it("list and create work for the agent panel only", async () => {
+      const s = setup(false, true);
+      expect(await s.handlers.get("schedules:panel-list")!(s.ev)).toEqual({ schedules: [VIEW] });
+      expect(await s.handlers.get("schedules:panel-create")!(s.ev, PANEL_INPUT)).toEqual({ schedule: { ...VIEW, ...PANEL_INPUT, enabled: true } });
+      expect(s.scheduler.save).toHaveBeenCalledWith({ ...PANEL_INPUT, enabled: true });
+      // the Settings page rule does not apply to them, and the Settings channels stay closed to the panel
+      expect(await s.handlers.get("schedules:save")!(s.ev, INPUT)).toEqual({ error: "Not allowed." });
+    });
+
+    it("a Settings tab or any other sender is rejected and nothing runs", async () => {
+      const s = setup(true, false);
+      for (const c of PANEL_CHANNELS) expect(await s.handlers.get(c)!(s.ev, PANEL_INPUT), c).toEqual({ error: "Not allowed." });
+      expect(s.scheduler.list).not.toHaveBeenCalled();
+      expect(s.scheduler.save).not.toHaveBeenCalled();
+    });
+
+    it("rejects extra keys, missing keys and non-string values", async () => {
+      const s = setup(false, true);
+      const create = s.handlers.get("schedules:panel-create")!;
+      const bad: unknown[] = [
+        null, "x", [], 5,
+        { ...PANEL_INPUT, enabled: false },
+        { ...PANEL_INPUT, id: "abc" },
+        { name: "n", prompt: "p" },
+        { ...PANEL_INPUT, name: 3 },
+        { ...PANEL_INPUT, cron: undefined },
+        Object.create({ inherited: 1 }),
+      ];
+      for (const b of bad) expect(await create(s.ev, b), JSON.stringify(b)).toEqual({ error: "Invalid schedule." });
+      expect(s.scheduler.save).not.toHaveBeenCalled();
+    });
+
+    it("validates like schedules:save: trims, limits, and says what is wrong with the cron", async () => {
+      const s = setup(false, true);
+      const create = s.handlers.get("schedules:panel-create")!;
+      await create(s.ev, { name: "  n  ", prompt: " p ", cron: " 0 9 * * * " });
+      expect(s.scheduler.save).toHaveBeenCalledWith({ name: "n", prompt: "p", cron: "0 9 * * *", enabled: true });
+      expect(await create(s.ev, { ...PANEL_INPUT, name: "   " })).toEqual({ error: "The name must be 1 to 100 characters." });
+      expect(await create(s.ev, { ...PANEL_INPUT, prompt: "x".repeat(20001) })).toEqual({ error: "The task must be 1 to 20000 characters." });
+      const bad = (await create(s.ev, { ...PANEL_INPUT, cron: "every day" })) as { error: string };
+      expect(bad.error).toContain("5 fields");
+      expect(bad.error).toContain("minute hour day-of-month month day-of-week");
+      const badField = (await create(s.ev, { ...PANEL_INPUT, cron: "99 9 * * *" })) as { error: string };
+      expect(badField.error).toContain("Invalid minute field");
+      expect(s.scheduler.save).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns the scheduler's own error (for example the 50 limit) and never throws", async () => {
+      const s = setup(false, true);
+      s.scheduler.save.mockReturnValueOnce({ error: "You can have at most 50 schedules." } as never);
+      expect(await s.handlers.get("schedules:panel-create")!(s.ev, PANEL_INPUT)).toEqual({ error: "You can have at most 50 schedules." });
+      s.scheduler.save.mockImplementationOnce(() => {
+        throw new Error("boom");
+      });
+      expect(await s.handlers.get("schedules:panel-create")!(s.ev, PANEL_INPUT)).toEqual({ error: "Could not complete the request." });
+    });
+
+    it("a change the scheduler reports (a panel create included) is pushed to the Settings tabs", () => {
+      const s = setup(false, true);
+      s.fireChanged();
+      expect(s.pushChanged).toHaveBeenCalledTimes(1);
+    });
   });
 });

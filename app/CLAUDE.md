@@ -75,7 +75,7 @@ The shell's own HTML (tab bar, empty start, passwords, history, omnibox) stays o
 
 ## Preload APIs
 
-`window.penAgentPanel` (`preload/agentPanel.ts`) is `{ version: 3, browser, chats, traces, settings, mcp }`:
+`window.penAgentPanel` (`preload/agentPanel.ts`) is `{ version: 3, browser, chats, traces, settings, mcp, schedules }` (`schedules` = `{ list, create }` for the agent tools `schedule_list` / `schedule_create`):
 `browser` = `open, act, findImages, snapshot, perform, assert, read, screenshot, tabs, applyFixture, releaseFixture, clearActEmulation, fillLogin, startJournal, stopJournal, captureCheckpoint, requests, capture (trace DOM snapshots only), isolated(sessionId), closeSession(sessionId), revealAgentTab(sessionId?)`; `chats` = `list, read, save, remove`; `traces` = `save, open, listTabs, read`; `settings` = `open(section?)`; `mcp` = `onRequest(handler)`, `notifyChanged(taskId)` (the MCP agent bridge, below). Removed from the Desktop shape: `launchApp`, `releaseApp`, `nativeApps`, `forChat`.
 
 `window.penDesktop` (`preload/tab.ts`, trace and settings pages only) is `{ traces: { read }, browserSettings: { get, set }, mcp: { get, set, regenerateToken }, settings: { open, onSection } }`, plus invisible theme and language reporters (`tab:theme`, `tab:language`). No browser bridge, no storage.
@@ -289,6 +289,7 @@ Channel names are plain strings; `test/ipcContract.test.ts` scans `src/` and pin
 | `mcp-settings:get`, `mcp-settings:set`, `mcp-settings:regenerate-token` | Settings page → main | same sender rule (`browserSettingsIpc.isSender`) |
 | `schedules:list`, `schedules:save`, `schedules:remove`, `schedules:run-now`, `schedules:open-chat` | Settings page → main | same sender rule; scheduled chats (`src/main/schedules/`: cron, store, scheduler, IPC), fires over the MCP panel bridge (`schedule-start`, `open`); `open` expands only the window that owns the registered panel. Known limitation: if the panel answers a schedule-start after the 15 s bridge timeout, the run is recorded as failed and main loses its chat id |
 | `schedules:changed` | main → Settings page | after any change or run |
+| `schedules:panel-list`, `schedules:panel-create` | agent panel → main | `penAgentPanel.schedules` (agent tools `schedule_list` / `schedule_create`); panel sender only, `create` is called after the person confirms the in-chat card |
 | `mcp:panel-ready`, `mcp:task-reply`, `mcp:task-changed` | panel → main | panel webContents AND panel page only (`isMcpPanelSender`, the `chats:*` check without the vanished-frame allowance) |
 | `mcp:task-request` | main → panel | `{ requestId, request }`, to the one registered panel |
 | `chats:list\|read\|save\|delete` | panel → main | panel page only, process-level |

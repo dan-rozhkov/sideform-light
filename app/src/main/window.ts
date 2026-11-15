@@ -163,6 +163,11 @@ function panelUrlOfId(id: number): string | undefined {
   return chatPanelUrls.get(id);
 }
 
+/** True for the agent panel's own webContents and (live) page of any window: the `schedules:panel-*` sender rule. */
+export function isAgentPanelSender(event: { sender: { id: number }; senderFrame?: { url?: string } | null }): boolean {
+  return isMcpPanelSender({ panelUrlOf: panelUrlOfId }, { id: event.sender.id, frameUrl: event.senderFrame?.url ?? null });
+}
+
 let chatIpcRegistered = false;
 /** `chats:*` handlers: registered ONCE per process (a closing panel flushes its last save late). Removed on `will-quit`. */
 function ensureChatIpc(): void {

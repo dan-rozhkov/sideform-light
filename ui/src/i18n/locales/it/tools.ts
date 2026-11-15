@@ -19,6 +19,8 @@ export const tools: Translation<typeof en> = {
   "tools.name.qa_verdict": "Verdetto QA",
   "tools.name.qa_assert": "Verifica QA",
   "tools.name.ask_user": "Fai una domanda",
+  "tools.name.schedule_list": "Elenca pianificazioni",
+  "tools.name.schedule_create": "Crea pianificazione",
   "tools.status.running": "In corso…",
   "tools.status.done": "Fatto",
   "tools.status.error": "Errore",

@@ -34,6 +34,7 @@ export const chat = {
   "chat.nextImage": "Next image",
   "chat.inputPlaceholder": "Ask Sideform Light…",
   "chat.inputPlaceholderAnswer": "Answer the question above to continue…",
+  "chat.inputPlaceholderSchedule": "Confirm or cancel the schedule above to continue…",
   "chat.stop": "Stop",
   "chat.send": "Send",
   "chat.sendNow": "Send now",

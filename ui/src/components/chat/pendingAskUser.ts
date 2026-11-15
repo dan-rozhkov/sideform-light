@@ -12,18 +12,13 @@ import type { UIMessage } from "ai";
  * (`output-error`, e.g. a schema-invalid call) is not pending either — the
  * SDK considers it settled, so waiting on it would soft-lock the composer.
  */
+export function isPendingAskUserPart(part: unknown): boolean {
+  const p = part as { type?: string; input?: unknown; state?: string };
+  return p.type === "tool-ask_user" && p.input != null && p.state !== "output-available" && p.state !== "output-error";
+}
+
 export function hasPendingAskUser(messages: UIMessage[]): boolean {
-  return messages.some(
-    (m) =>
-      m.role === "assistant" &&
-      m.parts.some(
-        (p) =>
-          (p as { type?: string }).type === "tool-ask_user" &&
-          (p as { input?: unknown }).input != null &&
-          (p as { state?: string }).state !== "output-available" &&
-          (p as { state?: string }).state !== "output-error",
-      ),
-  );
+  return messages.some((m) => m.role === "assistant" && m.parts.some(isPendingAskUserPart));
 }
 
 /** The pending ask_user tool call (same rule as `hasPendingAskUser`), newest first. */

@@ -16,6 +16,8 @@ const EXPECTED = [
   "browse_task",
   "qa_assert",
   "qa_verdict",
+  "schedule_create",
+  "schedule_list",
   "trace_frame",
   "trace_list",
   "trace_read",
@@ -26,9 +28,9 @@ describe("toolRegistry", () => {
     expect(Object.keys(toolHandlers).sort()).toEqual(EXPECTED);
   });
 
-  it("only handles ask_user, analyze_image, browse_*, qa_* and trace_* (no canvas, doc, workflow or design tool)", () => {
+  it("only handles ask_user, schedule_*, analyze_image, browse_*, qa_* and trace_* (no canvas, doc, workflow or design tool)", () => {
     for (const name of Object.keys(toolHandlers)) {
-      expect(name, name).toMatch(/^(ask_user|analyze_image|browse_[a-z_]+|qa_[a-z_]+|trace_[a-z_]+)$/);
+      expect(name, name).toMatch(/^(ask_user|schedule_(?:create|list)|analyze_image|browse_[a-z_]+|qa_[a-z_]+|trace_[a-z_]+)$/);
     }
   });
 

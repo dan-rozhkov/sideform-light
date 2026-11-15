@@ -15,7 +15,7 @@ import {
   resolveUserDataDir,
 } from "./config";
 import { APP_SCHEME_PRIVILEGES, buildCsp, resolveAppRequest } from "./localProtocol";
-import { createMainWindow, flushAllForQuit, hasQuitFlushWork, isLiveTabbar, type HistoryServices } from "./window";
+import { createMainWindow, flushAllForQuit, hasQuitFlushWork, isAgentPanelSender, isLiveTabbar, type HistoryServices } from "./window";
 import { createQuitFlush } from "./quitFlush";
 import { UI_ALLOWED_PERMISSIONS, denyAllPermissions, restrictPermissions } from "./browser/permissions";
 import { CREDENTIALS_FILE, createCredentialStore, nodeCredentialFs } from "./browser/credentialStore";
@@ -171,6 +171,7 @@ const unregisterSchedulesIpc = registerSchedulesIpc({
   scheduler,
   panel: mcpPanelBridge,
   isSettingsSender: (e) => browserSettingsIpc.isSender(e),
+  isPanelSender: (e) => isAgentPanelSender(e),
   pushChanged: () => browserSettingsIpc.pushSchedulesChanged(),
   showPanel: () => browserSettingsIpc.showAgentPanelOf(mcpPanelBridge.panelId()),
 });

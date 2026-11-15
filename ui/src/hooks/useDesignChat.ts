@@ -10,11 +10,13 @@ import { getRequestUserId } from "@/lib/auth/authState";
 import { createChatTransport, resolveChatApiUrl, CLIENT_CAPABILITIES } from "@/lib/chatTransport";
 import { resolveSessionModel } from "@/lib/sessionModel";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
-import { useChatStore } from "@/store/chatStore";
+import { isBackgroundTaskChat, useChatStore } from "@/store/chatStore";
 import { toolHandlers, type ToolExecutionContext, type ToolHandler } from "@/lib/toolRegistry";
 import type { ChatLaunchPayload } from "@/types/chat";
 import type { UIMessage } from "ai";
-import { findPendingAskUser } from "@/components/chat/pendingAskUser";
+import { isPendingWaitingCall } from "@/components/chat/waitingForPerson";
+import { pendingScheduleCreateIds } from "@/components/chat/pendingScheduleCreate";
+import { DECLINED_OUTPUT, precheckScheduleCreate } from "@/lib/tools/schedules";
 import { isIsolatedBrowseCall } from "@/lib/tools/browser/isolation";
 import { BROWSE_AGENT_OUTER_TIMEOUT_MS } from "@/lib/tools/browser/browseAgent";
 import { useOwnedChat } from "@/hooks/useOwnedChat";
@@ -37,9 +39,14 @@ export function buildChatBody(sessionId?: string): object {
     agentMode: "browser",
     model: resolveSessionModel(sessionId),
     userId: getRequestUserId(),
-    clientCapabilities: CLIENT_CAPABILITIES,
+    clientCapabilities: isBackgroundTaskChat(sessionId) ? CAPABILITIES_WITHOUT_SCHEDULES : CLIENT_CAPABILITIES,
   };
 }
+
+// A background chat (an MCP task or a scheduled run) has nobody to confirm a schedule, and a run must not
+// create more runs: it does not report `schedules`, so the backend never offers the schedule_* tools there.
+// The source of a chat never changes, so the tool set stays stable per chat (prompt cache).
+const { schedules: _schedules, ...CAPABILITIES_WITHOUT_SCHEDULES } = CLIENT_CAPABILITIES as typeof CLIENT_CAPABILITIES & { schedules?: true };
 
 // Default budget for a tool call before we give up and report a timeout to
 // the model. Per-tool overrides live in TOOL_CALL_TIMEOUT_MS_OVERRIDES below.
@@ -338,6 +345,14 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
       if (toolCall.toolName === "ask_user") {
         return;
       }
+      // schedule_create waits for the person's confirmation card (ScheduleConfirmCard), like ask_user, unless
+      // the call can be answered at once (bad input, background chat, no bridge).
+      if (toolCall.toolName === "schedule_create") {
+        const early = precheckScheduleCreate(toolCall.input, sessionId);
+        if (early === null) return;
+        chat.addToolOutput({ tool: "schedule_create", toolCallId: toolCall.toolCallId, output: early });
+        return;
+      }
       // Isolated QA runs: start, do not await. Everything else stays awaited.
       if (toolCall.toolName === "browse_agent" && isIsolatedBrowseCall((toolCall.input ?? {}) as Record<string, unknown>)) {
         startParallelBrowseRun(toolCall);
@@ -500,6 +515,7 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   }, [sessionId, registerAbortController, unregisterAbortController]);
 
   // A failed request ends the turn: abort what is still running.
+  // A pending ask_user / schedule_create card is left as is: answering it later re-arms (see addToolOutput).
   useEffect(() => {
     if (chat.status === "error") clearStreamingToolSession();
   }, [chat.status, clearStreamingToolSession]);
@@ -539,7 +555,12 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   const abortTurn = useCallback(() => {
     clearStreamingToolSession();
     void chat.stop();
-  }, [chat, clearStreamingToolSession]);
+    // A pending schedule_create card is closed as declined: nothing creates a schedule after a Stop, and an
+    // unanswered part would poison later requests. The auto-send is gated by turnStoppedRef (set above).
+    for (const toolCallId of pendingScheduleCreateIds(ownedChat.messages)) {
+      void ownedChat.addToolOutput({ tool: "schedule_create", toolCallId, output: DECLINED_OUTPUT });
+    }
+  }, [chat, ownedChat, clearStreamingToolSession]);
 
   const sendPayload = useCallback(
     (payload: ChatLaunchPayload): boolean => {
@@ -701,15 +722,17 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   // consumer of `status`/`isLoading` therefore treats the turn as in flight.
   const status = toolsBusy && chat.status === "ready" ? "streaming" : chat.status;
 
-  // The person's (or an MCP client's) answer to ask_user re-arms auto-continuation: after a Stop the
-  // question stays on screen, and answering it means "go on". Other tool outputs keep the Stop gate.
+  // The person's (or an MCP client's) answer to a tool that waits for the person (ask_user, schedule_create)
+  // re-arms auto-continuation: after a Stop or a stream error the form/card stays on screen, and answering it
+  // means "go on". (A failed request, like ask_user, leaves the card usable; only the user's Stop declines a
+  // pending schedule card, see abortTurn.) Other tool outputs keep the Stop gate.
   const chatAddToolOutput = chat.addToolOutput;
   const addToolOutput = useCallback<typeof chatAddToolOutput>(
     (output) => {
-      // Only a real pending ask_user with this id re-arms; a stale or foreign id keeps the Stop gate.
+      // Only a real pending waiting call with this id re-arms; a stale or foreign id keeps the Stop gate.
       let restore: (() => void) | null = null;
       const { tool, toolCallId } = output as { tool?: string; toolCallId?: string };
-      if (tool === "ask_user" && findPendingAskUser(ownedChat.messages)?.toolCallId === toolCallId) {
+      if (isPendingWaitingCall(ownedChat.messages, tool, toolCallId)) {
         const previous = turnStoppedRef.current;
         turnStoppedRef.current = false;
         restore = () => {

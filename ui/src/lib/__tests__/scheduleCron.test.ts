@@ -1,8 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { describeCron, formatTime, formatUntil, fromCron, parseTime, toCron, withKind, type Frequency } from "../scheduleCron";
+import { useLanguageStore } from "@/i18n";
+
+import { describeCron, formatTime, formatUntil, fromCron, nextRunOfFrequency, parseTime, toCron, type Frequency } from "../scheduleCron";
 
 describe("scheduleCron", () => {
+  afterEach(() => useLanguageStore.setState({ language: "en" }));
+
+  it("describes in the interface language, or in the language asked for", () => {
+    useLanguageStore.setState({ language: "ru" });
+    expect(describeCron("0 9 * * 1-5")).toBe("По будням в 09:00");
+    expect(describeCron("0 9 * * 1-5", "en")).toBe("Every weekday at 09:00");
+    expect(describeCron("15 18 * * 1", "en")).toBe("Every Monday at 18:15");
+  });
+
   const presets: [Frequency, string, string][] = [
     [{ kind: "hourly", minute: 5 }, "5 * * * *", "Every hour at :05"],
     [{ kind: "daily", hour: 9, minute: 0 }, "0 9 * * *", "Every day at 09:00"],
@@ -33,13 +44,6 @@ describe("scheduleCron", () => {
     expect(toCron({ kind: "custom", cron: "  */5 * * * * " })).toBe("*/5 * * * *");
   });
 
-  it("withKind keeps the time and defaults the rest", () => {
-    expect(withKind("weekly", { kind: "daily", hour: 6, minute: 20 })).toEqual({ kind: "weekly", day: 1, hour: 6, minute: 20 });
-    expect(withKind("hourly", { kind: "daily", hour: 6, minute: 20 })).toEqual({ kind: "hourly", minute: 20 });
-    expect(withKind("custom", { kind: "weekdays", hour: 6, minute: 20 })).toEqual({ kind: "custom", cron: "20 6 * * 1-5" });
-    expect(withKind("daily", { kind: "custom", cron: "x" })).toEqual({ kind: "daily", hour: 9, minute: 0 });
-  });
-
   it("formats and parses times", () => {
     expect(formatTime(9, 5)).toBe("09:05");
     expect(parseTime("09:05")).toEqual({ hour: 9, minute: 5 });
@@ -53,5 +57,38 @@ describe("scheduleCron", () => {
     expect(formatUntil(5 * 60_000 + 1000, 1000)).toBe("in 5m");
     expect(formatUntil(3 * 3_600_000 + 1000, 1000)).toBe("in 3h");
     expect(formatUntil(2 * 86_400_000 + 1000, 1000)).toBe("in 2d");
+  });
+});
+
+describe("nextRunOfFrequency", () => {
+  // 2026-03-04 is a Wednesday.
+  const at = (day: number, h: number, m: number) => new Date(2026, 2, day, h, m, 0, 0).getTime();
+  const now = at(4, 10, 30);
+
+  it("hourly: this hour when the minute is ahead, else the next hour", () => {
+    expect(nextRunOfFrequency({ kind: "hourly", minute: 45 }, now)).toBe(at(4, 10, 45));
+    expect(nextRunOfFrequency({ kind: "hourly", minute: 30 }, now)).toBe(at(4, 11, 30));
+    expect(nextRunOfFrequency({ kind: "hourly", minute: 5 }, now)).toBe(at(4, 11, 5));
+  });
+
+  it("daily: today when still ahead, else tomorrow", () => {
+    expect(nextRunOfFrequency({ kind: "daily", hour: 18, minute: 0 }, now)).toBe(at(4, 18, 0));
+    expect(nextRunOfFrequency({ kind: "daily", hour: 9, minute: 0 }, now)).toBe(at(5, 9, 0));
+  });
+
+  it("weekdays: skips the weekend", () => {
+    const friday = at(6, 12, 0);
+    expect(nextRunOfFrequency({ kind: "weekdays", hour: 9, minute: 0 }, friday)).toBe(at(9, 9, 0));
+  });
+
+  it("weekly: the next matching day, a week ahead when it is today and passed", () => {
+    expect(nextRunOfFrequency({ kind: "weekly", day: 5, hour: 9, minute: 0 }, now)).toBe(at(6, 9, 0));
+    expect(nextRunOfFrequency({ kind: "weekly", day: 3, hour: 9, minute: 0 }, now)).toBe(at(11, 9, 0));
+  });
+
+  it("is null for custom and for an out-of-range time", () => {
+    expect(nextRunOfFrequency({ kind: "custom", cron: "* * * * *" }, now)).toBeNull();
+    expect(nextRunOfFrequency({ kind: "daily", hour: 25, minute: 0 }, now)).toBeNull();
+    expect(nextRunOfFrequency({ kind: "hourly", minute: 60 }, now)).toBeNull();
   });
 });

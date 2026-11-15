@@ -63,12 +63,16 @@ describe("SchedulesSection", () => {
     expect(document.body.textContent).toContain("skipped");
   });
 
-  it("shows the empty state with New schedule", async () => {
+  it("shows the empty state with New schedule that opens the dialog", async () => {
     setup([]);
     render(<SchedulesSection />);
     expect(await screen.findByTestId("schedules-empty")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "New schedule" }));
-    expect(screen.getByRole("form", { name: "New schedule" })).toBeTruthy();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("New schedule")).toBeTruthy();
+    expect(within(dialog).getByText("Start a new chat that gives the browser agent this task on a repeating schedule.")).toBeTruthy();
+    expect(dialog.textContent).toContain("Runs only while Sideform Light is open and the computer is awake.");
+    expect(within(dialog).queryByRole("button", { name: "Remove schedule" })).toBeNull();
   });
 
   it("lists name, frequency, next run and last run with Open chat", async () => {
@@ -91,47 +95,224 @@ describe("SchedulesSection", () => {
     expect(within(row).queryByRole("button", { name: "Open chat" })).toBeNull();
   });
 
-  it("creates a schedule with the cron of the default preset", async () => {
-    const { api } = setup([]);
-    render(<SchedulesSection />);
+  const openNew = async () => {
     fireEvent.click(await screen.findByRole("button", { name: "New schedule" }));
+    return screen.findByRole("dialog");
+  };
+  const fillBasics = () => {
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: " Morning " } });
     fireEvent.change(screen.getByLabelText("Task"), { target: { value: "Do the thing" } });
-    fireEvent.change(screen.getByLabelText("Time"), { target: { value: "07:45" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create schedule" }));
-    await waitFor(() => expect(api.save).toHaveBeenCalledTimes(1));
-    expect(api.save).toHaveBeenCalledWith({ name: "Morning", prompt: "Do the thing", cron: "45 7 * * *", enabled: true });
-    await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
-  });
+  };
+  const pick = (name: string) => fireEvent.click(screen.getByRole("radio", { name }));
 
-  it("does not call save for an empty name or task", async () => {
+  it("creates a daily schedule at the chosen time and closes", async () => {
     const { api } = setup([]);
     render(<SchedulesSection />);
-    fireEvent.click(await screen.findByRole("button", { name: "New schedule" }));
-    fireEvent.click(screen.getByRole("button", { name: "Create schedule" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("name");
+    await openNew();
+    fillBasics();
+    fireEvent.change(screen.getByLabelText("Time"), { target: { value: "07:45" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.save).toHaveBeenCalledTimes(1));
+    expect(api.save).toHaveBeenCalledWith({ name: "Morning", prompt: "Do the thing", cron: "45 7 * * *", enabled: true });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("disables Save until name and task are filled", async () => {
+    const { api } = setup([]);
+    render(<SchedulesSection />);
+    await openNew();
+    const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "A" } });
+    expect(save.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Task"), { target: { value: "B" } });
+    expect(save.disabled).toBe(false);
     expect(api.save).not.toHaveBeenCalled();
   });
 
-  it("shows main's validation error inline and keeps the editor open", async () => {
-    const { api } = setup([sched()], { save: vi.fn().mockResolvedValue({ error: "Invalid cron: field 1" }) });
+  it("saves a weekly schedule from the day buttons and the time", async () => {
+    const { api } = setup([]);
     render(<SchedulesSection />);
-    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Check prices");
+    await openNew();
+    fillBasics();
+    pick("Weekly");
+    pick("Fri");
+    fireEvent.change(screen.getByLabelText("Time"), { target: { value: "18:15" } });
+    expect(document.body.textContent).toContain("Next run in");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("Invalid cron: field 1");
-    expect(api.save).toHaveBeenCalledWith({ id: "s1", name: "Check prices", prompt: "Look at the shops", cron: "0 9 * * 1-5", enabled: true });
-    expect(screen.getByRole("form", { name: "Edit schedule" })).toBeTruthy();
+    await waitFor(() => expect(api.save).toHaveBeenCalledWith({ name: "Morning", prompt: "Do the thing", cron: "15 18 * * 5", enabled: true }));
   });
 
-  it("edits a custom cron as raw text", async () => {
+  it("validates the hourly minute inline", async () => {
+    const { api } = setup([]);
+    render(<SchedulesSection />);
+    await openNew();
+    fillBasics();
+    pick("Hourly");
+    fireEvent.change(screen.getByLabelText("Minute past the hour"), { target: { value: "75" } });
+    expect(screen.getByText("Enter a whole number from 0 to 59.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Minute past the hour"), { target: { value: "15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ cron: "15 * * * *", enabled: true })));
+  });
+
+  it("Off saves enabled:false and keeps the last frequency", async () => {
+    const { api } = setup([]);
+    render(<SchedulesSection />);
+    await openNew();
+    fillBasics();
+    pick("Weekdays");
+    fireEvent.change(screen.getByLabelText("Time"), { target: { value: "08:30" } });
+    pick("Off");
+    expect(screen.queryByLabelText("Time")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.save).toHaveBeenCalledWith({ name: "Morning", prompt: "Do the thing", cron: "30 8 * * 1-5", enabled: false }));
+  });
+
+  it("saves a custom cron and needs it non-empty", async () => {
+    const { api } = setup([]);
+    render(<SchedulesSection />);
+    await openNew();
+    fillBasics();
+    pick("Custom");
+    expect(document.body.textContent).toContain("Five fields:");
+    fireEvent.change(screen.getByLabelText("Cron expression"), { target: { value: "" } });
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Cron expression"), { target: { value: "*/20 * * * *" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ cron: "*/20 * * * *", enabled: true })));
+  });
+
+  it("shows main's error inside the dialog and keeps it open", async () => {
+    setup([sched()], { save: vi.fn().mockResolvedValue({ error: "Invalid cron: field 1" }) });
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    expect((within(dialog).getByLabelText("Name") as HTMLInputElement).value).toBe("Check prices");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect((await within(dialog).findByRole("alert")).textContent).toBe("Invalid cron: field 1");
+    expect(screen.getByRole("dialog")).toBe(dialog);
+  });
+
+  it("edit pre-fills a preset cron and saves it with the id", async () => {
+    const { api } = setup([sched({ lastRun: { at: Date.now(), status: "failed", error: "No window" } })]);
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Edit schedule")).toBeTruthy();
+    expect(within(dialog).getByRole("radio", { name: "Weekdays" }).getAttribute("aria-checked")).toBe("true");
+    expect((within(dialog).getByLabelText("Time") as HTMLInputElement).value).toBe("09:00");
+    expect(dialog.textContent).toContain("Last run failed just now: No window");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(api.save).toHaveBeenCalledWith({ id: "s1", name: "Check prices", prompt: "Look at the shops", cron: "0 9 * * 1-5", enabled: true }),
+    );
+  });
+
+  it("edit opens a non-preset cron as Custom", async () => {
     const { api } = setup([sched({ cron: "*/10 * * * *" })]);
     render(<SchedulesSection />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-    expect((screen.getByLabelText("Cron expression") as HTMLInputElement).value).toBe("*/10 * * * *");
-    fireEvent.change(screen.getByLabelText("Cron expression"), { target: { value: "*/20 * * * *" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ cron: "*/20 * * * *" })));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("radio", { name: "Custom" }).getAttribute("aria-checked")).toBe("true");
+    expect((within(dialog).getByLabelText("Cron expression") as HTMLInputElement).value).toBe("*/10 * * * *");
+    fireEvent.change(within(dialog).getByLabelText("Cron expression"), { target: { value: "*/20 * * * *" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ id: "s1", cron: "*/20 * * * *" })));
+  });
+
+  it("edit of a disabled schedule opens on Off", async () => {
+    setup([sched({ enabled: false })]);
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("radio", { name: "Off" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("Remove schedule in the dialog removes and closes", async () => {
+    const { api } = setup();
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove schedule" }));
+    // Asks first: nothing is removed yet.
+    expect(within(dialog).getByText("Remove this schedule?")).toBeTruthy();
+    expect(api.remove).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(api.remove).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("Cancel on the remove confirmation keeps the schedule", async () => {
+    const { api } = setup();
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove schedule" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(within(dialog).queryByText("Remove this schedule?")).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Remove schedule" })).toBeTruthy();
+    expect(api.remove).not.toHaveBeenCalled();
+  });
+
+  it("keeps header and footer visible: capped task field, bounded dialog, scrolling body", async () => {
+    setup([sched({ prompt: "x\n".repeat(500) })]);
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.className).toContain("max-h-[calc(100dvh-2rem)]");
+    const task = within(dialog).getByLabelText("Task");
+    expect(task.className).toContain("max-h-[40vh]");
+    expect(task.className).toContain("overflow-y-auto");
+    expect(task.closest(".overflow-y-auto.min-h-0")).toBeTruthy();
+  });
+
+  it("Custom starts from the edited preset, not the stored cron", async () => {
+    setup([sched()]);
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Time"), { target: { value: "07:30" } });
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Custom" }));
+    expect((within(dialog).getByLabelText("Cron expression") as HTMLInputElement).value).toBe("30 7 * * 1-5");
+  });
+
+  it("returning to Custom keeps what was typed there", async () => {
+    setup([sched()]);
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Custom" }));
+    fireEvent.change(within(dialog).getByLabelText("Cron expression"), { target: { value: "*/20 * * * *" } });
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Daily" }));
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Custom" }));
+    expect((within(dialog).getByLabelText("Cron expression") as HTMLInputElement).value).toBe("*/20 * * * *");
+  });
+
+  it("Custom shows a description as Runs:, and nothing when it is just the raw cron", async () => {
+    setup([sched()]);
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Custom" }));
+    expect(dialog.textContent).toContain("Runs:");
+    expect(dialog.textContent).toContain("Every weekday at 09:00");
+    expect(dialog.textContent).not.toContain("Next run in");
+    fireEvent.change(within(dialog).getByLabelText("Cron expression"), { target: { value: "*/20 * * * *" } });
+    expect(dialog.textContent).not.toContain("Runs:");
+    expect(dialog.textContent).not.toContain("Next run in");
+  });
+
+  it("starts the form from the stored schedule each time the dialog opens", async () => {
+    setup([sched()]);
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.change(within(await screen.findByRole("dialog")).getByLabelText("Name"), { target: { value: "Changed" } });
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect((within(await screen.findByRole("dialog")).getByLabelText("Name") as HTMLInputElement).value).toBe("Check prices");
   });
 
   it("asks inline before deleting", async () => {
@@ -233,5 +414,20 @@ describe("SchedulesSection", () => {
     expect(screen.getByRole("heading", { name: "Расписания" })).toBeTruthy();
     expect(screen.getByText("По будням в 09:00")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Запустить сейчас" })).toBeTruthy();
+  });
+
+  it("renders the edit dialog in Russian", async () => {
+    useLanguageStore.setState({ language: "ru" });
+    setup([sched({ lastRun: { at: Date.now(), status: "failed", error: "No window" } })]);
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Изменить" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Изменить расписание")).toBeTruthy();
+    expect(within(dialog).getByRole("radio", { name: "По будням" }).getAttribute("aria-checked")).toBe("true");
+    expect(within(dialog).getByLabelText("Время")).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Удалить расписание" })).toBeTruthy();
+    expect(dialog.textContent).toContain("Последний запуск не удался только что: No window");
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Еженедельно" }));
+    expect(within(dialog).getByRole("radio", { name: "Пн" })).toBeTruthy();
   });
 });
