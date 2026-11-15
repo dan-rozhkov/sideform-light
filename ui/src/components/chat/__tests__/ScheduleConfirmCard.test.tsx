@@ -81,7 +81,7 @@ describe("ScheduleConfirmCard in MessageList", () => {
     setCreate(vi.fn(), open);
     const created = JSON.stringify({ status: "created", schedule: { nextRun: "Mon 16 Nov 2026, 09:00" } });
     const { unmount } = render(<MessageList messages={[msg("output-available", created)]} isLoading={false} />);
-    expect(screen.getByText(/Schedule created · next run Mon 16 Nov 2026, 09:00/)).toBeTruthy();
+    expect(screen.getByText("Schedule created · Every weekday at 09:00")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open Schedules" }));
     expect(open).toHaveBeenCalledWith("schedules");
     expect(screen.queryByRole("button", { name: "Create schedule" })).toBeNull();

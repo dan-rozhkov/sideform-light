@@ -67,7 +67,8 @@ export function ScheduleConfirmCard({
         {o.status === "created" ? (
           <>
             <span className="text-text-primary">
-              {o.schedule?.nextRun ? t("schedules.card.createdNext", { when: o.schedule.nextRun }) : t("schedules.card.created")}
+              {/* The frequency in the interface language; the tool output's nextRun is fixed English for the model. */}
+              {input.cron ? t("schedules.card.createdNext", { when: describeCron(input.cron) }) : t("schedules.card.created")}
             </span>
             <Button size="sm" variant="link" className="h-auto p-0 text-xs" onClick={() => openSettings("schedules")}>
               {t("schedules.card.open")}

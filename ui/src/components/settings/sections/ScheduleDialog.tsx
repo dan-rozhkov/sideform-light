@@ -167,7 +167,7 @@ function ScheduleForm({ api, schedule, onDone }: ScheduleFormProps) {
           />
         </div>
 
-        <SegmentedControl aria-label={t("schedules.field.frequency")} options={frequencyOptions} value={frequency} onValueChange={changeFrequency} className="flex w-full *:flex-1" />
+        <SegmentedControl aria-label={t("schedules.field.frequency")} options={frequencyOptions} value={frequency} onValueChange={changeFrequency} className="flex w-full overflow-x-auto *:flex-1" />
 
         {frequency !== "off" && active === "hourly" && (
           <div className="flex items-center gap-2">
@@ -272,7 +272,7 @@ interface ScheduleDialogProps {
 export function ScheduleDialog({ api, schedule, open, session, onOpenChange, onSaved }: ScheduleDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-md">
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-lg">
         <ScheduleForm key={`${schedule?.id ?? "new"}:${session}`} api={api} schedule={schedule} onDone={() => {
             onSaved?.();
             onOpenChange(false);

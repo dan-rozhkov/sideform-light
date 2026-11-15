@@ -175,7 +175,7 @@ describe("SchedulesSection", () => {
     render(<SchedulesSection />);
     await openNew();
     fillBasics();
-    pick("Custom");
+    pick("Cron");
     expect(document.body.textContent).toContain("Five fields:");
     fireEvent.change(screen.getByLabelText("Cron expression"), { target: { value: "" } });
     expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
@@ -215,7 +215,7 @@ describe("SchedulesSection", () => {
     render(<SchedulesSection />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("radio", { name: "Custom" }).getAttribute("aria-checked")).toBe("true");
+    expect(within(dialog).getByRole("radio", { name: "Cron" }).getAttribute("aria-checked")).toBe("true");
     expect((within(dialog).getByLabelText("Cron expression") as HTMLInputElement).value).toBe("*/10 * * * *");
     fireEvent.change(within(dialog).getByLabelText("Cron expression"), { target: { value: "*/20 * * * *" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
@@ -274,7 +274,7 @@ describe("SchedulesSection", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Time"), { target: { value: "07:30" } });
-    fireEvent.click(within(dialog).getByRole("radio", { name: "Custom" }));
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Cron" }));
     expect((within(dialog).getByLabelText("Cron expression") as HTMLInputElement).value).toBe("30 7 * * 1-5");
   });
 
@@ -283,10 +283,10 @@ describe("SchedulesSection", () => {
     render(<SchedulesSection />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("radio", { name: "Custom" }));
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Cron" }));
     fireEvent.change(within(dialog).getByLabelText("Cron expression"), { target: { value: "*/20 * * * *" } });
     fireEvent.click(within(dialog).getByRole("radio", { name: "Daily" }));
-    fireEvent.click(within(dialog).getByRole("radio", { name: "Custom" }));
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Cron" }));
     expect((within(dialog).getByLabelText("Cron expression") as HTMLInputElement).value).toBe("*/20 * * * *");
   });
 
@@ -295,7 +295,7 @@ describe("SchedulesSection", () => {
     render(<SchedulesSection />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("radio", { name: "Custom" }));
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Cron" }));
     expect(dialog.textContent).toContain("Runs:");
     expect(dialog.textContent).toContain("Every weekday at 09:00");
     expect(dialog.textContent).not.toContain("Next run in");

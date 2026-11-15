@@ -72,7 +72,7 @@ export const schedules: Translation<typeof en> = {
   "schedules.card.showMore": "Mostra di più",
   "schedules.card.showLess": "Mostra meno",
   "schedules.card.created": "Pianificazione creata",
-  "schedules.card.createdNext": "Pianificazione creata · prossima esecuzione {when}",
+  "schedules.card.createdNext": "Pianificazione creata · {when}",
   "schedules.card.notCreated": "Pianificazione non creata",
   "schedules.card.notCreatedReason": "Pianificazione non creata: {error}",
   "schedules.card.open": "Apri Pianificazioni",
