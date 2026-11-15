@@ -50,7 +50,6 @@ const schedules = {
   save: (input: unknown): Promise<unknown> => ipcRenderer.invoke("schedules:save", input),
   remove: (id: string): Promise<unknown> => ipcRenderer.invoke("schedules:remove", id),
   runNow: (id: string): Promise<unknown> => ipcRenderer.invoke("schedules:run-now", id),
-  openChat: (chatId: string): Promise<unknown> => ipcRenderer.invoke("schedules:open-chat", chatId),
   onChanged(cb: () => void): () => void {
     const listener = () => cb();
     ipcRenderer.on("schedules:changed", listener);

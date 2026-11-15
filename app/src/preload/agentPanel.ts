@@ -132,6 +132,8 @@ const settings = {
 const schedules = {
   list: (): Promise<unknown> => ipcRenderer.invoke("schedules:panel-list"),
   create: (input: { name: string; prompt: string; cron: string }): Promise<unknown> => ipcRenderer.invoke("schedules:panel-create", input),
+  setEnabled: (id: string, enabled: boolean): Promise<unknown> => ipcRenderer.invoke("schedules:panel-set-enabled", { id, enabled }),
+  remove: (id: string): Promise<unknown> => ipcRenderer.invoke("schedules:panel-remove", id),
 };
 
 // MCP agent bridge (src/main/mcp/): main forwards a request of an external MCP client (`mcp:task-request`

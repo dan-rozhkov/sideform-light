@@ -68,7 +68,7 @@ describe("preload/tab.ts (trace and settings pages)", () => {
   });
 
   it("schedules go over schedules:*, and onChanged subscribes to schedules:changed and unsubscribes", async () => {
-    expect(Object.keys(exposedApi.schedules).sort()).toEqual(["list", "onChanged", "openChat", "remove", "runNow", "save"]);
+    expect(Object.keys(exposedApi.schedules).sort()).toEqual(["list", "onChanged", "remove", "runNow", "save"]);
     await exposedApi.schedules.list();
     expect(invokeMock).toHaveBeenLastCalledWith("schedules:list");
     const input = { name: "n", prompt: "p", cron: "* * * * *", enabled: true };
@@ -78,8 +78,6 @@ describe("preload/tab.ts (trace and settings pages)", () => {
     expect(invokeMock).toHaveBeenLastCalledWith("schedules:remove", "s1");
     await exposedApi.schedules.runNow("s1");
     expect(invokeMock).toHaveBeenLastCalledWith("schedules:run-now", "s1");
-    await exposedApi.schedules.openChat("c1");
-    expect(invokeMock).toHaveBeenLastCalledWith("schedules:open-chat", "c1");
     const cb = vi.fn();
     const off = exposedApi.schedules.onChanged(cb);
     const listener = onMock.mock.calls.find((c) => c[0] === "schedules:changed")![1];
@@ -146,12 +144,16 @@ describe("preload/agentPanel.ts (penAgentPanel v3)", () => {
 
   describe("schedules (agent tools)", () => {
     it("has exactly list and create, over the panel-only channels", async () => {
-      expect(Object.keys(exposedApi.schedules).sort()).toEqual(["create", "list"]);
+      expect(Object.keys(exposedApi.schedules).sort()).toEqual(["create", "list", "remove", "setEnabled"]);
       await exposedApi.schedules.list();
       expect(invokeMock).toHaveBeenLastCalledWith("schedules:panel-list");
       const input = { name: "n", prompt: "p", cron: "0 9 * * *" };
       await exposedApi.schedules.create(input);
       expect(invokeMock).toHaveBeenLastCalledWith("schedules:panel-create", input);
+      await exposedApi.schedules.setEnabled("s1", false);
+      expect(invokeMock).toHaveBeenLastCalledWith("schedules:panel-set-enabled", { id: "s1", enabled: false });
+      await exposedApi.schedules.remove("s1");
+      expect(invokeMock).toHaveBeenLastCalledWith("schedules:panel-remove", "s1");
     });
   });
 

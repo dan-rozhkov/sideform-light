@@ -26,7 +26,6 @@ function setup(schedules: ScheduleView[] = [sched()], over: Record<string, unkno
     save: vi.fn().mockResolvedValue({ schedule: sched() }),
     remove: vi.fn().mockResolvedValue({ ok: true }),
     runNow: vi.fn().mockResolvedValue({ schedule: sched() }),
-    openChat: vi.fn().mockResolvedValue({ ok: true }),
     onChanged: vi.fn((cb: () => void) => {
       changed = cb;
       return () => {};
@@ -70,29 +69,33 @@ describe("SchedulesSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "New schedule" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("New schedule")).toBeTruthy();
-    expect(within(dialog).getByText("Start a new chat that gives the browser agent this task on a repeating schedule.")).toBeTruthy();
-    expect(dialog.textContent).toContain("Runs only while Sideform Light is open and the computer is awake.");
+    // The note on when runs happen sits under the title; there is no other description.
+    expect(within(dialog).getByText(/^Runs only while Sideform Light is open and the computer is awake\./)).toBeTruthy();
+    expect(dialog.textContent).not.toContain("Start a new chat that gives the browser agent");
     expect(within(dialog).queryByRole("button", { name: "Remove schedule" })).toBeNull();
   });
 
-  it("lists name, frequency, next run and last run with Open chat", async () => {
-    const { api } = setup([sched({ lastRun: { at: Date.now() - 5 * 60_000, status: "started", chatId: "tab-9" } })]);
+  it("lists name, frequency and next run; no last run and no Open chat", async () => {
+    setup([sched({ lastRun: { at: Date.now() - 5 * 60_000, status: "started", chatId: "tab-9" } })]);
     render(<SchedulesSection />);
     const row = await screen.findByTestId("schedule-s1");
     expect(row.textContent).toContain("Check prices");
     expect(row.textContent).toContain("Every weekday at 09:00");
     expect(row.textContent).toContain("Next run in 3h");
-    expect(row.textContent).toContain("Last run started 5m ago");
-    fireEvent.click(within(row).getByRole("button", { name: "Open chat" }));
-    expect(api.openChat).toHaveBeenCalledWith("tab-9");
+    expect(row.textContent).not.toContain("Last run");
+    expect(within(row).queryByRole("button", { name: "Open chat" })).toBeNull();
   });
 
-  it("shows a failed last run with its reason and no Open chat without a chat", async () => {
-    setup([sched({ lastRun: { at: Date.now(), status: "skipped", error: "The previous run is still running" } })]);
+  it("row actions are icon buttons named Run now, Edit and Delete, before the switch", async () => {
+    const { api } = setup([sched()]);
     render(<SchedulesSection />);
     const row = await screen.findByTestId("schedule-s1");
-    expect(row.textContent).toContain("Last run skipped just now: The previous run is still running");
-    expect(within(row).queryByRole("button", { name: "Open chat" })).toBeNull();
+    const controls = [...row.querySelectorAll("button, [role=switch]")].map((el) => el.getAttribute("aria-label") ?? el.getAttribute("role"));
+    expect(controls.slice(0, 3)).toEqual(["Run now", "Edit", "Delete"]);
+    expect(row.querySelector("[role=switch]")).toBe(row.querySelectorAll("button, [role=switch]")[3]);
+    for (const name of ["Run now", "Edit", "Delete"]) expect(within(row).getByRole("button", { name }).textContent).toBe("");
+    fireEvent.click(within(row).getByRole("button", { name: "Run now" }));
+    expect(api.runNow).toHaveBeenCalledWith("s1");
   });
 
   const openNew = async () => {
@@ -203,7 +206,8 @@ describe("SchedulesSection", () => {
     expect(within(dialog).getByText("Edit schedule")).toBeTruthy();
     expect(within(dialog).getByRole("radio", { name: "Weekdays" }).getAttribute("aria-checked")).toBe("true");
     expect((within(dialog).getByLabelText("Time") as HTMLInputElement).value).toBe("09:00");
-    expect(dialog.textContent).toContain("Last run failed just now: No window");
+    // The dialog does not show the last run (the list row does).
+    expect(dialog.textContent).not.toContain("Last run");
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(api.save).toHaveBeenCalledWith({ id: "s1", name: "Check prices", prompt: "Look at the shops", cron: "0 9 * * 1-5", enabled: true }),
@@ -337,6 +341,64 @@ describe("SchedulesSection", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("No window");
   });
 
+  it("the delete confirmation is its own wrapping line, outside the shrink-0 controls", async () => {
+    setup();
+    render(<SchedulesSection />);
+    const row = await screen.findByTestId("schedule-s1");
+    expect(row.className).toContain("flex-wrap");
+    fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
+    const group = within(row).getByRole("group", { name: "Confirm delete" });
+    const controls = within(row).getByTestId("schedule-controls");
+    expect(controls.className).toContain("shrink-0");
+    expect(controls.contains(group)).toBe(false);
+    expect(group.parentElement).toBe(row);
+    expect(group.className).toContain("basis-full");
+    expect(group.className).toContain("flex-wrap");
+    // the switch stays on the first line; the row actions give way to the confirmation
+    expect(controls.querySelector('[role="switch"]')).toBeTruthy();
+    expect(within(row).queryByRole("button", { name: "Run now" })).toBeNull();
+  });
+
+  it.each([
+    ["skipped", "No window", "Run skipped: No window"],
+    ["failed", "Boom", "Run failed: Boom"],
+    ["skipped", undefined, "Run skipped"],
+  ] as const)("Run now shows a %s run of this click (%s)", async (status, error, want) => {
+    const { api } = setup([sched()], {
+      runNow: vi.fn().mockImplementation(async () => ({ schedule: sched({ lastRun: { at: Date.now() + 1, status, ...(error ? { error } : {}) } }) })),
+    });
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Run now" }));
+    await waitFor(() => expect(api.runNow).toHaveBeenCalled());
+    expect((await screen.findByRole("alert")).textContent).toBe(want);
+  });
+
+  it("Run now says nothing for a started run or for an older skipped run", async () => {
+    const old = sched({ lastRun: { at: Date.now() - 60_000, status: "skipped", error: "Old" } });
+    const { api } = setup([old], {
+      runNow: vi.fn().mockResolvedValueOnce({ schedule: sched({ lastRun: { at: Date.now() + 1, status: "started", chatId: "c" } }) }).mockResolvedValueOnce({ schedule: old }),
+    });
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Run now" }));
+    await waitFor(() => expect(api.runNow).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Run now" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Run now" }));
+    await waitFor(() => expect(api.runNow).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("Run now localizes a skipped run", async () => {
+    useLanguageStore.setState({ language: "de" });
+    const { api } = setup([sched()], {
+      runNow: vi.fn().mockImplementation(async () => ({ schedule: sched({ lastRun: { at: Date.now() + 1, status: "skipped", error: "x" } }) })),
+    });
+    render(<SchedulesSection />);
+    fireEvent.click(await screen.findByRole("button", { name: t("schedules.runNow") }));
+    await waitFor(() => expect(api.runNow).toHaveBeenCalled());
+    expect((await screen.findByRole("alert")).textContent).toBe("Ausführung übersprungen: x");
+  });
+
   it("the switch saves the schedule with the other value", async () => {
     const { api } = setup();
     render(<SchedulesSection />);
@@ -426,7 +488,7 @@ describe("SchedulesSection", () => {
     expect(within(dialog).getByRole("radio", { name: "По будням" }).getAttribute("aria-checked")).toBe("true");
     expect(within(dialog).getByLabelText("Время")).toBeTruthy();
     expect(within(dialog).getByRole("button", { name: "Удалить расписание" })).toBeTruthy();
-    expect(dialog.textContent).toContain("Последний запуск не удался только что: No window");
+    expect(dialog.textContent).not.toContain("Последний запуск");
     fireEvent.click(within(dialog).getByRole("radio", { name: "Еженедельно" }));
     expect(within(dialog).getByRole("radio", { name: "Пн" })).toBeTruthy();
   });

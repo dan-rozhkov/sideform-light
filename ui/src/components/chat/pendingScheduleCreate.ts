@@ -1,6 +1,5 @@
-import type { UIMessage } from "ai";
-
-import { parseScheduleCreateInput } from "@/lib/tools/schedules";
+import { pendingScheduleActions } from "@/lib/tools/pendingScheduleActions";
+import { isScheduleActionTool, parseScheduleActionInput, parseScheduleCreateInput } from "@/lib/tools/schedules";
 
 type Part = { type?: string; toolCallId?: string; input?: unknown; state?: string; output?: unknown };
 
@@ -20,17 +19,20 @@ export function isPendingScheduleCreatePart(part: unknown): boolean {
   );
 }
 
-/** Tool call ids of schedule_create parts that wait for the person's confirmation (same rule as ask_user). */
-export function pendingScheduleCreateIds(messages: UIMessage[]): string[] {
-  const ids: string[] = [];
-  for (const m of messages) {
-    if (m.role !== "assistant") continue;
-    for (const p of m.parts as Part[]) if (isPendingScheduleCreatePart(p)) ids.push(p.toolCallId as string);
-  }
-  return ids;
-}
-
-/** True while a schedule_create confirmation card is unanswered: the composer stays blocked like for ask_user. */
-export function hasPendingScheduleCreate(messages: UIMessage[]): boolean {
-  return pendingScheduleCreateIds(messages).length > 0;
+/**
+ * A schedule_set_enabled / schedule_delete part that waits for the person: same rule as schedule_create
+ * (input complete, no output yet, input parses) plus a record from the precheck (pendingScheduleActions), so
+ * MessageList draws a card for exactly these parts and a precheck still in flight blocks nothing.
+ */
+export function isPendingScheduleActionPart(part: unknown): boolean {
+  const p = part as Part;
+  const tool = typeof p.type === "string" && p.type.startsWith("tool-") ? p.type.slice(5) : undefined;
+  return (
+    isScheduleActionTool(tool) &&
+    typeof p.toolCallId === "string" &&
+    p.state === "input-available" &&
+    p.output === undefined &&
+    parseScheduleActionInput(tool, p.input) !== null &&
+    pendingScheduleActions.get(p.toolCallId) !== undefined
+  );
 }

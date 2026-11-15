@@ -287,9 +287,9 @@ Channel names are plain strings; `test/ipcContract.test.ts` scans `src/` and pin
 | `settings:open` | panel / trace / settings → main | `settings:section` goes back to an open Settings page |
 | `browser-settings:get`, `browser-settings:set` | Settings page → main | top frame of the Settings tab only |
 | `mcp-settings:get`, `mcp-settings:set`, `mcp-settings:regenerate-token` | Settings page → main | same sender rule (`browserSettingsIpc.isSender`) |
-| `schedules:list`, `schedules:save`, `schedules:remove`, `schedules:run-now`, `schedules:open-chat` | Settings page → main | same sender rule; scheduled chats (`src/main/schedules/`: cron, store, scheduler, IPC), fires over the MCP panel bridge (`schedule-start`, `open`); `open` expands only the window that owns the registered panel. Known limitation: if the panel answers a schedule-start after the 15 s bridge timeout, the run is recorded as failed and main loses its chat id |
+| `schedules:list`, `schedules:save`, `schedules:remove`, `schedules:run-now` | Settings page → main | same sender rule; scheduled chats (`src/main/schedules/`: cron, store, scheduler, IPC), fires over the MCP panel bridge (`schedule-start`). Known limitation: if the panel answers a schedule-start after the 15 s bridge timeout, the run is recorded as failed and main loses its chat id |
 | `schedules:changed` | main → Settings page | after any change or run |
-| `schedules:panel-list`, `schedules:panel-create` | agent panel → main | `penAgentPanel.schedules` (agent tools `schedule_list` / `schedule_create`); panel sender only, `create` is called after the person confirms the in-chat card |
+| `schedules:panel-list`, `schedules:panel-create`, `schedules:panel-set-enabled`, `schedules:panel-remove` | agent panel → main | `penAgentPanel.schedules` (agent tools `schedule_list` / `schedule_create` / `schedule_set_enabled` / `schedule_delete`); panel sender only, `create` / `set-enabled` / `remove` are called after the person confirms the in-chat card |
 | `mcp:panel-ready`, `mcp:task-reply`, `mcp:task-changed` | panel → main | panel webContents AND panel page only (`isMcpPanelSender`, the `chats:*` check without the vanished-frame allowance) |
 | `mcp:task-request` | main → panel | `{ requestId, request }`, to the one registered panel |
 | `chats:list\|read\|save\|delete` | panel → main | panel page only, process-level |

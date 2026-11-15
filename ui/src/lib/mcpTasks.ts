@@ -255,14 +255,6 @@ export function createMcpTaskHandler(): McpTaskHandler {
     return { task: stateOf(chat, false) };
   }
 
-  function openTask(req: Extract<McpPanelRequest, { op: "open" }>): McpPanelReply {
-    if (!validTaskId(req.taskId)) return { error: "Invalid task id" };
-    if (!store().chats.some((c) => c.id === req.taskId)) return { error: "Unknown chat" };
-    store().openChat(req.taskId);
-    store().open();
-    return { ok: true };
-  }
-
   function answer(req: Extract<McpPanelRequest, { op: "answer" }>): McpPanelReply {
     const chat = find(req.taskId);
     if ("error" in chat) return chat;
@@ -339,8 +331,6 @@ export function createMcpTaskHandler(): McpTaskHandler {
             return list(request);
           case "schedule-start":
             return scheduleStart(request);
-          case "open":
-            return openTask(request);
           default:
             return { error: "Unknown request" };
         }

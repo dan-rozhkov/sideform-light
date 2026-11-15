@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { textTurn } from "@/test/sseStream";
+import { sse, textTurn } from "@/test/sseStream";
 import { buildChatBody, executeToolCall, useDesignChat, extractContextTokens, getToolCallTimeoutMs, hasUnresolvedToolCalls } from "../useDesignChat";
 import { CLIENT_CAPABILITIES } from "@/lib/chatTransport";
 import { toolHandlers } from "@/lib/toolRegistry";
 import { useChatStore } from "@/store/chatStore";
 import { getUserId } from "@/lib/userId";
 import type { UIMessage } from "ai";
+import { pendingScheduleActions } from "@/lib/tools/pendingScheduleActions";
 
 beforeEach(() => localStorage.clear());
 afterEach(() => vi.restoreAllMocks());
@@ -187,6 +188,103 @@ describe("answering ask_user after a Stop", () => {
     });
     expect(result.current.isTurnStopped()).toBe(false);
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(calls));
+  });
+
+  it.each([
+    ["schedule_set_enabled", { id: "s1", enabled: false }],
+    ["schedule_delete", { id: "s1" }],
+  ])("Stop declines a pending %s card", async (tool, input) => {
+    vi.stubGlobal("fetch", vi.fn(async () => textTurn("x")));
+    // the precheck left this call pending: its record is what makes it a waiting call
+    pendingScheduleActions.set("s1", { name: "n", cron: "0 9 * * *", prompt: "p", enabled: true });
+    const { result } = renderHook(() => useDesignChat({ sessionId: `stop-${tool}` }));
+    act(() =>
+      result.current.setMessages([
+        { id: "u", role: "user", parts: [{ type: "text", text: "go" }] },
+        { id: "a", role: "assistant", parts: [{ type: `tool-${tool}`, toolCallId: "s1", state: "input-available", input }] } as unknown as UIMessage,
+      ]),
+    );
+    await act(async () => {
+      result.current.stop();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    await waitFor(() => {
+      const part = result.current.messages[1].parts[0] as { state: string; output?: unknown };
+      expect(part.state).toBe("output-available");
+      expect(part.output).toBe('{"status":"declined"}');
+    });
+    await waitFor(() => expect(pendingScheduleActions.get("s1")).toBeUndefined());
+  });
+
+  it("answers an unknown schedule id at once, without a card", async () => {
+    (window as unknown as { penAgentPanel?: unknown }).penAgentPanel = {
+      version: 3,
+      schedules: { list: async () => ({ schedules: [] }), create: vi.fn(), setEnabled: vi.fn(), remove: vi.fn() },
+    };
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(
+            sse([
+              { type: "start" },
+              { type: "start-step" },
+              { type: "tool-input-available", toolCallId: "d1", toolName: "schedule_delete", input: { id: "nope" } },
+              { type: "finish-step" },
+              { type: "finish" },
+            ]),
+          )
+          .mockImplementation(async () => textTurn("ok")),
+      );
+      const { result } = renderHook(() => useDesignChat({ sessionId: "precheck-unknown" }));
+      await act(async () => {
+        result.current.submitLaunchPayload({ text: "delete it" });
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      await waitFor(() => {
+        const part = result.current.messages.flatMap((m) => m.parts).find((p) => p.type === "tool-schedule_delete") as { output?: string } | undefined;
+        expect(part?.output).toBe(JSON.stringify({ status: "error", error: "Unknown schedule id. Call schedule_list." }));
+      });
+    } finally {
+      (window as unknown as { penAgentPanel?: unknown }).penAgentPanel = undefined;
+    }
+  });
+
+  it("a schedule_delete that needs confirmation is recorded and left pending", async () => {
+    const view = { id: "d2", name: "Digest", prompt: "Summarize", cron: "0 9 * * *", enabled: true, createdAt: 1, updatedAt: 1, nextRunAt: null };
+    (window as unknown as { penAgentPanel?: unknown }).penAgentPanel = {
+      version: 3,
+      schedules: { list: async () => ({ schedules: [view] }), create: vi.fn(), setEnabled: vi.fn(), remove: vi.fn() },
+    };
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValueOnce(
+          sse([
+            { type: "start" },
+            { type: "start-step" },
+            { type: "tool-input-available", toolCallId: "d2c", toolName: "schedule_delete", input: { id: "d2" } },
+            { type: "finish-step" },
+            { type: "finish" },
+          ]),
+        ),
+      );
+      const { result } = renderHook(() => useDesignChat({ sessionId: "precheck-pending" }));
+      await act(async () => {
+        result.current.submitLaunchPayload({ text: "delete it" });
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      await waitFor(() => expect(pendingScheduleActions.get("d2c")).toEqual({ name: "Digest", cron: "0 9 * * *", prompt: "Summarize", enabled: true }));
+      const part = result.current.messages.flatMap((m) => m.parts).find((p) => p.type === "tool-schedule_delete") as { state: string };
+      expect(part.state).toBe("input-available");
+      await act(async () => {
+        await result.current.addToolOutput({ tool: "schedule_delete", toolCallId: "d2c", output: '{"status":"declined"}' });
+      });
+      await waitFor(() => expect(pendingScheduleActions.get("d2c")).toBeUndefined());
+    } finally {
+      (window as unknown as { penAgentPanel?: unknown }).penAgentPanel = undefined;
+    }
   });
 
   it("an ask_user output with an unknown id keeps the Stop gate", async () => {

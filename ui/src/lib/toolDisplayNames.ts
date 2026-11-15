@@ -21,6 +21,8 @@ export const toolDisplayNames: Record<string, MessageKey> = {
   ask_user: "tools.name.ask_user",
   schedule_list: "tools.name.schedule_list",
   schedule_create: "tools.name.schedule_create",
+  schedule_set_enabled: "tools.name.schedule_set_enabled",
+  schedule_delete: "tools.name.schedule_delete",
 };
 
 export function getToolDisplayName(toolName: string): string {

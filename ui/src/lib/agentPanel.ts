@@ -32,10 +32,14 @@ export interface PenAgentPanelApi {
     /** Tells main that a task's state may have changed (wakes waiting get_task calls). */
     notifyChanged(taskId: string): void;
   };
-  /** Schedules for the schedule_list / schedule_create agent tools (`schedules:panel-list|panel-create`). */
+  /** Schedules for the schedule_* agent tools (`schedules:panel-list|panel-create|panel-set-enabled|panel-remove`). */
   schedules?: {
     list(): Promise<{ schedules: ScheduleView[] } | { error: string }>;
     create(input: { name: string; prompt: string; cron: string }): Promise<{ schedule: ScheduleView } | { error: string }>;
+    /** Pause or resume (`schedules:panel-set-enabled`). */
+    setEnabled(id: string, enabled: boolean): Promise<{ schedule: ScheduleView } | { error: string }>;
+    /** Delete (`schedules:panel-remove`). */
+    remove(id: string): Promise<{ ok: true } | { error: string }>;
   };
   /** Local browse-run traces. */
   traces?: {

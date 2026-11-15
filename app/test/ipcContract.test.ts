@@ -85,9 +85,10 @@ const CHANNELS: { name: string; direction: "main->renderer" | "renderer->main" }
   { name: "schedules:save", direction: "renderer->main" },
   { name: "schedules:panel-list", direction: "renderer->main" },
   { name: "schedules:panel-create", direction: "renderer->main" },
+  { name: "schedules:panel-set-enabled", direction: "renderer->main" },
+  { name: "schedules:panel-remove", direction: "renderer->main" },
   { name: "schedules:remove", direction: "renderer->main" },
   { name: "schedules:run-now", direction: "renderer->main" },
-  { name: "schedules:open-chat", direction: "renderer->main" },
   { name: "schedules:changed", direction: "main->renderer" },
   // MCP agent bridge, main <-> agent panel (panel's own page only): the page registers its handler (`panel-ready`), main
   // forwards a request `{requestId, request}` (`task-request`), the page answers `{requestId, reply}` (`task-reply`) and
@@ -248,16 +249,16 @@ describe("MCP agent bridge wiring", () => {
   it("the schedules channels go through the Settings-tab sender rule", () => {
     const ipc = readFileSync(join(SRC, "main/schedules/schedulesIpc.ts"), "utf8");
     expect(ipc).toContain("deps.isSettingsSender(event)");
-    for (const c of ["list", "save", "remove", "run-now", "open-chat"]) expect(tabPreload, c).toContain(`"schedules:${c}"`);
+    for (const c of ["list", "save", "remove", "run-now"]) expect(tabPreload, c).toContain(`"schedules:${c}"`);
     expect(tabPreload).toContain('"schedules:changed"');
   });
 
   it("the schedules:panel-* channels go through the agent panel sender rule, not the Settings one", () => {
     const ipc = readFileSync(join(SRC, "main/schedules/schedulesIpc.ts"), "utf8");
     expect(ipc).toContain("deps.isPanelSender(event)");
-    for (const c of ["panel-list", "panel-create"]) expect(ipc, c).toContain(`"schedules:${c}"`);
+    for (const c of ["panel-list", "panel-create", "panel-set-enabled", "panel-remove"]) expect(ipc, c).toContain(`"schedules:${c}"`);
     const preload = readFileSync(join(SRC, "preload/agentPanel.ts"), "utf8");
-    for (const c of ["panel-list", "panel-create"]) expect(preload, c).toContain(`"schedules:${c}"`);
+    for (const c of ["panel-list", "panel-create", "panel-set-enabled", "panel-remove"]) expect(preload, c).toContain(`"schedules:${c}"`);
     expect(readFileSync(join(SRC, "main/index.ts"), "utf8")).toContain("isPanelSender: (e) => isAgentPanelSender(e)");
     expect(tabPreload).not.toContain("panel-create");
   });
@@ -266,7 +267,6 @@ describe("MCP agent bridge wiring", () => {
     for (const f of ["main/mcp/tools.ts", "main/mcp/toolInputs.ts"]) {
       const src = readFileSync(join(SRC, f), "utf8");
       expect(src, f).not.toContain("schedule-start");
-      expect(src, f).not.toContain('op: "open"');
     }
   });
 

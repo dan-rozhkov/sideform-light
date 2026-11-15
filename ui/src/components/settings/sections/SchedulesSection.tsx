@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { PlusIcon } from "@/components/icons";
+import { PencilSimpleIcon, PlayIcon, PlusIcon, TrashIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/IconButton";
 import { Switch } from "@/components/ui/switch";
 import { t as translate, useT } from "@/i18n";
 import type { DesktopSchedulesApi, ScheduleView } from "@/lib/desktopBridge";
 import { describeCron, formatUntil } from "@/lib/scheduleCron";
-import { errorText, formatScheduleWhen, lastRunText } from "@/lib/scheduleText";
+import { errorText, formatScheduleWhen } from "@/lib/scheduleText";
 
 import { SettingsGroup, SettingsSection } from "../SettingsSection";
 import { ScheduleDialog } from "./ScheduleDialog";
@@ -30,7 +31,6 @@ function ScheduleRow({
   onAskDelete,
   onCancelDelete,
   onDelete,
-  onOpenChat,
 }: {
   schedule: ScheduleView;
   busy: boolean;
@@ -41,62 +41,64 @@ function ScheduleRow({
   onAskDelete: () => void;
   onCancelDelete: () => void;
   onDelete: () => void;
-  onOpenChat: (chatId: string) => void;
 }) {
   const t = useT();
-  const { lastRun } = schedule;
   useTick(30_000);
   return (
-    <li data-testid={`schedule-${schedule.id}`} className="flex flex-col gap-2 border-b border-border-default py-4 last:border-b-0">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="truncate text-sm font-medium text-text-primary">{schedule.name}</h3>
-          <p className="mt-0.5 text-xs text-text-primary">{describeCron(schedule.cron)}</p>
-          <p className="mt-0.5 text-xs text-text-muted">
-            {schedule.enabled && schedule.nextRunAt !== null
-              ? t("schedules.nextRun", { until: formatUntil(schedule.nextRunAt), at: formatScheduleWhen(schedule.nextRunAt) })
-              : schedule.enabled
-                ? t("schedules.neverRuns")
-                : t("schedules.off")}
-          </p>
-          {lastRun && (
-            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-text-muted">
-              <span>{lastRunText(lastRun)}</span>
-              {lastRun.chatId && (
-                <Button type="button" variant="link" size="xs" className="h-auto p-0 text-xs" onClick={() => onOpenChat(lastRun.chatId!)}>
-                  {t("schedules.openChat")}
-                </Button>
-              )}
-            </p>
-          )}
-        </div>
+    <li
+      data-testid={`schedule-${schedule.id}`}
+      className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-b border-border-default py-4 last:border-b-0"
+    >
+      <div className="min-w-0 flex-1 basis-40">
+        <h3 className="truncate text-sm font-medium text-text-primary">{schedule.name}</h3>
+        <p className="mt-0.5 text-xs text-text-primary">{describeCron(schedule.cron)}</p>
+        <p className="mt-0.5 text-xs text-text-muted">
+          {schedule.enabled && schedule.nextRunAt !== null
+            ? t("schedules.nextRun", { until: formatUntil(schedule.nextRunAt), at: formatScheduleWhen(schedule.nextRunAt) })
+            : schedule.enabled
+              ? t("schedules.neverRuns")
+              : t("schedules.off")}
+        </p>
+      </div>
+      <div data-testid="schedule-controls" className="flex shrink-0 items-center gap-1">
+        {!confirming && (
+          <>
+            <IconButton type="button" variant="ghost" size="icon" tooltip={t("schedules.runNow")} disabled={busy} onClick={onRunNow}>
+              <PlayIcon className="size-4" weight="light" />
+            </IconButton>
+            <IconButton type="button" variant="ghost" size="icon" tooltip={t("schedules.edit")} disabled={busy} onClick={onEdit}>
+              <PencilSimpleIcon className="size-4" weight="light" />
+            </IconButton>
+            <IconButton
+              type="button"
+              variant="ghost"
+              size="icon"
+              tooltip={t("schedules.delete")}
+              disabled={busy}
+              onClick={onAskDelete}
+              className="hover:text-destructive"
+            >
+              <TrashIcon className="size-4" weight="light" />
+            </IconButton>
+          </>
+        )}
         <Switch
           aria-label={t("schedules.toggleAria", { name: schedule.name })}
           checked={schedule.enabled}
           disabled={busy}
           onCheckedChange={onToggle}
+          className="ml-1.5"
         />
       </div>
-      {confirming ? (
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label={t("schedules.confirm.group")}>
+      {confirming && (
+        // Its own full-width line, so a long question never squeezes the text or overflows at narrow widths.
+        <div className="flex basis-full flex-wrap items-center justify-end gap-x-2 gap-y-1.5" role="group" aria-label={t("schedules.confirm.group")}>
           <span className="text-xs text-text-primary">{t("schedules.confirm.question")}</span>
           <Button type="button" variant="destructive" size="sm" disabled={busy} onClick={onDelete}>
             {t("schedules.delete")}
           </Button>
           <Button type="button" variant="ghost" size="sm" onClick={onCancelDelete}>
             {t("schedules.cancel")}
-          </Button>
-        </div>
-      ) : (
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onRunNow}>
-            {t("schedules.runNow")}
-          </Button>
-          <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onEdit}>
-            {t("schedules.edit")}
-          </Button>
-          <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onAskDelete}>
-            {t("schedules.delete")}
           </Button>
         </div>
       )}
@@ -166,16 +168,30 @@ function SchedulesControls({ api }: { api: DesktopSchedulesApi }) {
     }
   };
 
+  // runNow resolves with the schedule even when the run did not start: surface a skipped / failed run of this click.
+  const runNow = (s: ScheduleView, clickedAt: number) => {
+    return act(s.id, async () => {
+      const out = await api.runNow(s.id);
+      const run = "schedule" in out ? out.schedule.lastRun : undefined;
+      if (run && run.status !== "started" && run.at >= clickedAt) {
+        const reason = run.error;
+        setActionError(
+          run.status === "skipped"
+            ? reason
+              ? t("schedules.runSkipped", { reason })
+              : t("schedules.runSkippedPlain")
+            : reason
+              ? t("schedules.runFailed", { reason })
+              : t("schedules.runFailedPlain"),
+        );
+      }
+      return out;
+    });
+  };
+
   const toggle = (s: ScheduleView, enabled: boolean) =>
     act(s.id, () => api.save({ id: s.id, name: s.name, prompt: s.prompt, cron: s.cron, enabled }));
 
-  const openChat = (chatId: string) => {
-    setActionError(null);
-    api.openChat(chatId).then(
-      (out) => alive.current && "error" in out && setActionError(out.error),
-      (e: unknown) => alive.current && setActionError(errorText(e, t("schedules.error.openChat"))),
-    );
-  };
 
   const list = schedules ?? [];
   const showEmpty = schedules !== null && list.length === 0;
@@ -224,7 +240,7 @@ function SchedulesControls({ api }: { api: DesktopSchedulesApi }) {
               busy={busyId === s.id}
               confirming={confirmId === s.id}
               onToggle={(next) => void toggle(s, next)}
-              onRunNow={() => void act(s.id, () => api.runNow(s.id))}
+              onRunNow={() => void runNow(s, Date.now())}
               onEdit={() => {
                 setConfirmId(null);
                 openDialog(s);
@@ -235,7 +251,6 @@ function SchedulesControls({ api }: { api: DesktopSchedulesApi }) {
                 setConfirmId(null);
                 void act(s.id, () => api.remove(s.id));
               }}
-              onOpenChat={openChat}
             />
           ))}
         </ul>

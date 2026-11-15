@@ -409,24 +409,6 @@ describe("schedule ops", () => {
     expect(await h.handle({ op: "get", taskId: t.taskId })).toHaveProperty("error");
     expect(await h.handle({ op: "list", limit: 10 })).toEqual({ tasks: [] });
   });
-
-  it("open activates any chat and opens the panel", async () => {
-    const h = createMcpTaskHandler();
-    const t = task(await h.handle(req()));
-    useChatStore.setState({ isOpen: false });
-    expect(await h.handle({ op: "open", taskId: t.taskId })).toEqual({ ok: true });
-    expect(useChatStore.getState().activeChatId).toBe(t.taskId);
-    expect(useChatStore.getState().isOpen).toBe(true);
-    const plain = useChatStore.getState().chats[0].id;
-    expect(await h.handle({ op: "open", taskId: plain })).toEqual({ ok: true });
-    expect(useChatStore.getState().activeChatId).toBe(plain);
-  });
-
-  it("open rejects a bad or unknown id", async () => {
-    const h = createMcpTaskHandler();
-    expect(await h.handle({ op: "open", taskId: "a b" })).toHaveProperty("error");
-    expect(await h.handle({ op: "open", taskId: "nope" })).toHaveProperty("error");
-  });
 });
 
 describe("startMcpBridge", () => {

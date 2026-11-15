@@ -15,8 +15,9 @@ import { toolHandlers, type ToolExecutionContext, type ToolHandler } from "@/lib
 import type { ChatLaunchPayload } from "@/types/chat";
 import type { UIMessage } from "ai";
 import { isPendingWaitingCall } from "@/components/chat/waitingForPerson";
-import { pendingScheduleCreateIds } from "@/components/chat/pendingScheduleCreate";
-import { DECLINED_OUTPUT, precheckScheduleCreate } from "@/lib/tools/schedules";
+import { pendingWaitingCalls } from "@/components/chat/waitingForPerson";
+import { pendingScheduleActions } from "@/lib/tools/pendingScheduleActions";
+import { DECLINED_OUTPUT, isScheduleActionTool, precheckScheduleAction, precheckScheduleCreate } from "@/lib/tools/schedules";
 import { isIsolatedBrowseCall } from "@/lib/tools/browser/isolation";
 import { BROWSE_AGENT_OUTER_TIMEOUT_MS } from "@/lib/tools/browser/browseAgent";
 import { useOwnedChat } from "@/hooks/useOwnedChat";
@@ -353,6 +354,21 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
         chat.addToolOutput({ tool: "schedule_create", toolCallId: toolCall.toolCallId, output: early });
         return;
       }
+      // schedule_set_enabled / schedule_delete: same card flow; answered at once for bad input, a background
+      // chat, no bridge, an unknown id, or a pause/resume that changes nothing.
+      if (isScheduleActionTool(toolCall.toolName)) {
+        const tool = toolCall.toolName;
+        const early = await precheckScheduleAction(tool, toolCall.input, sessionId, toolCall.toolCallId);
+        if (early === null) {
+          // Stopped while the precheck ran: nobody is left to answer the card, so decline it now.
+          if (!turnStoppedRef.current) return;
+          pendingScheduleActions.delete(toolCall.toolCallId);
+          chat.addToolOutput({ tool, toolCallId: toolCall.toolCallId, output: DECLINED_OUTPUT });
+          return;
+        }
+        chat.addToolOutput({ tool, toolCallId: toolCall.toolCallId, output: early });
+        return;
+      }
       // Isolated QA runs: start, do not await. Everything else stays awaited.
       if (toolCall.toolName === "browse_agent" && isIsolatedBrowseCall((toolCall.input ?? {}) as Record<string, unknown>)) {
         startParallelBrowseRun(toolCall);
@@ -555,10 +571,12 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   const abortTurn = useCallback(() => {
     clearStreamingToolSession();
     void chat.stop();
-    // A pending schedule_create card is closed as declined: nothing creates a schedule after a Stop, and an
+    // A pending schedule card (create, pause/resume, delete) is closed as declined: nothing creates a schedule after a Stop, and an
     // unanswered part would poison later requests. The auto-send is gated by turnStoppedRef (set above).
-    for (const toolCallId of pendingScheduleCreateIds(ownedChat.messages)) {
-      void ownedChat.addToolOutput({ tool: "schedule_create", toolCallId, output: DECLINED_OUTPUT });
+    for (const { tool, toolCallId } of pendingWaitingCalls(ownedChat.messages)) {
+      if (tool === "ask_user") continue;
+      const spent = () => pendingScheduleActions.delete(toolCallId);
+      void Promise.resolve(ownedChat.addToolOutput({ tool, toolCallId, output: DECLINED_OUTPUT })).then(spent, spent);
     }
   }, [chat, ownedChat, clearStreamingToolSession]);
 
@@ -741,6 +759,11 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
       }
       try {
         const result = chatAddToolOutput(output);
+        // The precheck's record is spent once the call has its output.
+        if (toolCallId && isScheduleActionTool(tool)) {
+          const spent = () => pendingScheduleActions.delete(toolCallId);
+          void Promise.resolve(result).then(spent, spent);
+        }
         if (restore) {
           const undo = restore;
           return Promise.resolve(result).catch((e: unknown) => {

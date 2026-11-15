@@ -27,8 +27,6 @@ export interface PanelBridge extends McpPanelPort {
   registerPanel(endpoint: PanelEndpoint): () => void;
   /** True while a panel is registered. */
   hasPanel(): boolean;
-  /** The webContents id of the registered panel, or null. */
-  panelId(): number | null;
   /** A `mcp:task-reply` from webContents `senderId`. Ignored unless it is the registered panel and the request is pending. */
   handleReply(senderId: number, payload: unknown): void;
   /** A `mcp:task-changed` from webContents `senderId`. Ignored unless it is the registered panel. */
@@ -81,7 +79,6 @@ export function createPanelBridge(opts: PanelBridgeOptions = {}): PanelBridge {
       };
     },
     hasPanel: () => panel !== null,
-    panelId: () => panel?.id ?? null,
     request(request) {
       const target = panel;
       if (!target) return Promise.resolve({ error: NO_WINDOW_ERROR });

@@ -21,6 +21,8 @@ export const tools: Translation<typeof en> = {
   "tools.name.ask_user": "Frage stellen",
   "tools.name.schedule_list": "Zeitpläne auflisten",
   "tools.name.schedule_create": "Zeitplan erstellen",
+  "tools.name.schedule_set_enabled": "Zeitplan pausieren oder fortsetzen",
+  "tools.name.schedule_delete": "Zeitplan löschen",
   "tools.status.running": "Läuft…",
   "tools.status.done": "Fertig",
   "tools.status.error": "Fehler",

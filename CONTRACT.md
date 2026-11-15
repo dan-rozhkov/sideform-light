@@ -57,7 +57,7 @@ Local shell HTML (tab bar, empty start, passwords, history, omnibox) stays on `f
 ### Backend mode `browser` (pen-editor-backend)
 
 - Added to `AGENT_MODES`. A system prompt for a browser assistant (no design/canvas wording): it uses `browse_agent` for web tasks, may run several `browse_agent` calls in parallel with isolated sessions, uses `ask_user` when it must ask, `analyze_image` for images, `trace_*` to read past runs.
-- Tool set for the main model: `browse_agent`, `ask_user`, `analyze_image`, `trace_list`, `trace_read`, plus `schedule_create` and `schedule_list` when `clientCapabilities.schedules` is true (see "Scheduled chats") (and `trace_frame` if it exists and needs no canvas). Exactly the browse tools the existing "edits" mode would offer for these capabilities — but NO canvas/design/doc/workflow/prototype/image-generation/vector/repo/showcase tools, no `get_guidelines`/style guides, no canvasContext.
+- Tool set for the main model: `browse_agent`, `ask_user`, `analyze_image`, `trace_list`, `trace_read`, plus `schedule_list`, `schedule_create`, `schedule_set_enabled` and `schedule_delete` when `clientCapabilities.schedules` is true (see "Scheduled chats") (and `trace_frame` if it exists and needs no canvas). Exactly the browse tools the existing "edits" mode would offer for these capabilities — but NO canvas/design/doc/workflow/prototype/image-generation/vector/repo/showcase tools, no `get_guidelines`/style guides, no canvasContext.
 - canvasContext is ignored in this mode. Memory and user skills: OFF in v1 (behave as in `browse`).
 - Model: the normal chat model (`CHAT_MODEL` / the picked model), NOT the browse subagent model.
 
@@ -75,7 +75,7 @@ window.penAgentPanel = {
   traces,             // save, open, listTabs, read
   settings,           // open(section?: "appearance" | "browser" | "mcp" | "schedules")
   mcp,                // onRequest(handler), notifyChanged(taskId): the MCP agent bridge, see below
-  schedules,          // list(), create({ name, prompt, cron }): for the schedule_* agent tools, see "Scheduled chats"
+  schedules,          // list(), create({ name, prompt, cron }), setEnabled(id, enabled), remove(id): for the schedule_* agent tools, see "Scheduled chats"
 }
 ```
 
@@ -147,16 +147,15 @@ interface ScheduleView extends Schedule { nextRunAt: number | null }
 interface ScheduleInput { id?: string; name: string; prompt: string; cron: string; enabled: boolean }
 ```
 
-**Main -> panel.** Two more ops on the MCP panel channel (`mcp:task-request` / `mcp:task-reply`; the panel registers it always, not only when the MCP server is on):
+**Main -> panel.** One more op on the MCP panel channel (`mcp:task-request` / `mcp:task-reply`; the panel registers it always, not only when the MCP server is on):
 
 ```ts
 | { op: "schedule-start"; scheduleId: string; prompt: string; title: string; previousChatId?: string } // -> { task } | { error, code?: "busy" }
-| { op: "open"; taskId: string }  // activates that chat in the panel -> { ok: true } | { error }
 ```
 
 `schedule-start` answers `{ error, code: "busy" }` when `previousChatId` is still `running`/`needs_answer`, or when 3 schedule runs are already executing (busy or launch queued; chats waiting for an answer or finished do not count). Main records a busy answer as `skipped`, any other error as `failed`, and keeps the chat id of the last started run in `lastRun.chatId` either way.
 
-**Settings page (`penDesktop.schedules`).** Channels `schedules:list|save|remove|run-now|open-chat` (invoke), answered only to the top frame of a Settings tab on the settings page (like `mcp-settings:*`), else `{ error: "Not allowed." }`. Main pushes `schedules:changed` (no payload) to Settings tabs after any change or run.
+**Settings page (`penDesktop.schedules`).** Channels `schedules:list|save|remove|run-now` (invoke), answered only to the top frame of a Settings tab on the settings page (like `mcp-settings:*`), else `{ error: "Not allowed." }`. Main pushes `schedules:changed` (no payload) to Settings tabs after any change or run.
 
 ```ts
 schedules: {
@@ -164,22 +163,23 @@ schedules: {
   save(input: ScheduleInput): Promise<{ schedule: ScheduleView } | { error: string }>;   // no id = create
   remove(id: string): Promise<{ ok: true } | { error: string }>;
   runNow(id: string): Promise<{ schedule: ScheduleView } | { error: string }>;
-  openChat(chatId: string): Promise<{ ok: true } | { error: string }>;
   onChanged(cb: () => void): () => void;
 }
 ```
 
-**Agent tools (`schedule_create`, `schedule_list`).** Design: `docs/superpowers/specs/2026-11-15-schedule-agent-tool-design.md`. Client-executed, NOT in the backend's `penTools` (pen-editor never sees them): the backend adds them only to an `agentMode: "browser"` turn whose `clientCapabilities.schedules` is true.
+**Agent tools (`schedule_list`, `schedule_create`, `schedule_set_enabled`, `schedule_delete`).** Design: `docs/superpowers/specs/2026-11-15-schedule-agent-tool-design.md`. Client-executed, NOT in the backend's `penTools` (pen-editor never sees them): the backend adds them only to an `agentMode: "browser"` turn whose `clientCapabilities.schedules` is true.
 
 ```ts
 schedule_create: { name: string /* 1..100 */; prompt: string /* 1..20000 */; cron: string /* 1..100 */ }
   // -> { status: "created"; schedule: ScheduleSummary } | { status: "declined" } | { status: "error"; error: string }
 schedule_list: {} // -> { schedules: ScheduleSummary[] } | { status: "error"; error: string }
+schedule_set_enabled: { id: string; enabled: boolean } // pause/resume -> { status: "updated"; schedule: ScheduleSummary } | { status: "declined" } | { status: "error"; error: string }
+schedule_delete: { id: string } // -> { status: "deleted"; id: string } | { status: "declined" } | { status: "error"; error: string }
 interface ScheduleSummary { id: string; name: string; cron: string; description: string; enabled: boolean;
   nextRun?: string; lastRun?: { status: string; at: string } }   // times as local readable strings
 ```
 
-`schedule_create` waits for the person: the chat shows a confirmation card, and only "Create schedule" creates it. In a background chat (`source` `mcp` or `schedule`) it answers `{ status: "error" }` without a card. The panel creates through `penAgentPanel.schedules.create` = `schedules:panel-create` (and `list` = `schedules:panel-list`), invoke channels accepted only from the agent panel's own webContents and page (the `chats:*` rule), else `{ error: "Not allowed." }`; `create` validates like `schedules:save`, stores the schedule enabled and pushes `schedules:changed`.
+`schedule_create`, `schedule_set_enabled` and `schedule_delete` wait for the person: the chat shows a confirmation card, and only its confirm button (Create schedule / Pause / Resume / Delete) acts. An unknown id, or a pause/resume that changes nothing, answers at once without a card. In a background chat (`source` `mcp` or `schedule`) it answers `{ status: "error" }` without a card (`create`: "Schedules can be created only in a chat with the person."; `set_enabled` / `delete`: "Schedules can be changed only in a chat with the person."). The `onToolCall` precheck alone decides whether a card is needed (for `set_enabled` / `delete` it records the looked-up schedule in memory before leaving the part pending); the card never resolves a call on its own, only Confirm / Cancel do, and without that record (precheck still running, or after a reload) no card is drawn and the composer is not blocked. The panel acts through `penAgentPanel.schedules`: `create` = `schedules:panel-create`, `list` = `schedules:panel-list`, `setEnabled(id, enabled)` = `schedules:panel-set-enabled`, `remove(id)` = `schedules:panel-remove`, invoke channels accepted only from the agent panel's own webContents and page (the `chats:*` rule), else `{ error: "Not allowed." }`; `create` validates like `schedules:save`, stores the schedule enabled and pushes `schedules:changed`.
 
 ## Branding
 

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { registerSchedulesIpc } from "../src/main/schedules/schedulesIpc";
 import type { BrowserSettingsEvent } from "../src/main/browserSettingsIpc";
-import type { McpPanelReply } from "../src/main/mcp/types";
 
 const VIEW = { id: "s1", name: "n", prompt: "p", cron: "* * * * *", enabled: true, createdAt: 1, updatedAt: 1, nextRunAt: 5 };
 const INPUT = { name: "n", prompt: "p", cron: "* * * * *", enabled: true };
@@ -18,20 +17,17 @@ function setup(allowed = true, panelAllowed = false) {
     runNow: vi.fn(async () => ({ schedule: VIEW })),
     onChanged: vi.fn((cb: () => void) => ((changed = cb), offChanged)),
   };
-  let reply: McpPanelReply = { ok: true };
-  const panel = { request: vi.fn(async () => reply) };
   const pushChanged = vi.fn();
-  const showPanel = vi.fn();
-  const off = registerSchedulesIpc({ ipcMain, scheduler, panel, isSettingsSender: () => allowed, isPanelSender: () => panelAllowed, pushChanged, showPanel });
+  const off = registerSchedulesIpc({ ipcMain, scheduler, isSettingsSender: () => allowed, isPanelSender: () => panelAllowed, pushChanged });
   const ev = { sender: { id: 1 } } as BrowserSettingsEvent;
-  return { handlers, scheduler, panel, pushChanged, showPanel, off, ev, ipcMain, offChanged, fireChanged: () => changed(), setReply: (r: McpPanelReply) => void (reply = r) };
+  return { handlers, scheduler, pushChanged, off, ev, ipcMain, offChanged, fireChanged: () => changed() };
 }
-const CHANNELS = ["schedules:list", "schedules:open-chat", "schedules:remove", "schedules:run-now", "schedules:save"];
-const PANEL_CHANNELS = ["schedules:panel-create", "schedules:panel-list"];
+const CHANNELS = ["schedules:list", "schedules:remove", "schedules:run-now", "schedules:save"];
+const PANEL_CHANNELS = ["schedules:panel-create", "schedules:panel-list", "schedules:panel-remove", "schedules:panel-set-enabled"];
 const PANEL_INPUT = { name: "n", prompt: "p", cron: "0 9 * * *" };
 
 describe("schedules IPC", () => {
-  it("registers exactly the seven channels and removes them", () => {
+  it("registers exactly the nine channels and removes them", () => {
     const s = setup();
     expect([...s.handlers.keys()].sort()).toEqual([...CHANNELS, ...PANEL_CHANNELS].sort());
     s.off();
@@ -56,8 +52,6 @@ describe("schedules IPC", () => {
     expect(s.scheduler.save).not.toHaveBeenCalled();
     expect(s.scheduler.remove).not.toHaveBeenCalled();
     expect(s.scheduler.runNow).not.toHaveBeenCalled();
-    expect(s.panel.request).not.toHaveBeenCalled();
-    expect(s.showPanel).not.toHaveBeenCalled();
   });
 
   it("save rejects bad payloads without calling the scheduler", async () => {
@@ -84,34 +78,12 @@ describe("schedules IPC", () => {
     expect(s.scheduler.runNow).not.toHaveBeenCalled();
   });
 
-  it("open-chat validates the id, sends op open and shows the panel on success", async () => {
-    const s = setup();
-    for (const bad of [undefined, 5, "", "a/b", "../x", "x".repeat(129)]) {
-      expect(await s.handlers.get("schedules:open-chat")!(s.ev, bad)).toEqual({ error: expect.any(String) });
-    }
-    expect(s.panel.request).not.toHaveBeenCalled();
-    expect(await s.handlers.get("schedules:open-chat")!(s.ev, "chat-1")).toEqual({ ok: true });
-    expect(s.panel.request).toHaveBeenCalledWith({ op: "open", taskId: "chat-1" });
-    expect(s.showPanel).toHaveBeenCalledTimes(1);
-  });
-
-  it("open-chat passes the panel's error through and does not show the panel", async () => {
-    const s = setup();
-    s.setReply({ error: "No such chat" });
-    expect(await s.handlers.get("schedules:open-chat")!(s.ev, "chat-1")).toEqual({ error: "No such chat" });
-    s.setReply({ tasks: [] });
-    expect(await s.handlers.get("schedules:open-chat")!(s.ev, "chat-1")).toEqual({ error: expect.any(String) });
-    expect(s.showPanel).not.toHaveBeenCalled();
-  });
-
   it("a throwing scheduler gives an error value, never a throw", async () => {
     const s = setup();
     s.scheduler.list.mockImplementation(() => {
       throw new Error("secret");
     });
     expect(await s.handlers.get("schedules:list")!(s.ev)).toEqual({ error: "Could not complete the request." });
-    s.panel.request.mockRejectedValueOnce(new Error("secret"));
-    expect(await s.handlers.get("schedules:open-chat")!(s.ev, "c1")).toEqual({ error: "Could not complete the request." });
   });
 
   it("pushes schedules:changed on every scheduler change, and survives a failing push", () => {
@@ -180,6 +152,48 @@ describe("schedules IPC", () => {
         throw new Error("boom");
       });
       expect(await s.handlers.get("schedules:panel-create")!(s.ev, PANEL_INPUT)).toEqual({ error: "Could not complete the request." });
+    });
+
+    it("set-enabled toggles through save, keeps every other field and pushes the change", async () => {
+      const s = setup(false, true);
+      const full = { ...VIEW, name: "Keep", prompt: "Keep prompt", cron: "0 9 * * *", enabled: true };
+      s.scheduler.list.mockReturnValue([full]);
+      const res = await s.handlers.get("schedules:panel-set-enabled")!(s.ev, { id: "s1", enabled: false });
+      expect(s.scheduler.save).toHaveBeenCalledWith({ id: "s1", name: "Keep", prompt: "Keep prompt", cron: "0 9 * * *", enabled: false });
+      expect(res).toEqual({ schedule: { ...full, enabled: false } });
+      s.fireChanged();
+      expect(s.pushChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it("set-enabled validates the payload and the id, and answers Unknown schedule.", async () => {
+      const s = setup(false, true);
+      const h = s.handlers.get("schedules:panel-set-enabled")!;
+      const bad: unknown[] = [null, "x", [], 5, {}, { id: "s1" }, { enabled: true }, { id: "s1", enabled: "yes" }, { id: "bad id", enabled: true }, { id: 5, enabled: true }, { id: "s1", enabled: true, name: "x" }, Object.create({ id: "s1", enabled: true })];
+      for (const b of bad) expect(await h(s.ev, b), JSON.stringify(b)).toEqual({ error: "Invalid request." });
+      expect(s.scheduler.save).not.toHaveBeenCalled();
+      expect(await h(s.ev, { id: "nope", enabled: true })).toEqual({ error: "Unknown schedule." });
+      expect(s.scheduler.save).not.toHaveBeenCalled();
+      s.scheduler.save.mockReturnValueOnce({ error: "boom" } as never);
+      expect(await h(s.ev, { id: "s1", enabled: true })).toEqual({ error: "boom" });
+      s.scheduler.save.mockImplementationOnce(() => {
+        throw new Error("x");
+      });
+      expect(await h(s.ev, { id: "s1", enabled: true })).toEqual({ error: "Could not complete the request." });
+    });
+
+    it("remove removes through the scheduler, rejects a bad id and an unknown one", async () => {
+      const s = setup(false, true);
+      const h = s.handlers.get("schedules:panel-remove")!;
+      expect(await h(s.ev, "s1")).toEqual({ ok: true });
+      expect(s.scheduler.remove).toHaveBeenCalledWith("s1");
+      s.scheduler.remove.mockClear();
+      for (const bad of [undefined, null, 5, "", "a b", "x".repeat(129), {}, ["s1"]]) expect(await h(s.ev, bad)).toEqual({ error: "Invalid schedule id." });
+      expect(await h(s.ev, "nope")).toEqual({ error: "Unknown schedule." });
+      expect(s.scheduler.remove).not.toHaveBeenCalled();
+      s.scheduler.remove.mockImplementationOnce(() => {
+        throw new Error("x");
+      });
+      expect(await h(s.ev, "s1")).toEqual({ error: "Could not complete the request." });
     });
 
     it("a change the scheduler reports (a panel create included) is pushed to the Settings tabs", () => {

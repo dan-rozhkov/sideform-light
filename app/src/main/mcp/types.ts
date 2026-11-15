@@ -16,9 +16,8 @@ export type McpPanelRequest =
   | { op: "message"; taskId: string; text: string }
   | { op: "stop"; taskId: string }
   | { op: "list"; limit: number }
-  // Main-only ops (the scheduler and the Settings page); the MCP tools never build them.
-  | { op: "schedule-start"; scheduleId: string; prompt: string; title: string; previousChatId?: string }
-  | { op: "open"; taskId: string };
+  // Main-only op (the scheduler); the MCP tools never build it.
+  | { op: "schedule-start"; scheduleId: string; prompt: string; title: string; previousChatId?: string };
 
 export interface McpTaskState {
   taskId: string;

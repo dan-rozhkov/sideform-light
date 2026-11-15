@@ -21,6 +21,8 @@ export const tools: Translation<typeof en> = {
   "tools.name.ask_user": "Вопрос пользователю",
   "tools.name.schedule_list": "Список расписаний",
   "tools.name.schedule_create": "Создание расписания",
+  "tools.name.schedule_set_enabled": "Приостановка или возобновление расписания",
+  "tools.name.schedule_delete": "Удаление расписания",
   "tools.status.running": "Выполняется…",
   "tools.status.done": "Готово",
   "tools.status.error": "Ошибка",

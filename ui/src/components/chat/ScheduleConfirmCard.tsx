@@ -1,32 +1,12 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { useT } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { openSettings } from "@/lib/openSettings";
 import { describeCron } from "@/lib/scheduleCron";
+import { ScheduleTaskField } from "./ScheduleCardParts";
+import { parseScheduleOutcome, SCHEDULE_CARD as CARD } from "./scheduleCardUtils";
 import { createScheduleViaBridge, DECLINED_OUTPUT, type ScheduleCreateInput } from "@/lib/tools/schedules";
-
-interface Outcome {
-  status?: string;
-  error?: string;
-  schedule?: { nextRun?: string };
-}
-
-function parseOutcome(output: unknown): Outcome {
-  try {
-    const v = typeof output === "string" ? (JSON.parse(output) as unknown) : output;
-    if (v && typeof v === "object") {
-      const o = v as Outcome;
-      if (typeof o.error === "string" && !o.status) return { status: "error", error: o.error };
-      return o;
-    }
-  } catch {
-    /* fall through */
-  }
-  return {};
-}
-
-const CARD = "mt-3 w-full rounded-lg border border-border-default bg-surface-panel/60 p-3 text-xs";
 
 export function ScheduleConfirmCard({
   input,
@@ -42,26 +22,10 @@ export function ScheduleConfirmCard({
 }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const [overflows, setOverflows] = useState(false);
   const lockRef = useRef(false);
-  const taskRef = useRef<HTMLElement>(null);
-
-  // The task is clamped to 4 lines: detect real overflow (wrapped long lines included) so "Show more" is
-  // always offered when text is cut off. Measured only while clamped; once expanded the last result stays.
-  useLayoutEffect(() => {
-    const el = taskRef.current;
-    if (!el || expanded) return;
-    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1);
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [expanded, input.prompt, state]);
 
   if (state === "output") {
-    const o = parseOutcome(output);
+    const o = parseScheduleOutcome(output);
     return (
       <div className={`${CARD} flex flex-wrap items-center gap-x-2 gap-y-1`}>
         {o.status === "created" ? (
@@ -105,22 +69,7 @@ export function ScheduleConfirmCard({
           <dt className="text-text-muted">{t("schedules.field.frequency")}</dt>
           <dd className="text-text-primary">{describeCron(input.cron)}</dd>
         </div>
-        <div>
-          <dt className="text-text-muted">{t("schedules.field.task")}</dt>
-          <dd ref={taskRef} className={`whitespace-pre-wrap break-words text-text-primary ${expanded ? "" : "line-clamp-4"}`}>
-            {input.prompt}
-          </dd>
-          {(overflows || expanded || input.prompt.length > 240 || input.prompt.split("\n").length > 4) && (
-            <Button
-              size="sm"
-              variant="link"
-              className="h-auto p-0 text-xs"
-              onClick={() => setExpanded((v) => !v)}
-            >
-              {expanded ? t("schedules.card.showLess") : t("schedules.card.showMore")}
-            </Button>
-          )}
-        </div>
+        <ScheduleTaskField prompt={input.prompt} />
       </dl>
       <div className="flex gap-2">
         <Button size="sm" variant="accent" disabled={busy} onClick={() => void run("create")}>

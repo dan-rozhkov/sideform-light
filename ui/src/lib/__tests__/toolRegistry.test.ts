@@ -17,7 +17,9 @@ const EXPECTED = [
   "qa_assert",
   "qa_verdict",
   "schedule_create",
+  "schedule_delete",
   "schedule_list",
+  "schedule_set_enabled",
   "trace_frame",
   "trace_list",
   "trace_read",
@@ -30,7 +32,7 @@ describe("toolRegistry", () => {
 
   it("only handles ask_user, schedule_*, analyze_image, browse_*, qa_* and trace_* (no canvas, doc, workflow or design tool)", () => {
     for (const name of Object.keys(toolHandlers)) {
-      expect(name, name).toMatch(/^(ask_user|schedule_(?:create|list)|analyze_image|browse_[a-z_]+|qa_[a-z_]+|trace_[a-z_]+)$/);
+      expect(name, name).toMatch(/^(ask_user|schedule_(?:create|delete|list|set_enabled)|analyze_image|browse_[a-z_]+|qa_[a-z_]+|trace_[a-z_]+)$/);
     }
   });
 

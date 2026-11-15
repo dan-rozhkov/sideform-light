@@ -42,6 +42,8 @@ const toolIcons: Record<string, Icon> = {
   ask_user: QuestionIcon,
   schedule_list: ClockIcon,
   schedule_create: ClockIcon,
+  schedule_set_enabled: ClockIcon,
+  schedule_delete: ClockIcon,
 };
 
 /** Falls back to a generic tool icon for anything unmapped. */

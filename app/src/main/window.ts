@@ -2343,8 +2343,6 @@ export function createMainWindow(
         if (wc && !wc.isDestroyed()) wc.send("schedules:changed");
       }
     },
-    showAgentPanel: () => setPanelCollapsed(false),
-    ownsPanel: (id) => panelWc()?.id === id,
   });
 
   // Browse-run traces: stored under userData; sender rules in traceIpc.ts, opening in traceOpen.ts.

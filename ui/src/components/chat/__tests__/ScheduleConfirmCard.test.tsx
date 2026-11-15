@@ -3,7 +3,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import type { UIMessage } from "ai";
 import { useLanguageStore } from "@/i18n";
 import { MessageList } from "../MessageList";
-import { hasPendingScheduleCreate } from "../pendingScheduleCreate";
 import { hasPendingWaitingCall, waitingPlaceholder } from "../waitingForPerson";
 import { hasPendingAskUser } from "../pendingAskUser";
 
@@ -100,18 +99,17 @@ describe("ScheduleConfirmCard in MessageList", () => {
 });
 
 describe("pending helpers", () => {
-  it("hasPendingScheduleCreate matches only schedule_create; ask_user helper ignores it", () => {
-    expect(hasPendingScheduleCreate([msg("input-available")])).toBe(true);
-    expect(hasPendingScheduleCreate([msg("output-available", "{}")])).toBe(false);
+  it("hasPendingWaitingCall matches schedule_create; ask_user helper ignores it", () => {
+    expect(hasPendingWaitingCall([msg("input-available")])).toBe(true);
+    expect(hasPendingWaitingCall([msg("output-available", "{}")])).toBe(false);
     expect(hasPendingAskUser([msg("input-available")])).toBe(false);
   });
 });
 
 describe("pending predicate", () => {
   it("ignores streaming and invalid-input parts, so the composer is never blocked without a card", () => {
-    expect(hasPendingScheduleCreate([msg("input-streaming")])).toBe(false);
-    expect(hasPendingScheduleCreate([msg("input-available", undefined, { name: "x" })])).toBe(false);
-    expect(hasPendingScheduleCreate([msg("output-error")])).toBe(false);
+    expect(hasPendingWaitingCall([msg("input-available", undefined, { name: "x" })])).toBe(false);
+    expect(hasPendingWaitingCall([msg("output-error")])).toBe(false);
     expect(hasPendingWaitingCall([msg("input-streaming")])).toBe(false);
   });
 

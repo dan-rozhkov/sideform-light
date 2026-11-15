@@ -169,11 +169,9 @@ const scheduler = createScheduler({
 const unregisterSchedulesIpc = registerSchedulesIpc({
   ipcMain,
   scheduler,
-  panel: mcpPanelBridge,
   isSettingsSender: (e) => browserSettingsIpc.isSender(e),
   isPanelSender: (e) => isAgentPanelSender(e),
   pushChanged: () => browserSettingsIpc.pushSchedulesChanged(),
-  showPanel: () => browserSettingsIpc.showAgentPanelOf(mcpPanelBridge.panelId()),
 });
 
 /**

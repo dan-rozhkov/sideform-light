@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
 
+import { TrashIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/IconButton";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { Input } from "@/components/ui/input";
@@ -9,7 +11,7 @@ import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/s
 import { Textarea } from "@/components/ui/textarea";
 import { useT } from "@/i18n";
 import type { DesktopSchedulesApi, ScheduleInput, ScheduleView } from "@/lib/desktopBridge";
-import { errorText, formatScheduleWhen, lastRunText } from "@/lib/scheduleText";
+import { errorText, formatScheduleWhen } from "@/lib/scheduleText";
 import {
   dayShortLabel,
   describeCron,
@@ -146,7 +148,7 @@ function ScheduleForm({ api, schedule, onDone }: ScheduleFormProps) {
     <form onSubmit={(e) => void submit(e)} className="flex min-h-0 flex-1 flex-col gap-4">
       <DialogHeader className="shrink-0">
         <DialogTitle>{schedule ? t("schedules.form.edit") : t("schedules.form.new")}</DialogTitle>
-        <DialogDescription>{t("schedules.dialog.description")}</DialogDescription>
+        <DialogDescription>{t("schedules.dialog.footnote")}</DialogDescription>
       </DialogHeader>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
@@ -222,10 +224,7 @@ function ScheduleForm({ api, schedule, onDone }: ScheduleFormProps) {
         <div className="flex flex-col gap-0.5 text-xs text-text-muted">
           {next !== null && <p>{t("schedules.nextRun", { until: formatUntil(next), at: formatScheduleWhen(next) })}</p>}
           {frequency === "custom" && cronDescription !== null && <p>{t("schedules.dialog.runs", { description: cronDescription })}</p>}
-          {schedule?.lastRun && <p>{lastRunText(schedule.lastRun)}</p>}
         </div>
-
-        <p className="text-xs text-text-muted">{t("schedules.dialog.footnote")}</p>
 
         {error && <InlineAlert variant="error">{error}</InlineAlert>}
       </div>
@@ -243,9 +242,18 @@ function ScheduleForm({ api, schedule, onDone }: ScheduleFormProps) {
           </div>
         ) : (
           schedule && (
-            <Button type="button" variant="outline" disabled={saving} onClick={() => setConfirmingRemove(true)} className="sm:mr-auto">
-              {t("schedules.remove.button")}
-            </Button>
+            <IconButton
+              type="button"
+              variant="ghost"
+              size="icon"
+              tooltip={t("schedules.remove.button")}
+              side="top"
+              disabled={saving}
+              onClick={() => setConfirmingRemove(true)}
+              className="text-text-muted hover:text-destructive sm:mr-auto"
+            >
+              <TrashIcon className="size-4" weight="light" />
+            </IconButton>
           )
         )}
         <Button type="submit" variant="accent" disabled={!canSave || confirmingRemove}>

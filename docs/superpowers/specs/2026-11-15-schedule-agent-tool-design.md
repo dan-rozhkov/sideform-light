@@ -83,3 +83,15 @@ interface ScheduleSummary { id: string; name: string; cron: string; description:
   ("Schedule created · next run …" with "Open Schedules", or "Not created").
 - A pending confirmation counts as "needs the person" for the MCP task status only if it can happen there,
   which it cannot (background chats are refused), so no change to `computeTaskStatus`.
+
+## Addendum (2026-11-15): pause, resume and delete from the chat
+
+The person can also say "pause the price check" / "turn it back on" / "delete the morning digest".
+
+- Backend: two more client-executed tools in `scheduleTools` (same gate: browser mode + `clientCapabilities.schedules`):
+  - `schedule_set_enabled { id: string /* ^[A-Za-z0-9_-]{1,128}$ */, enabled: boolean }` — pause (`false`) or resume (`true`).
+  - `schedule_delete { id: string }`.
+  - Results: `{ status: "updated", schedule: ScheduleSummary }` / `{ status: "deleted", id }` / `{ status: "declined" }` / `{ status: "error", error }`.
+  - The `id` comes from `schedule_list`; the prompt says to call `schedule_list` first and never guess an id. The prompt's "## Schedules" section now says that editing name, task or time is done in Settings > Schedules; pause, resume and delete can be done with the tools.
+- Every tool that changes schedules waits for the person (one rule, no exceptions): the same confirmation card, with a title per action ("Pause this schedule?", "Resume this schedule?", "Delete this schedule?"), the schedule's name, frequency and task, and the buttons "Pause" / "Resume" / "Delete" (destructive style) + "Cancel". Pausing an already paused schedule (or resuming an active one) answers `{ status: "updated" }` at once without a card. An unknown id answers `{ status: "error", error: "Unknown schedule id. Call schedule_list." }` at once without a card. In a background chat it answers "Schedules can be changed only in a chat with the person." The `onToolCall` precheck alone decides whether a card is needed and records the looked-up schedule (name, cron, task, enabled) in memory, keyed by tool call id; the card is drawn only while that record exists and never resolves the call itself (no lookup on mount, no auto-resolve). The outcome line for an error shows "Schedule not changed" and, only for main's own reply, its reason.
+- Shell: `penAgentPanel.schedules.setEnabled(id, enabled)` and `.remove(id)` over `schedules:panel-set-enabled` / `schedules:panel-remove` (panel sender only, like `schedules:panel-*`), going through the scheduler so Settings tabs get `schedules:changed`. Results `{ schedule: ScheduleView }` / `{ ok: true }` / `{ error }`.

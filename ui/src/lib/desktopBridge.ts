@@ -82,7 +82,6 @@ export interface DesktopSchedulesApi {
   save(input: ScheduleInput): Promise<{ schedule: ScheduleView } | { error: string }>;
   remove(id: string): Promise<{ ok: true } | { error: string }>;
   runNow(id: string): Promise<{ schedule: ScheduleView } | { error: string }>;
-  openChat(chatId: string): Promise<{ ok: true } | { error: string }>;
   /** Fires after any change or run. Returns the unsubscribe. */
   onChanged(cb: () => void): () => void;
 }

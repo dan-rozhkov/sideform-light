@@ -12,10 +12,6 @@ export interface SettingsWindowPort {
   isSettingsViewer(webContentsId: number, frameUrl: string | undefined): boolean;
   /** Sends `schedules:changed` to this window's Settings tabs that show the settings page. */
   sendSchedulesChanged?(): void;
-  /** Expands this window's agent panel if it is collapsed. */
-  showAgentPanel?(): void;
-  /** True when `webContentsId` is the agent panel page of this window. */
-  ownsPanel?(webContentsId: number): boolean;
 }
 
 export const NOT_ALLOWED = { error: "Not allowed." } as const;
@@ -35,8 +31,6 @@ export interface BrowserSettingsIpc {
   isSender(event: BrowserSettingsEvent): boolean;
   /** `schedules:changed` to the Settings tabs of every window. */
   pushSchedulesChanged(): void;
-  /** Expands the agent panel of the window that owns the panel page `webContentsId` (null: none). */
-  showAgentPanelOf(webContentsId: number | null): void;
   /** Removes both handlers (will-quit). */
   dispose(): void;
 }
@@ -72,10 +66,6 @@ export function createBrowserSettingsIpc(deps: BrowserSettingsIpcDeps): BrowserS
     isSender: (e) => isSettingsSender(ports, e),
     pushSchedulesChanged() {
       for (const port of ports) port.sendSchedulesChanged?.();
-    },
-    showAgentPanelOf(webContentsId) {
-      if (webContentsId === null) return;
-      for (const port of ports) if (port.ownsPanel?.(webContentsId)) port.showAgentPanel?.();
     },
     dispose() {
       deps.ipcMain.removeHandler("browser-settings:get");

@@ -40,6 +40,7 @@ import { ChatList } from "./ChatList";
 import { ConversationFilesPopover } from "./ConversationFilesPopover";
 import { ContextMeter } from "./ContextMeter";
 import { findPendingAskUser } from "./pendingAskUser";
+import { usePendingScheduleActionsVersion } from "@/lib/tools/pendingScheduleActions";
 import { hasPendingWaitingCall, waitingPlaceholder } from "./waitingForPerson";
 import { buildAnswerState, serializeAnswers } from "./askUserAnswers";
 import { useMcpBridge } from "@/hooks/useMcpBridge";
@@ -182,6 +183,7 @@ function ChatSession({
     isBusyLive,
   } = useDesignChat({ sessionId });
 
+  usePendingScheduleActionsVersion(); // a pending schedule card counts once the precheck recorded it
   const awaitingAnswer = hasPendingWaitingCall(messages);
   const parallelCount = useChatStore((s) => s.parallelCount);
   const setParallelCount = useChatStore((s) => s.setParallelCount);

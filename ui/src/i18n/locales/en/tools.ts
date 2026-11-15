@@ -21,6 +21,8 @@ export const tools = {
   "tools.name.ask_user": "Ask a question",
   "tools.name.schedule_list": "List Schedules",
   "tools.name.schedule_create": "Create Schedule",
+  "tools.name.schedule_set_enabled": "Pause or Resume Schedule",
+  "tools.name.schedule_delete": "Delete Schedule",
   "tools.status.running": "Running...",
   "tools.status.done": "Done",
   "tools.status.error": "Error",

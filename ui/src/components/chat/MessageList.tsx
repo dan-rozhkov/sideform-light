@@ -25,8 +25,10 @@ import { ImageLightbox } from "./ImageLightbox";
 import { AskUserForm } from "./AskUserForm";
 import { useT } from "@/i18n";
 import { ScheduleConfirmCard } from "./ScheduleConfirmCard";
-import { parseScheduleCreateInput } from "@/lib/tools/schedules";
-import { isPendingScheduleCreatePart } from "./pendingScheduleCreate";
+import { ScheduleActionCard } from "./ScheduleActionCard";
+import { pendingScheduleActions, usePendingScheduleActionsVersion } from "@/lib/tools/pendingScheduleActions";
+import { isScheduleActionTool, parseScheduleActionInput, parseScheduleCreateInput, type ScheduleActionTool } from "@/lib/tools/schedules";
+import { isPendingScheduleActionPart, isPendingScheduleCreatePart } from "./pendingScheduleCreate";
 
 interface ImagePreviewProps {
   url: string;
@@ -152,6 +154,7 @@ export function MessageList({
   isVisible = true,
 }: MessageListProps) {
   const t = useT();
+  usePendingScheduleActionsVersion(); // a card appears when the precheck records its schedule
   const containerRef = useRef<HTMLDivElement>(null);
   const isAutoScrollRef = useRef(true);
 
@@ -318,6 +321,24 @@ export function MessageList({
                         onResolve={(output) =>
                           addToolOutput?.({ tool: "schedule_create", toolCallId: tp.toolCallId, output })
                         }
+                      />
+                    );
+                  }
+                }
+                if (part.type.startsWith("tool-") && isScheduleActionTool(part.type.slice(5))) {
+                  const tool = part.type.slice(5) as ScheduleActionTool;
+                  const tp = part as { toolCallId: string; state?: string; input?: unknown; output?: unknown };
+                  const call = parseScheduleActionInput(tool, tp.input);
+                  // Pending: drawn only while the precheck's record exists (same rule that blocks the composer).
+                  if (call && (isPendingScheduleActionPart(part) || tp.state === "output-available")) {
+                    return (
+                      <ScheduleActionCard
+                        key={tp.toolCallId}
+                        call={call}
+                        state={tp.state === "output-available" ? "output" : "input"}
+                        output={tp.output}
+                        details={pendingScheduleActions.get(tp.toolCallId)}
+                        onResolve={(output) => addToolOutput?.({ tool, toolCallId: tp.toolCallId, output })}
                       />
                     );
                   }

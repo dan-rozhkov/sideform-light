@@ -9,8 +9,7 @@ export type McpPanelRequest =
   | { op: "message"; taskId: string; text: string }
   | { op: "stop"; taskId: string }
   | { op: "list"; limit: number }
-  | { op: "schedule-start"; scheduleId: string; prompt: string; title: string; previousChatId?: string }
-  | { op: "open"; taskId: string };
+  | { op: "schedule-start"; scheduleId: string; prompt: string; title: string; previousChatId?: string };
 
 export type TaskStatus = "running" | "needs_answer" | "done" | "stopped" | "error";
 
