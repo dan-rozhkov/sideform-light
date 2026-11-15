@@ -5697,3 +5697,55 @@ test("click: the signature MutationObserver a final keep-peek leaves behind disc
     await app.close().catch(() => {});
   }
 });
+
+test("browse_act press on a focused dropdown <select>: popup keys are never sent natively, arrows move the selection", async () => {
+  // A trusted ArrowDown/ArrowUp/Space/Alt+Arrow on a closed <select> opens the native popup: on macOS an NSMenu
+  // whose modal run loop blocks the main process (app.close hung for 47 s). The controller handles those keys in
+  // the page instead and hints at the `select` action.
+  const app = await launchShell({ args: ["."], env: { ...process.env, SIDEFORM_LIGHT_UI_URL: baseUrl } });
+  try {
+    const editorPage = app.agentPage;
+    await expect(editorPage.locator("#ready")).toHaveText("stub-editor");
+    const [fixturePage] = await Promise.all([
+      app.waitForEvent("window", { predicate: (p) => p.url() === interactUrl }),
+      callBrowser(editorPage, "open", { url: interactUrl }),
+    ]);
+    await expect(fixturePage.locator("#ready")).toHaveText("interact-ready");
+    await expect(fixturePage.locator("#sel-fruit")).toHaveValue("Apple");
+
+    const press = async (key: string) =>
+      (await callBrowser(editorPage, "act", { action: "press", key, target: "#sel-fruit" })) as {
+        error?: string;
+        hint?: string;
+        moved?: boolean;
+        selected?: { value: string; text: string };
+      };
+
+    const down = await press("ArrowDown");
+    expect(down.error).toBeUndefined();
+    expect(down.hint).toContain("select");
+    expect(down.moved).toBe(true);
+    expect(down.selected?.text).toBe("Banana");
+    await expect(fixturePage.locator("#sel-fruit")).toHaveValue("Banana");
+
+    expect((await press("ArrowUp")).error).toBeUndefined();
+    await expect(fixturePage.locator("#sel-fruit")).toHaveValue("Apple");
+
+    for (const key of ["Space", "Alt+ArrowDown"]) {
+      const r = await press(key);
+      expect(r.error).toBeUndefined();
+      expect(r.hint).toContain("select");
+      expect(r.moved).toBe(false);
+      await expect(fixturePage.locator("#sel-fruit")).toHaveValue("Apple");
+    }
+
+    // The main process is not blocked: a page command answers at once and the app quits promptly.
+    const snap = (await callBrowser(editorPage, "snapshot")) as SnapshotResult;
+    expect(snap.elements.length).toBeGreaterThan(0);
+    const t0 = Date.now();
+    await app.close();
+    expect(Date.now() - t0).toBeLessThan(3000);
+  } finally {
+    await app.close().catch(() => {});
+  }
+});
