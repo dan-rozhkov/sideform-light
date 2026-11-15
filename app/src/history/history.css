@@ -3,6 +3,7 @@
 :root {
   --field-bg: light-dark(#f0f0f0, #383838);
   --muted: var(--text);
+  --text-disabled: light-dark(#999999, #666666); /* the ui's --color-text-disabled (empty-state icon) */
   --danger: light-dark(oklch(0.58 0.22 27), oklch(0.704 0.191 22.216));
   /* Outline button: the Passwords tab's --outline-fill / --outline-hover (shadcn --secondary mixes). */
   --outline-fill: light-dark(transparent, color-mix(in oklab, oklch(0.269 0 0) 30%, transparent));
@@ -192,10 +193,26 @@ input:focus-visible { border-color: var(--focus-ring); box-shadow: 0 0 0 1px var
 .row-remove:hover { background: var(--glass-tab-active); color: var(--icon); }
 .row-remove:focus-visible { box-shadow: 0 0 0 2px var(--focus-ring); }
 
-/* ---------- empty ---------- */
-.empty { padding: 96px 24px 0; text-align: center; }
-.empty-title { font-size: 14px; font-weight: 500; line-height: 20px; }
-.empty-text { margin-top: 4px; color: var(--muted); }
+/* ---------- empty ----------
+   The ui's EmptyState, "page" size (ui/src/components/ui/empty-state.tsx, as in the canvas panels of pen-editor and
+   the Passwords tab): no tile, a 32px outline icon in --text-disabled, a 14px medium title, a 14px muted description,
+   8px apart, at most 384px wide, centred in the scroll area. "No pages match" has no icon. */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 100%;
+  padding: 40px 24px;
+  text-align: center;
+}
+.empty > * { max-width: 384px; }
+.empty-icon { display: flex; color: var(--text-disabled); }
+.empty-icon:empty, .empty-text:empty { display: none; }
+.empty-icon .icon { width: 32px; height: 32px; stroke-width: 1.5; }
+.empty-title { font-size: 14px; font-weight: 500; line-height: 20px; color: var(--text-active); }
+.empty-text { font-size: 14px; line-height: 20px; color: var(--muted); text-wrap: pretty; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

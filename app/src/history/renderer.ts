@@ -31,6 +31,7 @@
   const clearBtn = $<HTMLButtonElement>("clear-btn");
   const listEl = $("list");
   const emptyEl = $("empty");
+  const emptyIcon = $("empty-icon");
   const emptyTitle = $("empty-title");
   const emptyText = $("empty-text");
 
@@ -167,6 +168,8 @@
     listEl.hidden = empty;
     emptyEl.hidden = !empty;
     if (empty) {
+      // Like the canvas panels: an icon for a truly empty history, none for "no search results".
+      emptyIcon.replaceChildren(...(query.trim() === "" ? [icon("ClockCounterClockwise")] : []));
       if (query.trim() === "") {
         emptyTitle.textContent = penI18n.tr("history.emptyTitle", "No history yet");
         emptyText.textContent = penI18n.tr("history.emptyText", "Pages you open in the browser appear here.");
