@@ -7,7 +7,7 @@ import { findPendingAskUser, hasPendingAskUser } from "@/components/chat/pending
 import { isOffline, OFFLINE_MESSAGE } from "@/lib/apiBase";
 import { takeInitialMessages } from "@/lib/chats/desktopChatPersistence";
 import type { McpPanelReply, McpPanelRequest, TaskState, TaskStatus, TaskTrace } from "@/lib/mcpTypes";
-import { useChatStore, type ChatSummary } from "@/store/chatStore";
+import { isMcpTaskChat, useChatStore, type ChatSummary } from "@/store/chatStore";
 
 export const MAX_ACTIVE_MCP_TASKS = 3;
 export const MAX_PROMPT_CHARS = 20_000;
@@ -326,7 +326,7 @@ export function startMcpBridge(): () => void {
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const sink: ActivitySink = (chatId) => {
     if (timers.has(chatId)) return;
-    if (!useChatStore.getState().chats.some((c) => c.id === chatId && c.source === "mcp")) return;
+    if (!isMcpTaskChat(chatId)) return;
     timers.set(
       chatId,
       setTimeout(() => {

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { Switch } from "@/components/ui/switch";
+import { traceFlag } from "@/lib/browseTracePref";
 import { getDesktopBrowserSettings, hasDesktopBrowserSettings, setDesktopBrowserSettings } from "@/lib/desktopBrowserSettings";
 
 import { SettingsGroup, SettingsSection } from "../SettingsSection";
@@ -36,6 +37,24 @@ function AdBlockRow() {
   );
 }
 
+function TraceRow() {
+  const traces = useSyncExternalStore(traceFlag.subscribe, traceFlag.get, () => false);
+  return (
+    <SettingsGroup
+      inline
+      title="Record traces for all runs"
+      description="Save a step-by-step trace of every browser run, with screenshots of the visited pages. QA tests and tasks from MCP clients always keep one."
+    >
+      <Switch aria-label="Record traces for all runs" checked={traces} onCheckedChange={traceFlag.set} />
+    </SettingsGroup>
+  );
+}
+
 export function BrowserSection() {
-  return <SettingsSection title="Browser">{hasDesktopBrowserSettings() && <AdBlockRow />}</SettingsSection>;
+  return (
+    <SettingsSection title="Browser">
+      <TraceRow />
+      {hasDesktopBrowserSettings() && <AdBlockRow />}
+    </SettingsSection>
+  );
 }

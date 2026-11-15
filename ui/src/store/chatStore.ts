@@ -557,3 +557,8 @@ onStorageKey("chat-parallel-count", (value) => {
     chats: s.chats.map((c) => (c.id === s.activeChatId ? { ...c, parallelCount } : c)),
   }));
 });
+
+/** Whether `chatId` is a task an external agent started over the MCP bridge (`source: "mcp"`). */
+export function isMcpTaskChat(chatId: string | undefined): boolean {
+  return !!chatId && useChatStore.getState().chats.some((c) => c.id === chatId && c.source === "mcp");
+}

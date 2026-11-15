@@ -53,6 +53,7 @@ import { peBase } from "./shared";
 import { isIsolatedBrowseCall, rememberRunSession, runSessionId } from "./isolation";
 import { acquireBrowseSlot } from "@/lib/browseRunLimiter";
 import { tracesForAllRuns } from "@/lib/browseTracePref";
+import { isMcpTaskChat } from "@/store/chatStore";
 import { canSaveBrowseTrace, saveBrowseTrace } from "@/lib/browseTraces";
 import { traceLinkHref } from "@/lib/traceOpener";
 import { useBrowseAgentPhaseStore } from "@/store/browseAgentPhaseStore";
@@ -597,9 +598,10 @@ const runBrowseAgentBody = async (
   }
   const recorder = qaOn ? createStepRecorder() : undefined;
   // The run trace (spec 2026-10-20-browse-run-trace-design.md): steps, a frame after each page-changing step, QA at the end.
-  // QA runs keep a trace; so does every run when the "record traces for all runs" setting is on. A desktop shell
-  // without a save bridge (older) cannot keep one either: no recorder, so no screenshots are taken.
-  const traceRecorder = (qaOn || tracesForAllRuns()) && canSaveBrowseTrace()
+  // QA runs keep a trace; so does every run when the "record traces for all runs" setting is on, and every run of an
+  // MCP task (the external agent follows the work through get_task `traces`). A desktop shell without a save bridge
+  // (older) cannot keep one either: no recorder, so no screenshots are taken.
+  const traceRecorder = (qaOn || tracesForAllRuns() || isMcpTaskChat(context?.sessionId)) && canSaveBrowseTrace()
     ? createBrowseTraceRecorder({
         goal,
         labels: { browser: "desktop", mode: qaOn ? "qa" : "browse" },
