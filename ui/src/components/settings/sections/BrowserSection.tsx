@@ -1,7 +1,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { Switch } from "@/components/ui/switch";
-import { traceFlag } from "@/lib/browseTracePref";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { getTraceMode, setTraceMode, subscribeTraceMode, type TraceMode } from "@/lib/browseTracePref";
 import { getDesktopBrowserSettings, hasDesktopBrowserSettings, setDesktopBrowserSettings } from "@/lib/desktopBrowserSettings";
 
 import { SettingsGroup, SettingsSection } from "../SettingsSection";
@@ -37,15 +38,35 @@ function AdBlockRow() {
   );
 }
 
+const TRACE_OPTIONS: { value: TraceMode; label: string }[] = [
+  { value: "qa", label: "QA tests only" },
+  { value: "mcp", label: "QA tests and MCP tasks" },
+  { value: "all", label: "All runs" },
+];
+
 function TraceRow() {
-  const traces = useSyncExternalStore(traceFlag.subscribe, traceFlag.get, () => false);
+  const mode = useSyncExternalStore(subscribeTraceMode, getTraceMode, () => "mcp" as TraceMode);
   return (
     <SettingsGroup
       inline
-      title="Record traces for all runs"
-      description="Save a step-by-step trace of every browser run, with screenshots of the visited pages. QA tests and tasks from MCP clients always keep one."
+      title="Record traces"
+      description="Save a step-by-step trace of a browser run, with screenshots of the visited pages and its network log. QA tests always keep one."
     >
-      <Switch aria-label="Record traces for all runs" checked={traces} onCheckedChange={traceFlag.set} />
+      <Select value={mode} onValueChange={(v) => {
+        const opt = TRACE_OPTIONS.find((o) => o.value === v);
+        if (opt) setTraceMode(opt.value);
+      }}>
+        <SelectTrigger size="sm" aria-label="Record traces">
+          <SelectValue>{TRACE_OPTIONS.find((o) => o.value === mode)?.label}</SelectValue>
+        </SelectTrigger>
+        <SelectContent alignItemWithTrigger={false} align="end" className="w-auto">
+          {TRACE_OPTIONS.map((o) => (
+            <SelectItem key={o.value} value={o.value}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </SettingsGroup>
   );
 }

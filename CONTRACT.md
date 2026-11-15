@@ -80,7 +80,7 @@ window.penAgentPanel = {
 
 `window.penDesktop` (preload/tab.ts, trace + settings tabs only): theme reporting, `traces` (read), `settings.open`/`onSection`, `browserSettings` (`get`/`set` of `{ adBlock }`), `mcp` (`get`/`set`/`regenerateToken`, below). No canvas, docs, workflows, logins (doc @mention), appIcon, auth, browser bridge.
 
-Settings sections: `"appearance" | "browser" | "mcp"` only. Browser settings shape: `{ adBlock: boolean }` (`mcpBrowser` and `askAppAccess` removed). The Browser section also has "Record traces for all runs", a ui-only `localStorage` flag (`pen.browseTraces`), not part of the bridge; QA runs and every browse run of an MCP task keep a trace regardless.
+Settings sections: `"appearance" | "browser" | "mcp"` only. Browser settings shape: `{ adBlock: boolean }` (`mcpBrowser` and `askAppAccess` removed). The Browser section also has "Record traces", a ui-only three-value `localStorage` setting (`pen.browseTraces`: `qa` = QA tests only, absent = `mcp` = QA tests and MCP tasks (default), `all` = every run), not part of the bridge; QA runs keep a trace in every mode.
 
 ## MCP agent bridge (v1)
 

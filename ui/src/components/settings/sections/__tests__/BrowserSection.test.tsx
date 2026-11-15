@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserSection } from "../BrowserSection";
 
 const ADS = "Block ads and trackers";
-const TRACES = "Record traces for all runs";
+const TRACES = "Record traces";
 
 const setBridge = (browserSettings?: unknown) => {
   (window as { penDesktop?: unknown }).penDesktop = browserSettings ? { browserSettings } : {};
@@ -17,31 +17,37 @@ afterEach(() => {
 });
 
 describe("BrowserSection", () => {
-  it("shows only the trace switch without the browserSettings bridge", () => {
+  it("shows the trace select, default 'QA tests and MCP tasks', without the browserSettings bridge", () => {
     setBridge();
     render(<BrowserSection />);
-    expect(screen.getAllByRole("switch")).toHaveLength(1);
-    expect(screen.getByRole("switch", { name: TRACES }).getAttribute("aria-checked")).toBe("false");
-    expect(screen.queryByRole("switch", { name: ADS })).toBeNull();
+    expect(screen.queryAllByRole("switch")).toHaveLength(0);
+    expect(screen.getByRole("combobox", { name: TRACES }).textContent).toContain("QA tests and MCP tasks");
   });
 
-  it("toggling the trace switch stores 'all' in localStorage and removes it again", () => {
+  it.each([
+    ["All runs", "all"],
+    ["QA tests only", "qa"],
+  ])("choosing '%s' stores '%s' in localStorage", async (label, stored) => {
     setBridge();
     render(<BrowserSection />);
-    fireEvent.click(screen.getByRole("switch", { name: TRACES }));
-    expect(localStorage.getItem("pen.browseTraces")).toBe("all");
-    expect(screen.getByRole("switch", { name: TRACES }).getAttribute("aria-checked")).toBe("true");
-    fireEvent.click(screen.getByRole("switch", { name: TRACES }));
-    expect(localStorage.getItem("pen.browseTraces")).toBeNull();
-    expect(screen.getByRole("switch", { name: TRACES }).getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(screen.getByRole("combobox", { name: TRACES }));
+    const option = await screen.findByRole("option", { name: label });
+    // base-ui selects on the pointer-up of a press, so a bare click does not choose.
+    fireEvent.pointerDown(option);
+    fireEvent.mouseDown(option);
+    fireEvent.pointerUp(option);
+    fireEvent.mouseUp(option);
+    fireEvent.click(option);
+    await waitFor(() => expect(localStorage.getItem("pen.browseTraces")).toBe(stored));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: TRACES }).textContent).toContain(label));
   });
 
-  it("offers the trace and ad-blocking switches with the bridge: no MCP or app-access switches", async () => {
+  it("offers the trace select and the ad-blocking switch with the bridge: no MCP or app-access switches", async () => {
     setBridge({ get: vi.fn().mockResolvedValue({ adBlock: true }), set: vi.fn() });
     render(<BrowserSection />);
     await waitFor(() => expect(screen.getByRole("switch", { name: ADS }).getAttribute("aria-checked")).toBe("true"));
-    expect(screen.getAllByRole("switch")).toHaveLength(2);
-    expect(screen.getAllByRole("switch")[0].getAttribute("aria-label")).toBe(TRACES);
+    expect(screen.getAllByRole("switch")).toHaveLength(1);
+    expect(screen.getByRole("combobox", { name: TRACES })).toBeTruthy();
   });
 
   it("keeps the switch disabled until the value has loaded", async () => {

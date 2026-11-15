@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { textTurn } from "@/test/sseStream";
 import { useChatStore } from "@/store/chatStore";
 import { setPenDesktop, stubBrowser } from "./helpers";
+import { setTraceMode } from "@/lib/browseTracePref";
 import { browseAgent } from "../browseAgent";
 
-// An MCP task (a chat with `source: "mcp"`) keeps a trace of every browse_agent run, QA or not: the external agent
-// reads its id from get_task `traces`. An ordinary chat keeps one only for QA runs (or with the "all runs" setting).
+// The "Record traces" mode decides which plain (non-QA) browse_agent runs keep a trace. Default "mcp": runs of an MCP
+// task (a chat with `source: "mcp"`) keep one, so the external agent reads its id from get_task `traces`; "qa" turns
+// that off; "all" records every run, ordinary chats included.
 
 function stubFetch() {
   vi.stubGlobal(
@@ -48,5 +50,21 @@ describe("browse_agent trace in an MCP task", () => {
     const { save, result } = await run(id);
     expect(save).not.toHaveBeenCalled();
     expect(result.trace).toBeUndefined();
+  });
+
+  it("an MCP task chat keeps no trace when the setting is 'QA tests only'", async () => {
+    setTraceMode("qa");
+    const id = useChatStore.getState().createChat({ activate: false, source: "mcp" });
+    const { save, result } = await run(id);
+    expect(save).not.toHaveBeenCalled();
+    expect(result.trace).toBeUndefined();
+  });
+
+  it("an ordinary chat keeps a trace when the setting is 'All runs'", async () => {
+    setTraceMode("all");
+    const id = useChatStore.getState().createChat({ activate: false });
+    const { save, result } = await run(id);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(result.trace).toMatchObject({ id: "local-1" });
   });
 });

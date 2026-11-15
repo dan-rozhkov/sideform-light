@@ -1,34 +1,56 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { BROWSE_TRACES_KEY, setTracesForAllRuns, subscribeTracesForAllRuns, tracesForAllRuns } from "../browseTracePref";
+import { BROWSE_TRACES_KEY, getTraceMode, setTraceMode, shouldRecordTrace, subscribeTraceMode, type TraceMode } from "../browseTracePref";
 
 beforeEach(() => localStorage.clear());
 
 describe("browseTracePref", () => {
-  it("defaults to QA runs only", () => {
-    expect(tracesForAllRuns()).toBe(false);
+  it("defaults to QA tests and MCP tasks", () => {
+    expect(getTraceMode()).toBe("mcp");
   });
 
-  it("set writes 'all' and clearing removes the key", () => {
-    setTracesForAllRuns(true);
+  it("round-trips each value; 'mcp' removes the key", () => {
+    setTraceMode("all");
     expect(localStorage.getItem(BROWSE_TRACES_KEY)).toBe("all");
-    expect(tracesForAllRuns()).toBe(true);
-    setTracesForAllRuns(false);
+    expect(getTraceMode()).toBe("all");
+    setTraceMode("qa");
+    expect(localStorage.getItem(BROWSE_TRACES_KEY)).toBe("qa");
+    expect(getTraceMode()).toBe("qa");
+    setTraceMode("mcp");
     expect(localStorage.getItem(BROWSE_TRACES_KEY)).toBeNull();
-    expect(tracesForAllRuns()).toBe(false);
+    expect(getTraceMode()).toBe("mcp");
+  });
+
+  it("reads an unknown raw value as the default", () => {
+    localStorage.setItem(BROWSE_TRACES_KEY, "bogus");
+    expect(getTraceMode()).toBe("mcp");
   });
 
   it("notifies subscribers on a local set and on a storage event from another document", () => {
     const cb = vi.fn();
-    const off = subscribeTracesForAllRuns(cb);
-    setTracesForAllRuns(true);
+    const off = subscribeTraceMode(cb);
+    setTraceMode("all");
     expect(cb).toHaveBeenCalledTimes(1);
     window.dispatchEvent(new StorageEvent("storage", { key: BROWSE_TRACES_KEY, newValue: null, storageArea: localStorage }));
     expect(cb).toHaveBeenCalledTimes(2);
     window.dispatchEvent(new StorageEvent("storage", { key: "other", newValue: "x", storageArea: localStorage }));
     expect(cb).toHaveBeenCalledTimes(2);
     off();
-    setTracesForAllRuns(false);
+    setTraceMode("mcp");
     expect(cb).toHaveBeenCalledTimes(2);
+  });
+
+  it("shouldRecordTrace truth table", () => {
+    const modes: TraceMode[] = ["qa", "mcp", "all"];
+    for (const mode of modes) {
+      expect(shouldRecordTrace({ qa: true, mcpTask: false, mode })).toBe(true);
+      expect(shouldRecordTrace({ qa: true, mcpTask: true, mode })).toBe(true);
+    }
+    expect(shouldRecordTrace({ qa: false, mcpTask: false, mode: "all" })).toBe(true);
+    expect(shouldRecordTrace({ qa: false, mcpTask: true, mode: "all" })).toBe(true);
+    expect(shouldRecordTrace({ qa: false, mcpTask: true, mode: "mcp" })).toBe(true);
+    expect(shouldRecordTrace({ qa: false, mcpTask: false, mode: "mcp" })).toBe(false);
+    expect(shouldRecordTrace({ qa: false, mcpTask: true, mode: "qa" })).toBe(false);
+    expect(shouldRecordTrace({ qa: false, mcpTask: false, mode: "qa" })).toBe(false);
   });
 });

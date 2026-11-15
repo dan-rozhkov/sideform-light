@@ -51,7 +51,7 @@ export const MCP_TOOL_MANIFEST: ToolManifestEntry[] = [
     title: "Get a task's state",
     description:
       "Return the state of a task: status (running, needs_answer, done, stopped or error), the pending question when status is needs_answer, the final result text when done, the error text when error, " +
-      "and traces (saved browser run recordings that the person can open in the app). " +
+      "and traces (saved browser run recordings that the person can open in the app; empty when no browser run was recorded, as when the person set Sideform Light to record traces for QA tests only). " +
       `Pass waitSeconds (0 to ${MAX_WAIT_SECONDS}) to hold the call until the status leaves running or the time is up, instead of polling in a tight loop. ` +
       "If the status is still running after the wait, call get_task again. When status is needs_answer, reply with answer_question.",
     inputSchema: {
