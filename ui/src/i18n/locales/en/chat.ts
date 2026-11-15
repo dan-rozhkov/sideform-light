@@ -48,6 +48,7 @@ export const chat = {
   "chat.retrying": "Connection problem — retrying (attempt {attempt}/{max})…",
   "chat.retryingIn": "Connection problem — retrying in {seconds} s (attempt {attempt}/{max})…",
   "chat.model": "Model: {name}",
+  "chat.ownKeyModel": "{id} · Own key",
   "chat.parallelAgents": "Parallel agents: x{count}",
   "chat.settings": "Settings…",
   "chat.contextMeter": "Context: {percent}% · {usage}",

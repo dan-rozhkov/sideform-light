@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 
 import SettingsPage from "../SettingsPage";
+import { parseSettingsSection } from "@/lib/openSettings";
 import { UI_THEME_STORAGE_KEY } from "@/lib/uiTheme";
 import { useUIThemeStore } from "@/store/uiThemeStore";
 
@@ -46,12 +47,12 @@ describe("<SettingsPage />", () => {
     expect(document.title).toBe("Settings");
   });
 
-  it("has exactly four sections: appearance, browser, MCP and schedules", () => {
+  it("has exactly five sections: appearance, model, browser, MCP and schedules", () => {
     renderSettings();
     const names = within(screen.getByRole("navigation", { name: "Settings sections" }))
       .getAllByRole("button")
       .map((b) => b.textContent);
-    expect(names).toEqual(["Appearance", "Browser", "MCP", "Schedules"]);
+    expect(names).toEqual(["Appearance", "Model", "Browser", "MCP", "Schedules"]);
   });
 
   it("opens the section named by ?section= and falls back to appearance for an unknown one", () => {
@@ -60,6 +61,14 @@ describe("<SettingsPage />", () => {
     cleanup();
     renderSettings("/settings?section=canvas");
     expect(screen.getByRole("heading", { level: 2, name: "Appearance" })).toBeTruthy();
+  });
+
+  it("opens the model section with the custom provider group", () => {
+    renderSettings("/settings?section=model");
+    expect(screen.getByRole("heading", { level: 2, name: "Model" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Your own provider" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Load models" })).toBeTruthy();
+    expect(parseSettingsSection("model")).toBe("model");
   });
 
   it("switches section from the nav and keeps ?section= in step", () => {

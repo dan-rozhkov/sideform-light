@@ -134,7 +134,7 @@ export function resolveMcpPort(env: NodeJS.ProcessEnv): number {
 }
 
 /** The section ids of the ui's `/settings` page (`?section=<id>`). */
-export const SETTINGS_SECTIONS = ["appearance", "browser", "mcp", "schedules"] as const;
+export const SETTINGS_SECTIONS = ["appearance", "model", "browser", "mcp", "schedules"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 /** True for one of the settings section ids; anything else (also non-strings) is not. */

@@ -54,6 +54,8 @@ import { isIsolatedBrowseCall, rememberRunSession, runSessionId } from "./isolat
 import { acquireBrowseSlot } from "@/lib/browseRunLimiter";
 import { getTraceMode, shouldRecordTrace } from "@/lib/browseTracePref";
 import { isBackgroundTaskChat } from "@/store/chatStore";
+import { isByokModel } from "@/lib/byokProvider";
+import { resolveSessionModel } from "@/lib/sessionModel";
 import { canSaveBrowseTrace, saveBrowseTrace } from "@/lib/browseTraces";
 import { traceLinkHref } from "@/lib/traceOpener";
 import { useBrowseAgentPhaseStore } from "@/store/browseAgentPhaseStore";
@@ -63,7 +65,7 @@ import { checkpointForModel, useBrowseCheckpointStore } from "@/store/browseChec
  * browse_agent — runs a browse-only sub-agent as a nested, headless chat
  * session against the same /api/chat (`agentMode: "browse"`), pinned by the
  * backend to a non-reasoning deepseek model on OpenRouter whatever the user's
- * main model is, OpenCode Go included
+ * main model is, unless that is one on the user's own provider (`byok/…`)
  * (pen-editor-backend docs/specs/2026-10-14-browse-subagent-design.md).
  *
  * The control flow (deadline, abort, request cap, step count, allowlist,
@@ -125,6 +127,12 @@ const DESKTOP_RECORDING_KEY = "desktop";
  * place; nothing may call it.
  */
 const INERT_BRIDGE = {} as BrowserBridge;
+
+/** `{ model }` when the parent chat runs on the user's own provider, else nothing (the backend pins its own model). Exported for tests. */
+export function parentByokModel(parentSessionId: string | undefined): { model?: string } {
+  const model = resolveSessionModel(parentSessionId);
+  return isByokModel(model) ? { model } : {};
+}
 
 /**
  * `qa_assert` bounded like any nested tool: at most QA_FINAL_CHECKS_TIMEOUT_MS, and it
@@ -684,11 +692,13 @@ const runBrowseAgentBody = async (
   const chat: Chat<UIMessage> = new Chat<UIMessage>({
     id: nestedChatId(parentSessionId, context?.toolCallId),
     transport: createChatTransport({
-      // No canvasContext: the sub-agent never sees the scene. No model
-      // either: the backend pins its own (OpenRouter), so no OpenCode key
-      // header is sent.
+      // No canvasContext: the sub-agent never sees the scene. No model either: the backend pins its own
+      // (OpenRouter) — except when the PARENT chat runs on the user's own provider (`byok/…`): then the
+      // nested chat sends that model, and the transport adds the BYOK headers (the backend runs the
+      // sub-agent on it only when both are present). Read per request: the user may switch the model mid-run.
       body: () => ({
         agentMode: "browse",
+        ...parentByokModel(parentSessionId),
         ...(qaOn ? { browseQa: true } : {}),
         // Per run, from the bridge this run uses: the static capability may differ (isolated session, older shell).
         clientCapabilities: { ...CLIENT_CAPABILITIES, browseAssert: assertAllowed },

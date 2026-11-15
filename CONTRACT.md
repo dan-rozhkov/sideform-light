@@ -9,7 +9,7 @@ bridge (the old `browse_*` remote-control bridge). There IS a small MCP *task* b
 Kept: agent chat (model picker, chat history on disk), browser tabs + address
 row + omnibox, browse_agent with parallel isolated sessions, saved logins
 (Passwords tab, fillLogin), History tab, ad blocking, trace tabs, QA
-(assert, fixtures, checkpoint journal), Settings (appearance + browser + mcp + schedules), MCP agent bridge (task giver for external agents), scheduled chats.
+(assert, fixtures, checkpoint journal), Settings (appearance + model + browser + mcp + schedules), MCP agent bridge (task giver for external agents), scheduled chats.
 
 ## Layout
 
@@ -40,7 +40,7 @@ Pages (paths are identical on `app://sideform` and on the dev server):
 |---|---|---|
 | Agent panel | `app://sideform/agent` | `preload/agentPanel` (`window.penAgentPanel`) |
 | Trace tab | `app://sideform/trace/<id>?src=local` | `preload/tab` (`window.penDesktop`) |
-| Settings tab | `app://sideform/settings?section=<appearance|browser|mcp|schedules>` | `preload/tab` |
+| Settings tab | `app://sideform/settings?section=<appearance|model|browser|mcp|schedules>` | `preload/tab` |
 
 Local shell HTML (tab bar, empty start, passwords, history, omnibox) stays on `file://` as today.
 
@@ -49,7 +49,7 @@ Local shell HTML (tab bar, empty start, passwords, history, omnibox) stays on `f
 ## Backend
 
 - Base URL: build-time `VITE_DESIGN_AGENT_BACKEND_URL`, default `http://localhost:3001` (the local backend). The shell's CSP `connect-src` uses the same origin; the shell reads it from env `SIDEFORM_LIGHT_BACKEND_URL` (default `http://localhost:3001`). Both must agree; the ui build and the app build read the same value.
-- Endpoints Light uses (nothing else): `POST /api/chat`, `GET /api/models`, `POST /api/browse/step`, `POST /api/browse/plan`, `POST /api/browse/locate`, `POST /api/browse/judge`. No auth, no cookies (`credentials: "omit"`), no PostHog, no memory, no user skills, no Mobbin, no cloud browser, no cloud traces, no uploads.
+- Endpoints Light uses (nothing else): `POST /api/chat`, `GET /api/models`, `POST /api/browse/step`, `POST /api/browse/plan`, `POST /api/browse/locate`, `POST /api/browse/judge`, `POST /api/byok/models` (see "Own model provider"). No auth, no cookies (`credentials: "omit"`), no PostHog, no memory, no user skills, no Mobbin, no cloud browser, no cloud traces, no uploads.
 - Identity: anonymous `pen.userId` from localStorage, sent as `userId` in the body as today.
 - Agent mode: the main chat sends `agentMode: "browser"` (NEW mode in pen-editor-backend). The nested browse_agent chat keeps sending `agentMode: "browse"` as today.
 - `clientCapabilities` sent by Light: `{ desktopBrowser: true, browser: "desktop", browseQa: true, browseIsolation: true, browseAssert: true, traceTabs: true, schedules: true }` (`schedules` only when `penAgentPanel.schedules` exists) and NOTHING about canvas/docs/workflows/apps/native apps (`canvasTabs`, `docTabs`, `workflowTabs`, `browseApps`, `browseNativeApps` are absent or false).
@@ -60,6 +60,15 @@ Local shell HTML (tab bar, empty start, passwords, history, omnibox) stays on `f
 - Tool set for the main model: `browse_agent`, `ask_user`, `analyze_image`, `trace_list`, `trace_read`, plus `schedule_list`, `schedule_create`, `schedule_set_enabled` and `schedule_delete` when `clientCapabilities.schedules` is true (see "Scheduled chats") (and `trace_frame` if it exists and needs no canvas). Exactly the browse tools the existing "edits" mode would offer for these capabilities — but NO canvas/design/doc/workflow/prototype/image-generation/vector/repo/showcase tools, no `get_guidelines`/style guides, no canvasContext.
 - canvasContext is ignored in this mode. Memory and user skills: OFF in v1 (behave as in `browse`).
 - Model: the normal chat model (`CHAT_MODEL` / the picked model), NOT the browse subagent model.
+
+### Own model provider (BYOK)
+
+The user may run the agent on their own OpenAI-compatible provider instead of the backend's models (pen-editor-backend spec `docs/specs/2026-11-13-byok-custom-provider-design.md`). Settings > Model keeps `{ baseUrl, apiKey, models[] }` in the ui's localStorage `pen.byok.v1` (shared by the panel and the Settings tab on `app://sideform`; the shell never reads it). Such models appear in the picker as `byok/<modelId>`.
+
+- `POST /api/chat` with a `byok/` model carries `X-BYOK-Base-URL` and `X-BYOK-Key` headers; never in the body, never on other turns. Without them the backend answers 400 `byok_key_required`; a private/non-https URL is 400 `byok_base_url_invalid` (unless the backend runs with `BYOK_ALLOW_PRIVATE_NETWORK=true`).
+- The nested `browse_agent` chat (`agentMode: "browse"`) sends the parent chat's `model` and the same headers when that model is `byok/`; the backend then runs the browsing subagent on it. Otherwise it sends no `model` and the backend pins its own.
+- `POST /api/byok/models` (same headers) loads the provider's model list: `{ ok: true, models: [{ id, contextWindow? }] }` or `{ ok: false, reason: "invalid_key" | "no_model_list" | "upstream_error" }`.
+- Helper calls (`/api/browse/{step,plan,locate,judge}`, image description) still use the backend's own models.
 
 ## penAgentPanel API (preload/agentPanel.ts) — v1 shape
 
@@ -73,7 +82,7 @@ window.penAgentPanel = {
                       // REMOVED: launchApp, releaseApp, nativeApps, forChat
   chats,              // list, read, save, remove
   traces,             // save, open, listTabs, read
-  settings,           // open(section?: "appearance" | "browser" | "mcp" | "schedules")
+  settings,           // open(section?: "appearance" | "model" | "browser" | "mcp" | "schedules")
   mcp,                // onRequest(handler), notifyChanged(taskId): the MCP agent bridge, see below
   schedules,          // list(), create({ name, prompt, cron }), setEnabled(id, enabled), remove(id): for the schedule_* agent tools, see "Scheduled chats"
 }
@@ -81,7 +90,7 @@ window.penAgentPanel = {
 
 `window.penDesktop` (preload/tab.ts, trace + settings tabs only): theme and language reporting (`tab:theme`, `tab:language`; the agent panel reports `panel:theme` and `panel:language`), `traces` (read), `settings.open`/`onSection`, `browserSettings` (`get`/`set` of `{ adBlock }`), `mcp` (`get`/`set`/`regenerateToken`, below), `schedules` (below). No canvas, docs, workflows, logins (doc @mention), appIcon, auth, browser bridge.
 
-Settings sections: `"appearance" | "browser" | "mcp" | "schedules"` only. Browser settings shape: `{ adBlock: boolean }` (`mcpBrowser` and `askAppAccess` removed). The Browser section also has "Record traces", a ui-only three-value `localStorage` setting (`pen.browseTraces`: `qa` = QA tests only, absent = `mcp` = QA tests and MCP tasks (default), `all` = every run), not part of the bridge; QA runs keep a trace in every mode.
+Settings sections: `"appearance" | "model" | "browser" | "mcp" | "schedules"` only. Browser settings shape: `{ adBlock: boolean }` (`mcpBrowser` and `askAppAccess` removed). The Browser section also has "Record traces", a ui-only three-value `localStorage` setting (`pen.browseTraces`: `qa` = QA tests only, absent = `mcp` = QA tests and MCP tasks (default), `all` = every run), not part of the bridge; QA runs keep a trace in every mode.
 
 ## Interface language (en, ru, de, it, fr)
 

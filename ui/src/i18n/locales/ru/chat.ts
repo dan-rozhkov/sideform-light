@@ -54,6 +54,7 @@ export const chat: Translation<typeof en> = {
   "chat.retrying": "Проблема с соединением — повторяем (попытка {attempt}/{max})…",
   "chat.retryingIn": "Проблема с соединением — повтор через {seconds} с (попытка {attempt}/{max})…",
   "chat.model": "Модель: {name}",
+  "chat.ownKeyModel": "{id} · свой ключ",
   "chat.parallelAgents": "Параллельные агенты: x{count}",
   "chat.settings": "Настройки…",
   "chat.contextMeter": "Контекст: {percent}% · {usage}",

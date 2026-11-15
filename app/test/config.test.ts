@@ -112,7 +112,8 @@ describe("page URLs", () => {
 
 describe("settings sections", () => {
   it("are appearance, browser, mcp and schedules only", () => {
-    expect([...SETTINGS_SECTIONS]).toEqual(["appearance", "browser", "mcp", "schedules"]);
+    expect([...SETTINGS_SECTIONS]).toEqual(["appearance", "model", "browser", "mcp", "schedules"]);
+    expect(isValidSettingsSection("model")).toBe(true);
     expect(isValidSettingsSection("schedules")).toBe(true);
     expect(isValidSettingsSection("browser")).toBe(true);
     expect(isValidSettingsSection("mcp")).toBe(true);

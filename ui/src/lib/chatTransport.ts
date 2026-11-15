@@ -2,6 +2,7 @@ import { createHarnessTransport } from "@sideform/agent-harness/transport";
 import type { RetryState } from "@sideform/agent-harness/retry-fetch";
 import { CREDENTIALS_MODE, isOffline, resolveApiUrl } from "@/lib/apiBase";
 import { t } from "@/i18n";
+import { getByokConfig, isByokModel, isHeaderSafe } from "@/lib/byokProvider";
 import { getAgentPanelTraceTabsBridge } from "@/lib/agentPanel";
 import { isDesktopBrowserAvailable } from "@/lib/tools/browser/bridge";
 import { browseAssertAvailable, isolatedBrowseAvailable } from "@/lib/tools/browser/isolation";
@@ -56,5 +57,17 @@ export function createChatTransport({ body, onRetryStateChange, fetchImpl }: Cha
     onRetryStateChange,
     fetchImpl,
     body,
+    // Own provider: base URL + key as headers, only on a `byok/` turn (the main chat or the nested browse
+    // chat when it runs on the parent's byok model), never in the body. A missing half is omitted so the
+    // backend answers 400 byok_key_required. A value fetch() would reject is skipped too.
+    extraHeaders: (requestBody) => {
+      const model = requestBody?.model;
+      if (typeof model !== "string" || !isByokModel(model)) return undefined;
+      const { baseUrl, apiKey } = getByokConfig();
+      const headers: Record<string, string> = {};
+      if (isHeaderSafe(baseUrl)) headers["X-BYOK-Base-URL"] = baseUrl;
+      if (isHeaderSafe(apiKey)) headers["X-BYOK-Key"] = apiKey;
+      return Object.keys(headers).length > 0 ? headers : undefined;
+    },
   });
 }

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TRACE_DOM_BUDGET_MS } from "@sideform/browser-agent/agent/session";
 import { toolHandlers, type ToolHandler } from "@/lib/toolRegistry";
 import { useChatStore } from "@/store/chatStore";
+import { addByokModel, clearByokConfig, setByokConnection } from "@/lib/byokProvider";
 import { sse, textTurn } from "@/test/sseStream";
 import { setPenDesktop, stubBrowser, type PenDesktopBrowser } from "./helpers";
 import { BROWSE_AGENT_DEADLINE_MS, browseAgent, nestedChatId } from "../browseAgent";
@@ -223,6 +224,38 @@ describe("browse_agent", () => {
 
     expect(captured[0].body).not.toHaveProperty("model");
     expect(captured[0].headers.get("X-OpenCode-Key")).toBeNull();
+  });
+
+  describe("parent chat on the user's own provider", () => {
+    afterEach(() => clearByokConfig());
+
+    it("sends the byok model and the BYOK headers in the nested chat, key never in the body", async () => {
+      setByokConnection("https://api.example.com/v1", "sk-own");
+      addByokModel({ id: "my-model" });
+      setChatModel("byok/my-model");
+      const captured = stubFetch([() => textTurn("ok")]);
+
+      await browseAgent({ goal: "x" }, { sessionId: "chat-1", toolCallId: "tc-1" });
+
+      expect(captured[0].body.agentMode).toBe("browse");
+      expect(captured[0].body.model).toBe("byok/my-model");
+      expect(captured[0].headers.get("X-BYOK-Base-URL")).toBe("https://api.example.com/v1");
+      expect(captured[0].headers.get("X-BYOK-Key")).toBe("sk-own");
+      expect(JSON.stringify(captured[0].body)).not.toContain("sk-own");
+    });
+
+    it("keeps sending no model and no BYOK headers when the parent model is a hosted one", async () => {
+      setByokConnection("https://api.example.com/v1", "sk-own");
+      addByokModel({ id: "my-model" });
+      setChatModel("deepseek/deepseek-v4.1-flash");
+      const captured = stubFetch([() => textTurn("ok")]);
+
+      await browseAgent({ goal: "x" }, { sessionId: "chat-1", toolCallId: "tc-1" });
+
+      expect(captured[0].body).not.toHaveProperty("model");
+      expect(captured[0].headers.has("X-BYOK-Key")).toBe(false);
+      expect(captured[0].headers.has("X-BYOK-Base-URL")).toBe(false);
+    });
   });
 
   it("returns step_limit with all assistant text, including text between tool calls", async () => {

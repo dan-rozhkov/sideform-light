@@ -49,6 +49,7 @@ export const chat: Translation<typeof en> = {
   "chat.retrying": "Problema di connessione — nuovo tentativo (tentativo {attempt}/{max})…",
   "chat.retryingIn": "Problema di connessione — nuovo tentativo tra {seconds} s (tentativo {attempt}/{max})…",
   "chat.model": "Modello: {name}",
+  "chat.ownKeyModel": "{id} · chiave propria",
   "chat.parallelAgents": "Agenti in parallelo: x{count}",
   "chat.settings": "Impostazioni…",
   "chat.contextMeter": "Contesto: {percent}% · {usage}",

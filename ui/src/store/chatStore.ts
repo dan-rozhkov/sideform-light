@@ -2,7 +2,8 @@ import { create } from "zustand";
 import type { UIMessage } from "ai";
 import { onStorageKey } from "@/lib/storageSync";
 import { deriveChatTitle } from "@/lib/chatTitle";
-import { canUseModel, getDefaultModel } from "@/lib/chatModels";
+import { areModelsLoaded, canUseModel, getDefaultModel } from "@/lib/chatModels";
+import { subscribeByok } from "@/lib/byokProvider";
 import { useBrowseCheckpointStore } from "./browseCheckpointStore";
 import type { AttachedImage, ChatLaunchPayload } from "@/types/chat";
 
@@ -181,9 +182,8 @@ function normalizeModel(model: string | null): string {
 // Re-validate the active/per-chat models against the freshly loaded backend
 // list. Called after loadModels() resolves; resets any selection the backend
 // no longer offers, so the picker can't keep showing a model nobody runs.
-// Also resets a selection that IS still offered but requires an OpenCode key
-// this browser doesn't have — otherwise a user who deletes their key (or
-// loads a fresh browser with an old saved chat) would hit a 400 on every
+// Also resets a selection that IS still offered but cannot run — an own-provider
+// (`byok/`) model without a configured provider — otherwise the user would hit a 400 on every
 // turn instead of falling back to a model that actually works. canUseModel
 // (chatModels.ts) is the single rule for "is this selection usable right
 // now" — the picker's disabled/lock state follows the exact same function.
@@ -197,6 +197,14 @@ export function reconcileModels() {
     if (!isValid(model)) setModel(getDefaultModel());
   }
 }
+
+// An own-provider model that can no longer run (provider or model removed, here or in the Settings tab)
+// must move a selection back to the default.
+// Before loadModels() settles the list is only the fallback, so reconciling would wrongly reset a hosted
+// selection; the post-load reconcile (desktopChatPersistence) covers that case.
+subscribeByok(() => {
+  if (areModelsLoaded()) reconcileModels();
+});
 
 function normalizeParallelCount(count: string | null): ParallelCount {
   if (count === "2") return 2;

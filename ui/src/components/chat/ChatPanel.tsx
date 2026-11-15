@@ -12,6 +12,7 @@ import {
 import { useChatStore, type ChatSummary, type ParallelCount } from "@/store/chatStore";
 import { useDesignChat } from "@/hooks/useDesignChat";
 import { useModelOptions } from "@/hooks/useModelOptions";
+import { isModelOptionLocked } from "@/lib/chatModels";
 import { openSettings } from "@/lib/openSettings";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { IconButton } from "@/components/ui/IconButton";
@@ -485,8 +486,10 @@ export function ChatPanelContent({
   // backend list doesn't cover is exactly when the user needs to see WHICH
   // model they're on. reconcileModels() resets such a selection once
   // GET /api/models answers.
-  const activeModelLabel =
-    modelOptions.find((option) => option.value === model)?.label ?? model;
+  const optionLabel = (option: { label: string; byok?: true }) =>
+    option.byok ? t("chat.ownKeyModel", { id: option.label }) : option.label;
+  const activeOption = modelOptions.find((option) => option.value === model);
+  const activeModelLabel = activeOption ? optionLabel(activeOption) : model;
   const composerControls: ComposerControlsRenderer = ({
     formId,
     canSubmit,
@@ -516,8 +519,8 @@ export function ChatPanelContent({
             <DropdownMenuRadioGroup value={model} onValueChange={setModel}>
               {modelOptions.map((option) => {
                 return (
-                  <DropdownMenuRadioItem key={option.value} value={option.value}>
-                    <span className="truncate">{option.label}</span>
+                  <DropdownMenuRadioItem key={option.value} value={option.value} disabled={isModelOptionLocked(option)}>
+                    <span className="truncate">{optionLabel(option)}</span>
                   </DropdownMenuRadioItem>
                 );
               })}

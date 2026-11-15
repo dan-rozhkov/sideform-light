@@ -10,6 +10,7 @@
 // auxiliary vision model describes the image as text server-side).
 
 import { apiFetch } from "@/lib/apiBase";
+import { byokModelValue, getByokConfig, isByokConfigured, isByokModel, subscribeByok } from "@/lib/byokProvider";
 
 export interface ChatModelOption {
   value: string;
@@ -24,6 +25,8 @@ export interface ChatModelOption {
    * shows a meter rather than guessing at a default.
    */
   contextWindow?: number;
+  /** True for a model the user added under their own provider (src/lib/byokProvider.ts). */
+  byok?: true;
 }
 
 // First-paint/offline safety net, mirroring the backend's DEFAULT_MODELS
@@ -143,9 +146,35 @@ function notify() {
   for (const listener of listeners) listener();
 }
 
-/** Every model the user may pick. */
+// Backend list + the user's own-provider models. Rebuilt only when an input changes (by reference),
+// so the array stays stable for useSyncExternalStore. An own-provider option's label is its bare id; the
+// localized "Own key" suffix is added where it renders (ChatPanel).
+let mergedFor: { models: ChatModelOption[]; byok: ReturnType<typeof getByokConfig> } | null = null;
+let mergedOptions: ChatModelOption[] = currentModels;
+
+/** Every model the user may pick: the backend's list plus their own-provider models. */
 export function getModelOptions(): ChatModelOption[] {
-  return currentModels;
+  const byok = getByokConfig();
+  if (mergedFor && mergedFor.models === currentModels && mergedFor.byok === byok) {
+    return mergedOptions;
+  }
+  mergedFor = { models: currentModels, byok };
+  mergedOptions =
+    byok.models.length === 0
+      ? currentModels
+      : [
+          ...currentModels,
+          ...byok.models.map(
+            (m): ChatModelOption => ({
+              value: byokModelValue(m.id),
+              label: m.id,
+              supportsVision: false,
+              byok: true,
+              ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
+            }),
+          ),
+        ];
+  return mergedOptions;
 }
 
 /** The model a turn runs on when nothing is selected (the backend's own). */
@@ -158,6 +187,9 @@ export function modelSupportsVision(model: string): boolean {
   // An id we don't know (a stale selection, or a model the backend added
   // after this bundle was built) is assumed vision-capable, matching the
   // backend's own convention for an unlisted id.
+  // An own-provider model is never vision-capable as far as we know (its endpoint is arbitrary);
+  // images still go through canSendImages' visionFallback.
+  if (isByokModel(model)) return false;
   return getModelOptions().find((option) => option.value === model)?.supportsVision ?? true;
 }
 
@@ -184,16 +216,27 @@ export function getModelContextWindow(model: string): number | undefined {
 // Whether `model` is currently selectable at all: known to the backend list (an unknown id is harmless to
 // pick, but there is no reason to let the picker show one that isn't real). Used by reconcileModels()
 // (chatStore.ts) to decide whether a saved selection must fall back to the default.
+// An own-provider model is usable only while a base URL and key are configured.
 export function canUseModel(value: string): boolean {
-  return getModelOptions().some((o) => o.value === value);
+  const option = getModelOptions().find((o) => o.value === value);
+  if (!option) return false;
+  if (option.byok) return isByokConfigured();
+  return true;
+}
+
+/** Whether a picker row renders disabled: an own-provider model without a working connection. Same rule as canUseModel for an own-provider option. */
+export function isModelOptionLocked(option: ChatModelOption): boolean {
+  return Boolean(option.byok) && !isByokConfigured();
 }
 
 // Subscription surface for React (useSyncExternalStore) so the picker and
 // capability-driven controls re-render when the backend metadata lands.
 export function subscribeModels(listener: () => void): () => void {
   listeners.add(listener);
+  const offByok = subscribeByok(listener);
   return () => {
     listeners.delete(listener);
+    offByok();
   };
 }
 

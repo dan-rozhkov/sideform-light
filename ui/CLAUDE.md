@@ -1,6 +1,6 @@
 # CLAUDE.md — sideform-light-ui
 
-The frontend of Sideform Light: a small Vite + React 19 + Zustand + Tailwind v4 app that the Electron shell (`../app`) loads from `app://sideform` (packaged) or from the dev server (`SIDEFORM_LIGHT_UI_URL=http://localhost:5174`). It is the agent chat panel, the browse-run trace viewer and a two-section settings page. There is no canvas, no documents, no workflows, no accounts, no showcase. The integration contract (origin, CSP, `penAgentPanel` shape, backend endpoints, `clientCapabilities`) is `../CONTRACT.md`; read it before changing anything that crosses the shell or backend boundary.
+The frontend of Sideform Light: a small Vite + React 19 + Zustand + Tailwind v4 app that the Electron shell (`../app`) loads from `app://sideform` (packaged) or from the dev server (`SIDEFORM_LIGHT_UI_URL=http://localhost:5174`). It is the agent chat panel, the browse-run trace viewer and a small settings page. There is no canvas, no documents, no workflows, no accounts, no showcase. The integration contract (origin, CSP, `penAgentPanel` shape, backend endpoints, `clientCapabilities`) is `../CONTRACT.md`; read it before changing anything that crosses the shell or backend boundary.
 
 ## Routes (`src/AppRouter.tsx`, `BrowserRouter` with basename `/`)
 
@@ -8,7 +8,7 @@ The frontend of Sideform Light: a small Vite + React 19 + Zustand + Tailwind v4 
 |---|---|---|
 | `/agent` | `routes/AgentPage.tsx` renders `ChatPanelContent variant="standalone"` | `window.penAgentPanel` |
 | `/trace/:id` | `routes/TracePage.tsx` (local traces only, `?step=N` deep link) | `window.penDesktop` |
-| `/settings?section=appearance\|browser\|mcp\|schedules` (Schedules: list + modal `ScheduleDialog`) | `routes/SettingsPage.tsx` | `window.penDesktop` |
+| `/settings?section=appearance\|model\|browser\|mcp\|schedules` (Model: own OpenAI-compatible provider; Schedules: list + modal `ScheduleDialog`) | `routes/SettingsPage.tsx` | `window.penDesktop` |
 
 Anything else redirects to `/agent`. Each page is its own lazy chunk.
 
@@ -28,8 +28,9 @@ Tool schemas live on the backend (`pen-editor-backend`); tool execution happens 
 ## Rules that keep Light small
 
 - Backend base URL: `lib/apiBase.ts`, `VITE_DESIGN_AGENT_BACKEND_URL` / `VITE_AI_API_URL`, default `http://localhost:3001`. No same-origin fallback. Every request goes through `apiFetch` with `credentials: "omit"`.
-- Only these endpoints: `POST /api/chat`, `GET /api/models`, `POST /api/browse/{step,plan,locate,judge}`. No auth, uploads, memory, user skills, Mobbin, cloud browser, cloud traces or analytics.
+- Only these endpoints: `POST /api/chat`, `GET /api/models`, `POST /api/byok/models`, `POST /api/browse/{step,plan,locate,judge}`. No auth, uploads, memory, user skills, Mobbin, cloud browser, cloud traces or analytics.
+- Own provider (BYOK): `lib/byokProvider.ts` keeps base URL, key and model list in localStorage `pen.byok.v1` (synced across the agent panel and Settings by `storage` events). Models appear as `byok/<id>` (`lib/chatModels.ts`, usable only while URL + key are set; `reconcileModels` resets an unusable selection). `X-BYOK-Base-URL` / `X-BYOK-Key` ride as headers only on a `byok/` turn (`lib/chatTransport.ts`, never in the body); `browse_agent`'s nested chat sends the parent's `model` only when it is `byok/…`. "Load models" calls `POST /api/byok/models` through `apiFetch`.
 - `lib/auth/authState.ts` is a stub: `getRequestUserId()` returns the anonymous id.
 - Types of the shell bridges: `lib/agentPanel.ts` (`penAgentPanel`, version 3) and `lib/desktopBridge.ts` (`penDesktop`: traces, settings, browserSettings). Keep them equal to CONTRACT.md.
-- No network URL in `index.html` or the bundle assets: the page is served from the local origin only.
+- Never LOAD anything from the network in `index.html` or the bundle assets (no remote scripts, styles, fonts or images): the page is served from the local origin only. Plain data strings that are not fetched by the page, such as the BYOK provider presets' base URLs, are allowed.
 - Imports use the `@/` alias for `src/`. TypeScript is strict with `noUnusedLocals`.
