@@ -80,6 +80,7 @@
   const statusEl = $("status");
   const listEl = $("list");
   const listEmptyEl = $("list-empty");
+  const listEmptyIcon = $("list-empty-icon");
   const listEmptyTitle = $("list-empty-title");
   const listEmptyText = $("list-empty-text");
   const detailEl = $("detail");
@@ -207,6 +208,8 @@
     listEl.hidden = rows.length === 0;
     listEmptyEl.hidden = rows.length > 0;
     if (rows.length === 0) {
+      // Like the canvas panels: an icon for a truly empty list, none for "no search results".
+      listEmptyIcon.replaceChildren(...(total > 0 ? [] : [icon(isAll ? "Key" : "Globe")]));
       if (total > 0) {
         listEmptyTitle.textContent = penI18n.tr("passwords.noResults", "No results");
         listEmptyText.textContent = penI18n.tr("passwords.noMatch", "Nothing matches “{query}”.", { query: query.trim() });
@@ -231,10 +234,13 @@
   }
 
   function renderEmptyDetail(): void {
-    const box = el("div", "detail-empty");
-    const glyph = el("div", "empty-glyph");
+    const wrap = el("div", "detail-empty");
+    const box = el("div", "empty-state");
+    const glyph = el("span", "empty-icon");
+    glyph.setAttribute("aria-hidden", "true");
     glyph.appendChild(icon("Key"));
     box.appendChild(glyph);
+    wrap.appendChild(box);
     if (section === "never") {
       box.append(
         el("p", "empty-title", penI18n.tr("passwords.neverDetailTitle", "Never saved")),
@@ -247,7 +253,7 @@
       );
       box.appendChild(button(penI18n.tr("passwords.add", "Add login"), "btn btn-accent", startAdd, "Plus"));
     }
-    detailEl.replaceChildren(box);
+    detailEl.replaceChildren(wrap);
   }
 
   function renderView(entry: Entry): void {
