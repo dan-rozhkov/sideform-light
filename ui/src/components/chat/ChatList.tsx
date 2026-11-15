@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { PlusIcon, XIcon } from "@/components/icons";
+import { ClockIcon, PlusIcon, XIcon } from "@/components/icons";
 import { useChatStore } from "@/store/chatStore";
 import type { ChatSummary } from "@/store/chatStore";
 import { Badge } from "@/components/ui/badge";
@@ -62,7 +62,18 @@ function ChatListRow({ chat }: { chat: ChatSummary }) {
           </span>
         )}
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-xs font-semibold text-text-primary">{chat.title}</span>
+          <span className="flex min-w-0 items-center gap-1">
+            {chat.source === "schedule" && (
+              <ClockIcon
+                size={12}
+                role="img"
+                aria-label="Scheduled run"
+                data-testid={`chat-scheduled-${chat.id}`}
+                className="shrink-0 text-text-muted"
+              />
+            )}
+            <span className="truncate text-xs font-semibold text-text-primary">{chat.title}</span>
+          </span>
           <ChatStatus chat={chat} />
         </span>
       </button>

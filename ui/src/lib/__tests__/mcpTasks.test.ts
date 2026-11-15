@@ -340,6 +340,95 @@ describe("createMcpTaskHandler", () => {
   });
 });
 
+describe("schedule ops", () => {
+  beforeEach(() => {
+    useChatStore.setState(useChatStore.getInitialState());
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  const req = (over: Record<string, unknown> = {}) =>
+    ({ op: "schedule-start", scheduleId: "sch_1", prompt: "  check it ", title: "Daily check", ...over }) as never;
+
+  it("schedule-start creates a background schedule chat without touching the active chat", async () => {
+    const before = useChatStore.getState();
+    const t = task(await createMcpTaskHandler().handle(req()));
+    const s = useChatStore.getState();
+    expect(t).toMatchObject({ status: "running", title: "Daily check", traces: [] });
+    expect(s.activeChatId).toBe(before.activeChatId);
+    expect(s.chats.find((c) => c.id === t.taskId)).toMatchObject({ source: "schedule", unread: true, titleIsAuto: false });
+    expect(s.launchQueue[t.taskId]).toEqual({ text: "check it" });
+  });
+
+  it("schedule-start validates the input", async () => {
+    const h = createMcpTaskHandler();
+    for (const bad of [{ prompt: "  " }, { prompt: "x".repeat(20_001) }, { title: "t".repeat(201) }, { scheduleId: "a b" }, { scheduleId: "" }, { previousChatId: "../x" }]) {
+      expect(await h.handle(req(bad))).toHaveProperty("error");
+    }
+    expect(useChatStore.getState().chats.filter((c) => c.source === "schedule")).toHaveLength(0);
+  });
+
+  it("schedule-start fails when offline and creates nothing", async () => {
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    const n = useChatStore.getState().chats.length;
+    expect(await createMcpTaskHandler().handle(req())).toHaveProperty("error");
+    expect(useChatStore.getState().chats).toHaveLength(n);
+  });
+
+  it("answers busy while the previous run is still running, and not when it is done or gone", async () => {
+    const h = createMcpTaskHandler();
+    const first = task(await h.handle(req()));
+    const busy = await h.handle(req({ previousChatId: first.taskId }));
+    expect(busy).toEqual({ error: "The previous run is still running", code: "busy" });
+    useChatStore.getState().consumeLaunchPayload(first.taskId);
+    expect(await h.handle(req({ previousChatId: first.taskId }))).toHaveProperty("task");
+    expect(await h.handle(req({ previousChatId: "tab-gone" }))).toHaveProperty("task");
+  });
+
+  it("answers busy at 3 open schedule chats; mcp tasks do not count", async () => {
+    const h = createMcpTaskHandler();
+    await h.handle({ op: "start", prompt: "m" });
+    const replies = [];
+    for (let i = 0; i < 4; i += 1) replies.push(await h.handle(req({ scheduleId: `s${i}` })));
+    expect(replies.filter((r) => "task" in r)).toHaveLength(3);
+    expect(replies[3]).toMatchObject({ code: "busy" });
+  });
+
+  it("the global cap counts only executing schedule chats, not finished or waiting ones", async () => {
+    const h = createMcpTaskHandler();
+    for (let i = 0; i < 3; i += 1) {
+      const t = task(await h.handle(req({ scheduleId: `s${i}` })));
+      useChatStore.getState().consumeLaunchPayload(t.taskId);
+    }
+    expect(await h.handle(req({ scheduleId: "s9" }))).toHaveProperty("task");
+  });
+
+  it("mcp ops never see a schedule chat", async () => {
+    const h = createMcpTaskHandler();
+    const t = task(await h.handle(req()));
+    expect(await h.handle({ op: "get", taskId: t.taskId })).toHaveProperty("error");
+    expect(await h.handle({ op: "list", limit: 10 })).toEqual({ tasks: [] });
+  });
+
+  it("open activates any chat and opens the panel", async () => {
+    const h = createMcpTaskHandler();
+    const t = task(await h.handle(req()));
+    useChatStore.setState({ isOpen: false });
+    expect(await h.handle({ op: "open", taskId: t.taskId })).toEqual({ ok: true });
+    expect(useChatStore.getState().activeChatId).toBe(t.taskId);
+    expect(useChatStore.getState().isOpen).toBe(true);
+    const plain = useChatStore.getState().chats[0].id;
+    expect(await h.handle({ op: "open", taskId: plain })).toEqual({ ok: true });
+    expect(useChatStore.getState().activeChatId).toBe(plain);
+  });
+
+  it("open rejects a bad or unknown id", async () => {
+    const h = createMcpTaskHandler();
+    expect(await h.handle({ op: "open", taskId: "a b" })).toHaveProperty("error");
+    expect(await h.handle({ op: "open", taskId: "nope" })).toHaveProperty("error");
+  });
+});
+
 describe("startMcpBridge", () => {
   beforeEach(() => {
     vi.useFakeTimers();

@@ -56,8 +56,8 @@ export interface StoredChatMeta {
   updatedAt: number;
   rev: number;
   messageCount: number;
-  /** Set only for chats started over MCP. Absent on older chat files. */
-  source?: "mcp";
+  /** Set only for chats started over MCP or by a schedule. Absent on older chat files. */
+  source?: "mcp" | "schedule";
 }
 
 /** A chat as stored on disk: the meta fields (minus messageCount) plus the AI SDK messages as JSON. */
@@ -69,7 +69,7 @@ export interface StoredChat {
   updatedAt: number;
   rev: number;
   messages: UIMessage[];
-  source?: "mcp";
+  source?: "mcp" | "schedule";
 }
 
 /** The agent panel's chat storage (`chats:*` IPC). */

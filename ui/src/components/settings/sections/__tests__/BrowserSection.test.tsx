@@ -17,11 +17,11 @@ afterEach(() => {
 });
 
 describe("BrowserSection", () => {
-  it("shows the trace select, default 'QA tests and MCP tasks', without the browserSettings bridge", () => {
+  it("shows the trace select, default 'QA tests, MCP and scheduled tasks', without the browserSettings bridge", () => {
     setBridge();
     render(<BrowserSection />);
     expect(screen.queryAllByRole("switch")).toHaveLength(0);
-    expect(screen.getByRole("combobox", { name: TRACES }).textContent).toContain("QA tests and MCP tasks");
+    expect(screen.getByRole("combobox", { name: TRACES }).textContent).toContain("QA tests, MCP and scheduled tasks");
   });
 
   it.each([

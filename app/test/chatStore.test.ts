@@ -284,6 +284,16 @@ describe("chatStore", () => {
       expect("chats" in list && list.chats[0].source).toBe("mcp");
     });
 
+    it("carries \"schedule\" through save, read and list; any other source is rejected", async () => {
+      const { store } = setup();
+      expect(await store.save(chat({ source: "schedule" }))).toEqual({ ok: true, rev: 1 });
+      const read = await store.read(ID);
+      expect("chat" in read && read.chat?.source).toBe("schedule");
+      const list = await store.list();
+      expect("chats" in list && list.chats[0].source).toBe("schedule");
+      expect(await store.save(chat({ source: "cron" as never, rev: 2 }))).toEqual({ error: expect.any(String) });
+    });
+
     it("is absent for an ordinary chat and an old meta file still parses", async () => {
       const { store } = setup();
       await store.save(chat());

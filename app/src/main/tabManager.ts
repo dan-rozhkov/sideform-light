@@ -822,6 +822,12 @@ export class TabManager {
     );
   }
 
+  /** The webContents ids of the Settings tabs that show the settings page now (`schedules:changed` goes to them). */
+  settingsViewerIds(): number[] {
+    const origin = this.opts.uiOrigin;
+    return this.tabs.filter((t) => t.kind === "settings" && isSettingsPageOn(t.view.getURL(), origin)).map((t) => t.view.getWebContentsId());
+  }
+
   /** True when the webContents is a trace tab that still shows the trace viewer (`/trace/<id>`), not a page it navigated to. */
   isTraceViewer(webContentsId: number): boolean {
     return this.tabs.some(

@@ -2307,7 +2307,17 @@ export function createMainWindow(
   );
 
   // `browser-settings:*` (Settings page) is registered once per process (index.ts); this window lends its Settings-tab check.
-  const withdrawBrowserSettings = browserSettingsIpc.addWindow({ isSettingsViewer: (id, frameUrl) => tabs.isSettingsViewer(id, frameUrl) });
+  const withdrawBrowserSettings = browserSettingsIpc.addWindow({
+    isSettingsViewer: (id, frameUrl) => tabs.isSettingsViewer(id, frameUrl),
+    sendSchedulesChanged: () => {
+      for (const id of tabs.settingsViewerIds()) {
+        const wc = webContents.fromId(id);
+        if (wc && !wc.isDestroyed()) wc.send("schedules:changed");
+      }
+    },
+    showAgentPanel: () => setPanelCollapsed(false),
+    ownsPanel: (id) => panelWc()?.id === id,
+  });
 
   // Browse-run traces: stored under userData; sender rules in traceIpc.ts, opening in traceOpen.ts.
   const traceIpc: TraceIpcDeps = {

@@ -28,6 +28,23 @@ describe("browser-settings IPC", () => {
     expect(s.ipc.isSender(s.ev(8, SETTINGS))).toBe(false);
     expect(s.ipc.isSender(s.ev(7, SETTINGS, false))).toBe(false);
   });
+  it("pushSchedulesChanged reaches every window; showAgentPanelOf expands only the window that owns the panel", () => {
+    const s = setup();
+    const a = { isSettingsViewer: () => false, sendSchedulesChanged: vi.fn(), showAgentPanel: vi.fn(), ownsPanel: (id: number) => id === 11 };
+    const b = { isSettingsViewer: () => false, showAgentPanel: vi.fn(), ownsPanel: (id: number) => id === 22 };
+    const withdraw = s.ipc.addWindow(a);
+    s.ipc.addWindow(b);
+    s.ipc.pushSchedulesChanged();
+    s.ipc.showAgentPanelOf(11);
+    s.ipc.showAgentPanelOf(null);
+    s.ipc.showAgentPanelOf(99);
+    expect(a.sendSchedulesChanged).toHaveBeenCalledTimes(1);
+    expect(a.showAgentPanel).toHaveBeenCalledTimes(1);
+    expect(b.showAgentPanel).not.toHaveBeenCalled();
+    withdraw();
+    s.ipc.pushSchedulesChanged();
+    expect(a.sendSchedulesChanged).toHaveBeenCalledTimes(1);
+  });
   it("answers the settings page top frame", () => {
     const s = setup();
     expect(s.handlers.get("browser-settings:get")!(s.ev(7, SETTINGS))).toEqual({ adBlock: true });

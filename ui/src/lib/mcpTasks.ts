@@ -10,6 +10,7 @@ import type { McpPanelReply, McpPanelRequest, TaskState, TaskStatus, TaskTrace }
 import { isMcpTaskChat, useChatStore, type ChatSummary } from "@/store/chatStore";
 
 export const MAX_ACTIVE_MCP_TASKS = 3;
+export const MAX_ACTIVE_SCHEDULE_CHATS = 3;
 export const MAX_PROMPT_CHARS = 20_000;
 export const MAX_TITLE_CHARS = 200;
 export const MAX_ANSWERS = 50;
@@ -195,6 +196,11 @@ export function createMcpTaskHandler(): McpTaskHandler {
     return { error: known.has(taskId) ? "Task was deleted" : "Unknown task" };
   };
 
+  const isExecuting = (chat: ChatSummary): boolean => {
+    const run = store().sessionActions[chat.id]?.getRunState();
+    return (run ? run.busy : chat.isBusy) || (run?.launchQueued ?? false) || store().launchQueue[chat.id] !== undefined;
+  };
+
   const isOpen = (s: TaskStatus) => s === "running" || s === "needs_answer";
 
   function start(req: Extract<McpPanelRequest, { op: "start" }>): McpPanelReply {
@@ -218,6 +224,43 @@ export function createMcpTaskHandler(): McpTaskHandler {
     known.add(id);
     const chat = store().chats.find((c) => c.id === id)!;
     return { task: stateOf(chat, false) };
+  }
+
+  function scheduleStart(req: Extract<McpPanelRequest, { op: "schedule-start" }>): McpPanelReply {
+    if (typeof req.scheduleId !== "string" || !TASK_ID_RE.test(req.scheduleId)) return { error: "Invalid schedule id" };
+    const prompt = typeof req.prompt === "string" ? req.prompt.trim() : "";
+    if (!prompt || req.prompt.length > MAX_PROMPT_CHARS) return { error: `Prompt must be 1 to ${MAX_PROMPT_CHARS} characters` };
+    if (typeof req.title !== "string" || req.title.length > MAX_TITLE_CHARS) {
+      return { error: `Title must be at most ${MAX_TITLE_CHARS} characters` };
+    }
+    if (req.previousChatId !== undefined && !validTaskId(req.previousChatId)) return { error: "Invalid previous chat id" };
+    if (isOffline()) return { error: OFFLINE_MESSAGE };
+    if (req.previousChatId) {
+      const previous = store().chats.find((c) => c.id === req.previousChatId);
+      if (previous && isOpen(statusOf(previous))) return { error: "The previous run is still running", code: "busy" };
+    }
+    // Global cap: only runs that are executing right now (busy or launch queued). A chat that waits for an
+    // answer does not hold a slot. Cheap check, no message scan.
+    const active = store().chats.filter((c) => c.source === "schedule" && isExecuting(c)).length;
+    if (active >= MAX_ACTIVE_SCHEDULE_CHATS) {
+      return { error: `${MAX_ACTIVE_SCHEDULE_CHATS} scheduled runs are executing right now. Try again when one finishes`, code: "busy" };
+    }
+    const s = store();
+    const id = s.createChat({ activate: false, source: "schedule" });
+    const title = req.title.trim();
+    if (title) s.setChatTitle(id, title);
+    s.queueLaunchPayload(id, { text: prompt });
+    s.markChatUnread(id);
+    const chat = store().chats.find((c) => c.id === id)!;
+    return { task: stateOf(chat, false) };
+  }
+
+  function openTask(req: Extract<McpPanelRequest, { op: "open" }>): McpPanelReply {
+    if (!validTaskId(req.taskId)) return { error: "Invalid task id" };
+    if (!store().chats.some((c) => c.id === req.taskId)) return { error: "Unknown chat" };
+    store().openChat(req.taskId);
+    store().open();
+    return { ok: true };
   }
 
   function answer(req: Extract<McpPanelRequest, { op: "answer" }>): McpPanelReply {
@@ -294,6 +337,10 @@ export function createMcpTaskHandler(): McpTaskHandler {
             return stop(request);
           case "list":
             return list(request);
+          case "schedule-start":
+            return scheduleStart(request);
+          case "open":
+            return openTask(request);
           default:
             return { error: "Unknown request" };
         }

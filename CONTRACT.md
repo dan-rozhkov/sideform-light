@@ -9,7 +9,7 @@ bridge (the old `browse_*` remote-control bridge). There IS a small MCP *task* b
 Kept: agent chat (model picker, chat history on disk), browser tabs + address
 row + omnibox, browse_agent with parallel isolated sessions, saved logins
 (Passwords tab, fillLogin), History tab, ad blocking, trace tabs, QA
-(assert, fixtures, checkpoint journal), Settings (appearance + browser + mcp), MCP agent bridge (task giver for external agents).
+(assert, fixtures, checkpoint journal), Settings (appearance + browser + mcp + schedules), MCP agent bridge (task giver for external agents), scheduled chats.
 
 ## Layout
 
@@ -40,7 +40,7 @@ Pages (paths are identical on `app://sideform` and on the dev server):
 |---|---|---|
 | Agent panel | `app://sideform/agent` | `preload/agentPanel` (`window.penAgentPanel`) |
 | Trace tab | `app://sideform/trace/<id>?src=local` | `preload/tab` (`window.penDesktop`) |
-| Settings tab | `app://sideform/settings?section=<appearance|browser|mcp>` | `preload/tab` |
+| Settings tab | `app://sideform/settings?section=<appearance|browser|mcp|schedules>` | `preload/tab` |
 
 Local shell HTML (tab bar, empty start, passwords, history, omnibox) stays on `file://` as today.
 
@@ -73,14 +73,14 @@ window.penAgentPanel = {
                       // REMOVED: launchApp, releaseApp, nativeApps, forChat
   chats,              // list, read, save, remove
   traces,             // save, open, listTabs, read
-  settings,           // open(section?: "appearance" | "browser" | "mcp")
+  settings,           // open(section?: "appearance" | "browser" | "mcp" | "schedules")
   mcp,                // onRequest(handler), notifyChanged(taskId): the MCP agent bridge, see below
 }
 ```
 
-`window.penDesktop` (preload/tab.ts, trace + settings tabs only): theme reporting, `traces` (read), `settings.open`/`onSection`, `browserSettings` (`get`/`set` of `{ adBlock }`), `mcp` (`get`/`set`/`regenerateToken`, below). No canvas, docs, workflows, logins (doc @mention), appIcon, auth, browser bridge.
+`window.penDesktop` (preload/tab.ts, trace + settings tabs only): theme reporting, `traces` (read), `settings.open`/`onSection`, `browserSettings` (`get`/`set` of `{ adBlock }`), `mcp` (`get`/`set`/`regenerateToken`, below), `schedules` (below). No canvas, docs, workflows, logins (doc @mention), appIcon, auth, browser bridge.
 
-Settings sections: `"appearance" | "browser" | "mcp"` only. Browser settings shape: `{ adBlock: boolean }` (`mcpBrowser` and `askAppAccess` removed). The Browser section also has "Record traces", a ui-only three-value `localStorage` setting (`pen.browseTraces`: `qa` = QA tests only, absent = `mcp` = QA tests and MCP tasks (default), `all` = every run), not part of the bridge; QA runs keep a trace in every mode.
+Settings sections: `"appearance" | "browser" | "mcp" | "schedules"` only. Browser settings shape: `{ adBlock: boolean }` (`mcpBrowser` and `askAppAccess` removed). The Browser section also has "Record traces", a ui-only three-value `localStorage` setting (`pen.browseTraces`: `qa` = QA tests only, absent = `mcp` = QA tests and MCP tasks (default), `all` = every run), not part of the bridge; QA runs keep a trace in every mode.
 
 ## MCP agent bridge (v1)
 
@@ -120,7 +120,43 @@ mcp: { get(): Promise<McpSettingsView>;
        regenerateToken(): Promise<McpSettingsView | { error: string }> }
 ```
 
-Chat meta gains the optional field `source?: "mcp"` (`chats:save|read|list`; absent or exactly `"mcp"`, anything else is rejected as `invalid source`).
+Chat meta gains the optional field `source?: "mcp" | "schedule"` (`chats:save|read|list`; absent, `"mcp"` or `"schedule"`, anything else is rejected as `invalid source`). MCP ops (`start`, `get`, `list`, …) see only `source: "mcp"` chats.
+
+## Scheduled chats (v1)
+
+A schedule = name + prompt + 5-field cron (local time). While the app runs, main fires it: a new chat with `source: "schedule"` opens in the panel (not activated, marked unread) and the ordinary browser agent does the work. No catch-up of runs missed while the app was closed or asleep; a run is skipped while the previous run of the same schedule is still open. Design: `docs/superpowers/specs/2026-11-15-scheduled-chats-design.md`. Code: `app/src/main/schedules/`.
+
+**Store.** `<userData>/schedules.json` (0600, atomic) `{ version: 1, schedules: Schedule[] }`, max 50.
+
+```ts
+interface Schedule { id: string; name: string /* 1..100 */; prompt: string /* 1..20000 */; cron: string /* <= 100 */;
+  enabled: boolean; createdAt: number; updatedAt: number;
+  lastRun?: { at: number; status: "started" | "skipped" | "failed"; chatId?: string; error?: string } }
+interface ScheduleView extends Schedule { nextRunAt: number | null }
+interface ScheduleInput { id?: string; name: string; prompt: string; cron: string; enabled: boolean }
+```
+
+**Main -> panel.** Two more ops on the MCP panel channel (`mcp:task-request` / `mcp:task-reply`; the panel registers it always, not only when the MCP server is on):
+
+```ts
+| { op: "schedule-start"; scheduleId: string; prompt: string; title: string; previousChatId?: string } // -> { task } | { error, code?: "busy" }
+| { op: "open"; taskId: string }  // activates that chat in the panel -> { ok: true } | { error }
+```
+
+`schedule-start` answers `{ error, code: "busy" }` when `previousChatId` is still `running`/`needs_answer`, or when 3 schedule runs are already executing (busy or launch queued; chats waiting for an answer or finished do not count). Main records a busy answer as `skipped`, any other error as `failed`, and keeps the chat id of the last started run in `lastRun.chatId` either way.
+
+**Settings page (`penDesktop.schedules`).** Channels `schedules:list|save|remove|run-now|open-chat` (invoke), answered only to the top frame of a Settings tab on the settings page (like `mcp-settings:*`), else `{ error: "Not allowed." }`. Main pushes `schedules:changed` (no payload) to Settings tabs after any change or run.
+
+```ts
+schedules: {
+  list(): Promise<{ schedules: ScheduleView[] } | { error: string }>;
+  save(input: ScheduleInput): Promise<{ schedule: ScheduleView } | { error: string }>;   // no id = create
+  remove(id: string): Promise<{ ok: true } | { error: string }>;
+  runNow(id: string): Promise<{ schedule: ScheduleView } | { error: string }>;
+  openChat(chatId: string): Promise<{ ok: true } | { error: string }>;
+  onChanged(cb: () => void): () => void;
+}
+```
 
 ## Branding
 

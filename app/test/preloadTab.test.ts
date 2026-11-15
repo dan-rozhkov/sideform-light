@@ -51,9 +51,9 @@ async function load(file: "tab" | "agentPanel") {
 describe("preload/tab.ts (trace and settings pages)", () => {
   beforeEach(() => load("tab"));
 
-  it("exposes penDesktop with exactly traces, browserSettings, mcp and settings", () => {
+  it("exposes penDesktop with exactly traces, browserSettings, mcp, schedules and settings", () => {
     expect(exposedName).toBe("penDesktop");
-    expect(Object.keys(exposedApi).sort()).toEqual(["browserSettings", "mcp", "settings", "traces"]);
+    expect(Object.keys(exposedApi).sort()).toEqual(["browserSettings", "mcp", "schedules", "settings", "traces"]);
   });
 
   it("mcp get / set / regenerateToken go over mcp-settings:get / set / regenerate-token", async () => {
@@ -65,6 +65,28 @@ describe("preload/tab.ts (trace and settings pages)", () => {
     expect(invokeMock).toHaveBeenLastCalledWith("mcp-settings:set", { enabled: true });
     await exposedApi.mcp.regenerateToken();
     expect(invokeMock).toHaveBeenLastCalledWith("mcp-settings:regenerate-token");
+  });
+
+  it("schedules go over schedules:*, and onChanged subscribes to schedules:changed and unsubscribes", async () => {
+    expect(Object.keys(exposedApi.schedules).sort()).toEqual(["list", "onChanged", "openChat", "remove", "runNow", "save"]);
+    await exposedApi.schedules.list();
+    expect(invokeMock).toHaveBeenLastCalledWith("schedules:list");
+    const input = { name: "n", prompt: "p", cron: "* * * * *", enabled: true };
+    await exposedApi.schedules.save(input);
+    expect(invokeMock).toHaveBeenLastCalledWith("schedules:save", input);
+    await exposedApi.schedules.remove("s1");
+    expect(invokeMock).toHaveBeenLastCalledWith("schedules:remove", "s1");
+    await exposedApi.schedules.runNow("s1");
+    expect(invokeMock).toHaveBeenLastCalledWith("schedules:run-now", "s1");
+    await exposedApi.schedules.openChat("c1");
+    expect(invokeMock).toHaveBeenLastCalledWith("schedules:open-chat", "c1");
+    const cb = vi.fn();
+    const off = exposedApi.schedules.onChanged(cb);
+    const listener = onMock.mock.calls.find((c) => c[0] === "schedules:changed")![1];
+    listener({});
+    expect(cb).toHaveBeenCalledTimes(1);
+    off();
+    expect(removeListenerMock).toHaveBeenCalledWith("schedules:changed", listener);
   });
 
   it("has no browser bridge and none of the removed surfaces", () => {

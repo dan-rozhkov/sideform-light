@@ -75,6 +75,13 @@ const CHANNELS: { name: string; direction: "main->renderer" | "renderer->main" }
   { name: "mcp-settings:get", direction: "renderer->main" },
   { name: "mcp-settings:set", direction: "renderer->main" },
   { name: "mcp-settings:regenerate-token", direction: "renderer->main" },
+  // Settings page > Schedules (invoke/handle, Settings-tab senders only, registered once) and main's push after any change or run.
+  { name: "schedules:list", direction: "renderer->main" },
+  { name: "schedules:save", direction: "renderer->main" },
+  { name: "schedules:remove", direction: "renderer->main" },
+  { name: "schedules:run-now", direction: "renderer->main" },
+  { name: "schedules:open-chat", direction: "renderer->main" },
+  { name: "schedules:changed", direction: "main->renderer" },
   // MCP agent bridge, main <-> agent panel (panel's own page only): the page registers its handler (`panel-ready`), main
   // forwards a request `{requestId, request}` (`task-request`), the page answers `{requestId, reply}` (`task-reply`) and
   // pushes `{taskId}` when a task may have changed (`task-changed`).
@@ -229,6 +236,21 @@ describe("MCP agent bridge wiring", () => {
     const ipc = readFileSync(join(SRC, "main/mcp/mcpSettingsIpc.ts"), "utf8");
     expect(ipc).toContain("deps.isSettingsSender(event)");
     expect(tabPreload).toContain('"mcp-settings:regenerate-token"');
+  });
+
+  it("the schedules channels go through the Settings-tab sender rule", () => {
+    const ipc = readFileSync(join(SRC, "main/schedules/schedulesIpc.ts"), "utf8");
+    expect(ipc).toContain("deps.isSettingsSender(event)");
+    for (const c of ["list", "save", "remove", "run-now", "open-chat"]) expect(tabPreload, c).toContain(`"schedules:${c}"`);
+    expect(tabPreload).toContain('"schedules:changed"');
+  });
+
+  it("the MCP tools can not build the main-only panel ops", () => {
+    for (const f of ["main/mcp/tools.ts", "main/mcp/toolInputs.ts"]) {
+      const src = readFileSync(join(SRC, f), "utf8");
+      expect(src, f).not.toContain("schedule-start");
+      expect(src, f).not.toContain('op: "open"');
+    }
   });
 
   it("the panel preload never exposes ipcRenderer or a channel name, only onRequest and notifyChanged", () => {

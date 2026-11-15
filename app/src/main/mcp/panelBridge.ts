@@ -27,6 +27,8 @@ export interface PanelBridge extends McpPanelPort {
   registerPanel(endpoint: PanelEndpoint): () => void;
   /** True while a panel is registered. */
   hasPanel(): boolean;
+  /** The webContents id of the registered panel, or null. */
+  panelId(): number | null;
   /** A `mcp:task-reply` from webContents `senderId`. Ignored unless it is the registered panel and the request is pending. */
   handleReply(senderId: number, payload: unknown): void;
   /** A `mcp:task-changed` from webContents `senderId`. Ignored unless it is the registered panel. */
@@ -42,7 +44,7 @@ interface Pending {
 /** A reply must be exactly one of the contract shapes; anything else is dropped as an error. */
 export function parsePanelReply(raw: unknown): McpPanelReply {
   if (!isObject(raw)) return { error: "Sideform Light answered in an unexpected way." };
-  if (typeof raw.error === "string") return { error: raw.error.slice(0, 2000) };
+  if (typeof raw.error === "string") return { error: raw.error.slice(0, 2000), ...(raw.code === "busy" ? { code: "busy" as const } : {}) };
   if (isObject(raw.task) && typeof raw.task.taskId === "string") return { task: raw.task as unknown as McpTaskState };
   if (raw.ok === true) return { ok: true };
   if (Array.isArray(raw.tasks)) return { tasks: raw.tasks as Extract<McpPanelReply, { tasks: unknown }>["tasks"] };
@@ -79,6 +81,7 @@ export function createPanelBridge(opts: PanelBridgeOptions = {}): PanelBridge {
       };
     },
     hasPanel: () => panel !== null,
+    panelId: () => panel?.id ?? null,
     request(request) {
       const target = panel;
       if (!target) return Promise.resolve({ error: NO_WINDOW_ERROR });

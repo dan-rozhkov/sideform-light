@@ -15,7 +15,10 @@ export type McpPanelRequest =
   | { op: "answer"; taskId: string; answers: McpAnswer[] }
   | { op: "message"; taskId: string; text: string }
   | { op: "stop"; taskId: string }
-  | { op: "list"; limit: number };
+  | { op: "list"; limit: number }
+  // Main-only ops (the scheduler and the Settings page); the MCP tools never build them.
+  | { op: "schedule-start"; scheduleId: string; prompt: string; title: string; previousChatId?: string }
+  | { op: "open"; taskId: string };
 
 export interface McpTaskState {
   taskId: string;
@@ -29,7 +32,7 @@ export interface McpTaskState {
 }
 
 export type McpPanelReply =
-  | { error: string }
+  | { error: string; code?: "busy" }
   | { task: McpTaskState }
   | { ok: true }
   | { tasks: Pick<McpTaskState, "taskId" | "title" | "status" | "updatedAt">[] };

@@ -11,6 +11,10 @@ import type { AttachedImage, ChatLaunchPayload } from "@/types/chat";
  * change). Never mutated — the store always writes fresh arrays. */
 export const NO_ATTACHED_IMAGES: AttachedImage[] = [];
 
+/** Who started a chat besides the person: an external agent over MCP, or a schedule. */
+export type ChatSource = "mcp" | "schedule";
+export const isChatSource = (v: unknown): v is ChatSource => v === "mcp" || v === "schedule";
+
 export interface ChatSummary {
   id: string;
   title: string;
@@ -41,8 +45,8 @@ export interface ChatSummary {
   /** Last time this chat's list-relevant state changed, for sorting the chat
    * list by recency. */
   updatedAt: number;
-  /** Set once at creation for chats started over MCP (an external agent's task). Persisted with the chat. */
-  source?: "mcp";
+  /** Set once at creation for chats started over MCP (an external agent's task) or by a schedule. Persisted with the chat. */
+  source?: ChatSource;
 }
 
 export type ParallelCount = 1 | 2 | 3;
@@ -119,7 +123,7 @@ interface ChatState {
   setModel: (model: string) => void;
   setParallelCount: (count: ParallelCount) => void;
 
-  createChat: (opts?: { activate?: boolean; parallelCount?: ParallelCount; source?: "mcp" }) => string;
+  createChat: (opts?: { activate?: boolean; parallelCount?: ParallelCount; source?: ChatSource }) => string;
   closeChat: (chatId: string) => void;
   /** Makes a chat active, restores its parallelCount, and clears unread. */
   openChat: (chatId: string) => void;
@@ -211,7 +215,7 @@ function makeChat(
   title: string,
   model: string,
   parallelCount: ParallelCount,
-  source?: "mcp",
+  source?: ChatSource,
 ): ChatSummary {
   return {
     id,
@@ -557,6 +561,16 @@ onStorageKey("chat-parallel-count", (value) => {
     chats: s.chats.map((c) => (c.id === s.activeChatId ? { ...c, parallelCount } : c)),
   }));
 });
+
+/** Whether `chatId` is a run of a schedule (`source: "schedule"`). */
+export function isScheduleChat(chatId: string | undefined): boolean {
+  return !!chatId && useChatStore.getState().chats.some((c) => c.id === chatId && c.source === "schedule");
+}
+
+/** MCP tasks and scheduled runs: chats an automation started, not the person (they count for "Record traces"). */
+export function isBackgroundTaskChat(chatId: string | undefined): boolean {
+  return isMcpTaskChat(chatId) || isScheduleChat(chatId);
+}
 
 /** Whether `chatId` is a task an external agent started over the MCP bridge (`source: "mcp"`). */
 export function isMcpTaskChat(chatId: string | undefined): boolean {

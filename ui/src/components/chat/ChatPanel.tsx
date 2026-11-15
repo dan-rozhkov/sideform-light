@@ -510,6 +510,7 @@ export function ChatPanelContent({
               })}
             </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => openSettings("schedules")}>Scheduled tasks…</DropdownMenuItem>
             <DropdownMenuItem onClick={() => openSettings()}>Settings…</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

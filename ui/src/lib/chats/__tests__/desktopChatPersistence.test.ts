@@ -555,4 +555,15 @@ describe("desktopChatPersistence (eager)", () => {
     expect(byId.get(mcpId)?.source).toBe("mcp");
     expect(byId.get(plainId) && "source" in byId.get(plainId)!).toBe(false);
   });
+
+  it("restores and saves the schedule source", async () => {
+    const bridge = fakeBridge([meta("s", { source: "schedule" })], { s: stored("s", [userMsg("s1")]) });
+    await startDesktopChatPersistence();
+    expect(useChatStore.getState().chats.find((c) => c.id === "s")?.source).toBe("schedule");
+    const id = useChatStore.getState().createChat({ activate: false, source: "schedule" });
+    notifyChatState(id, handle({ messages: [userMsg()] }));
+    await ms(1000);
+    const byId = new Map(bridge.save.mock.calls.map(([c]) => [c.id, c]));
+    expect(byId.get(id)?.source).toBe("schedule");
+  });
 });

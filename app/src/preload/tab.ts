@@ -31,12 +31,28 @@ const mcp = {
   regenerateToken: (): Promise<unknown> => ipcRenderer.invoke("mcp-settings:regenerate-token"),
 };
 
+// Scheduled chats for the Settings page (`schedules:*`). Same rule as `mcp`: main answers only the top frame of a Settings
+// tab on the settings page, everything else gets `{ error: "Not allowed." }`. `onChanged` is main's `schedules:changed` push.
+const schedules = {
+  list: (): Promise<unknown> => ipcRenderer.invoke("schedules:list"),
+  save: (input: unknown): Promise<unknown> => ipcRenderer.invoke("schedules:save", input),
+  remove: (id: string): Promise<unknown> => ipcRenderer.invoke("schedules:remove", id),
+  runNow: (id: string): Promise<unknown> => ipcRenderer.invoke("schedules:run-now", id),
+  openChat: (chatId: string): Promise<unknown> => ipcRenderer.invoke("schedules:open-chat", chatId),
+  onChanged(cb: () => void): () => void {
+    const listener = () => cb();
+    ipcRenderer.on("schedules:changed", listener);
+    return () => ipcRenderer.removeListener("schedules:changed", listener);
+  },
+};
+
 // The bridge of the ui's tab pages (the trace viewer and the Settings page). The agent panel has its own preload;
 // no page here can drive the browser.
 const api = {
   traces,
   browserSettings,
   mcp,
+  schedules,
   // Opens (or activates) the Settings tab; `section` is validated in main.
   settings: {
     open: (section?: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("settings:open", section),

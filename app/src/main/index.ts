@@ -33,6 +33,9 @@ import { startHttpServer } from "./mcp/httpServer";
 import { registerMcpSettingsIpc } from "./mcp/mcpSettingsIpc";
 import { createPanelBridge } from "./mcp/panelBridge";
 import { createMcpService } from "./mcp/service";
+import { createScheduler } from "./schedules/scheduler";
+import { registerSchedulesIpc } from "./schedules/schedulesIpc";
+import { SCHEDULES_FILE, createScheduleStore } from "./schedules/store";
 import { MCP_SETTINGS_FILE, createMcpSettingsStore } from "./mcp/settingsStore";
 import { MCP_TOOL_MANIFEST, createToolDispatcher } from "./mcp/tools";
 import {
@@ -157,6 +160,21 @@ const unregisterMcpSettingsIpc = registerMcpSettingsIpc({
   isSettingsSender: (e) => browserSettingsIpc.isSender(e),
 });
 
+// Scheduled chats: ONE store and scheduler for the whole app. A fire is a `schedule-start` request to the panel over the
+// MCP panel bridge (which the panel registers always, not only when the MCP server is on). Started once the app is ready.
+const scheduler = createScheduler({
+  store: createScheduleStore({ filePath: path.join(app.getPath("userData"), SCHEDULES_FILE) }),
+  panel: mcpPanelBridge,
+});
+const unregisterSchedulesIpc = registerSchedulesIpc({
+  ipcMain,
+  scheduler,
+  panel: mcpPanelBridge,
+  isSettingsSender: (e) => browserSettingsIpc.isSender(e),
+  pushChanged: () => browserSettingsIpc.pushSchedulesChanged(),
+  showPanel: () => browserSettingsIpc.showAgentPanelOf(mcpPanelBridge.panelId()),
+});
+
 /**
  * Serves the bundled ui on `app://sideform` (localProtocol.ts decides the file, the MIME type and the CSP).
  * Registered on the default session, the one the agent panel and the trace/settings pages use.
@@ -189,6 +207,7 @@ app.whenReady().then(() => {
   void historyStore.load().catch((err) => console.error("[history] load failed", err));
   // Starts the MCP server only when the person turned the bridge on (never listens by default).
   void mcpService.start();
+  scheduler.start();
   // The visible product name (app menu labels, About box); the userData path and the Keychain item
   // name are already fixed above.
   app.setAboutPanelOptions({ applicationName: DISPLAY_APP_NAME });
@@ -296,6 +315,8 @@ app.on("will-quit", () => {
   historyServices.service.dispose();
   browserSettingsIpc.dispose();
   unregisterMcpSettingsIpc();
+  unregisterSchedulesIpc();
+  scheduler.dispose();
   mcpService.disposeSync();
   unregisterHistorySuggest();
 });

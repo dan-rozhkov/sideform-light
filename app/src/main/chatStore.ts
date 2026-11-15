@@ -44,8 +44,8 @@ export interface ChatMeta {
   updatedAt: number;
   rev: number;
   messageCount: number;
-  /** Set to "mcp" for a task started over the MCP agent bridge. Absent for every other chat. */
-  source?: "mcp";
+  /** "mcp" for a task started over the MCP agent bridge, "schedule" for a scheduled chat. Absent for every other chat. */
+  source?: ChatSource;
 }
 
 export interface StoredChat {
@@ -56,7 +56,12 @@ export interface StoredChat {
   updatedAt: number;
   rev: number;
   messages: unknown[];
-  source?: "mcp";
+  source?: ChatSource;
+}
+
+export type ChatSource = "mcp" | "schedule";
+export function isChatSource(v: unknown): v is ChatSource {
+  return v === "mcp" || v === "schedule";
 }
 
 export type ChatListResult = { chats: ChatMeta[] } | { error: string };
@@ -99,9 +104,9 @@ export function parseChatMeta(raw: unknown): { meta: ChatMeta } | { error: strin
   if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) return { error: "invalid updatedAt" };
   if (!isRev(rev)) return { error: "invalid rev" };
   if (typeof messageCount !== "number" || !Number.isSafeInteger(messageCount) || messageCount < 0) return { error: "invalid messageCount" };
-  // Optional and additive: absent (old files) or exactly "mcp"; anything else is invalid.
-  if (source !== undefined && source !== "mcp") return { error: "invalid source" };
-  return { meta: { id, title, titleIsAuto, model, updatedAt, rev, messageCount, ...(source === "mcp" ? { source } : {}) } };
+  // Optional and additive: absent (old files) or a ChatSource ("mcp" | "schedule"); anything else is invalid.
+  if (source !== undefined && !isChatSource(source)) return { error: "invalid source" };
+  return { meta: { id, title, titleIsAuto, model, updatedAt, rev, messageCount, ...(isChatSource(source) ? { source } : {}) } };
 }
 
 /** A chat to store (payload of `chats:save`), or an error. Anything else on the input is dropped. */
@@ -232,7 +237,7 @@ export function createChatStore(opts: ChatStoreOptions): ChatStore {
           updatedAt: chat.updatedAt,
           rev: chat.rev,
           messageCount: chat.messages.length,
-          ...(chat.source === "mcp" ? { source: "mcp" as const } : {}),
+          ...(isChatSource(chat.source) ? { source: chat.source } : {}),
         };
         await io.write(metaFile(chat.id), Buffer.from(JSON.stringify(meta), "utf8"));
         revs.set(chat.id, chat.rev);

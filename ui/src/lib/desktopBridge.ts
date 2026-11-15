@@ -54,6 +54,39 @@ export interface DesktopMcpSettingsApi {
   regenerateToken(): Promise<McpSettingsView | { error: string }>;
 }
 
+/** A schedule as the Settings page sees it (Settings > Schedules). */
+export interface ScheduleView {
+  id: string;
+  name: string;
+  prompt: string;
+  /** Five-field cron, local time. */
+  cron: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  lastRun?: { at: number; status: "started" | "skipped" | "failed"; chatId?: string; error?: string };
+  nextRunAt: number | null;
+}
+
+/** `id` absent = create. */
+export interface ScheduleInput {
+  id?: string;
+  name: string;
+  prompt: string;
+  cron: string;
+  enabled: boolean;
+}
+
+export interface DesktopSchedulesApi {
+  list(): Promise<{ schedules: ScheduleView[] } | { error: string }>;
+  save(input: ScheduleInput): Promise<{ schedule: ScheduleView } | { error: string }>;
+  remove(id: string): Promise<{ ok: true } | { error: string }>;
+  runNow(id: string): Promise<{ schedule: ScheduleView } | { error: string }>;
+  openChat(chatId: string): Promise<{ ok: true } | { error: string }>;
+  /** Fires after any change or run. Returns the unsubscribe. */
+  onChanged(cb: () => void): () => void;
+}
+
 /** Preload API of the trace and settings tabs (`preload/tab`). */
 export interface PenDesktopApi {
   /** Local browse-run traces. `read` returns `{ trace }` with data-URL frames, or `{ error }`. */
@@ -66,6 +99,8 @@ export interface PenDesktopApi {
   browserSettings?: DesktopBrowserSettingsApi;
   /** The MCP agent bridge switch, token and status. Settings tab only; absent in an older shell. */
   mcp?: DesktopMcpSettingsApi;
+  /** Scheduled chats. Settings tab only; absent in an older shell. */
+  schedules?: DesktopSchedulesApi;
 }
 
 declare global {

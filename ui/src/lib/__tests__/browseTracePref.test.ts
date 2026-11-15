@@ -54,3 +54,19 @@ describe("browseTracePref", () => {
     expect(shouldRecordTrace({ qa: false, mcpTask: false, mode: "qa" })).toBe(false);
   });
 });
+
+import { isBackgroundTaskChat } from "@/store/chatStore";
+import { useChatStore } from "@/store/chatStore";
+
+describe("isBackgroundTaskChat", () => {
+  it("is true for mcp and schedule chats, false for plain ones", () => {
+    useChatStore.setState(useChatStore.getInitialState());
+    const s = useChatStore.getState();
+    const mcp = s.createChat({ activate: false, source: "mcp" });
+    const sched = s.createChat({ activate: false, source: "schedule" });
+    expect(isBackgroundTaskChat(mcp)).toBe(true);
+    expect(isBackgroundTaskChat(sched)).toBe(true);
+    expect(isBackgroundTaskChat(useChatStore.getState().chats[0].id)).toBe(false);
+    expect(isBackgroundTaskChat(undefined)).toBe(false);
+  });
+});

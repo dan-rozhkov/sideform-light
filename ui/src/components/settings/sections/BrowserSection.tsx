@@ -40,7 +40,7 @@ function AdBlockRow() {
 
 const TRACE_OPTIONS: { value: TraceMode; label: string }[] = [
   { value: "qa", label: "QA tests only" },
-  { value: "mcp", label: "QA tests and MCP tasks" },
+  { value: "mcp", label: "QA tests, MCP and scheduled tasks" },
   { value: "all", label: "All runs" },
 ];
 

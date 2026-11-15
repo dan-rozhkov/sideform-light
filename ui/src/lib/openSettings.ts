@@ -1,4 +1,4 @@
-export const SETTINGS_SECTIONS = ["appearance", "browser", "mcp"] as const;
+export const SETTINGS_SECTIONS = ["appearance", "browser", "mcp", "schedules"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 export const DEFAULT_SETTINGS_SECTION: SettingsSection = "appearance";
 

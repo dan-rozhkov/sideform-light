@@ -104,14 +104,16 @@ describe("page URLs", () => {
     expect(resolveSettingsTabUrl("app://sideform", "browser")).toBe("app://sideform/settings?section=browser");
     expect(resolveSettingsTabUrl("app://sideform", "appearance")).toBe("app://sideform/settings?section=appearance");
     expect(resolveSettingsTabUrl("app://sideform", "mcp")).toBe("app://sideform/settings?section=mcp");
+    expect(resolveSettingsTabUrl("app://sideform", "schedules")).toBe("app://sideform/settings?section=schedules");
     expect(resolveSettingsTabUrl("app://sideform", "account")).toBe("app://sideform/settings");
     expect(resolveSettingsTabUrl("app://sideform", 5)).toBe("app://sideform/settings");
   });
 });
 
 describe("settings sections", () => {
-  it("are appearance, browser and mcp only", () => {
-    expect([...SETTINGS_SECTIONS]).toEqual(["appearance", "browser", "mcp"]);
+  it("are appearance, browser, mcp and schedules only", () => {
+    expect([...SETTINGS_SECTIONS]).toEqual(["appearance", "browser", "mcp", "schedules"]);
+    expect(isValidSettingsSection("schedules")).toBe(true);
     expect(isValidSettingsSection("browser")).toBe(true);
     expect(isValidSettingsSection("mcp")).toBe(true);
     expect(isValidSettingsSection("MCP")).toBe(false);

@@ -142,3 +142,11 @@ describe("parsePanelReply", () => {
     for (const bad of [null, 5, "x", {}, { ok: false }, { task: 1 }, { tasks: "x" }]) expect("error" in parsePanelReply(bad), JSON.stringify(bad)).toBe(true);
   });
 });
+
+describe("parsePanelReply busy code", () => {
+  it("keeps code: busy on an error and drops any other code", () => {
+    expect(parsePanelReply({ error: "still running", code: "busy" })).toEqual({ error: "still running", code: "busy" });
+    expect(parsePanelReply({ error: "x", code: "other" })).toEqual({ error: "x" });
+    expect(parsePanelReply({ error: "x" })).toEqual({ error: "x" });
+  });
+});

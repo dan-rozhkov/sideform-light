@@ -8,7 +8,9 @@ export type McpPanelRequest =
   | { op: "answer"; taskId: string; answers: McpAnswer[] }
   | { op: "message"; taskId: string; text: string }
   | { op: "stop"; taskId: string }
-  | { op: "list"; limit: number };
+  | { op: "list"; limit: number }
+  | { op: "schedule-start"; scheduleId: string; prompt: string; title: string; previousChatId?: string }
+  | { op: "open"; taskId: string };
 
 export type TaskStatus = "running" | "needs_answer" | "done" | "stopped" | "error";
 
@@ -33,7 +35,7 @@ export interface TaskState {
 }
 
 export type McpPanelReply =
-  | { error: string }
+  | { error: string; code?: "busy" }
   | { task: TaskState }
   | { ok: true }
   | { tasks: Pick<TaskState, "taskId" | "title" | "status" | "updatedAt">[] };

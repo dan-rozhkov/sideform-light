@@ -10,7 +10,7 @@ import type { UIMessage } from "ai";
 import type { AgentPanelChatsBridge, StoredChat } from "@/lib/agentPanel";
 import { sanitizeStoredMessages } from "@/lib/chats/sanitizeStoredMessages";
 import { areModelsLoaded } from "@/lib/chatModels";
-import { nextChatTitle, reconcileModels, useChatStore, type ChatSummary } from "@/store/chatStore";
+import { isChatSource, nextChatTitle, reconcileModels, useChatStore, type ChatSummary } from "@/store/chatStore";
 
 export const CHAT_SAVE_DEBOUNCE_MS = 300;
 export const CHAT_IO_TIMEOUT_MS = 10_000;
@@ -30,7 +30,7 @@ interface Snapshot {
   titleIsAuto: boolean;
   model: string;
   updatedAt: number;
-  source?: "mcp";
+  source?: "mcp" | "schedule";
 }
 
 interface MetaKey {
@@ -169,7 +169,7 @@ function saveNow(chatId: string, force = false): Promise<unknown> | undefined {
     titleIsAuto: summary.titleIsAuto,
     model: summary.model,
     updatedAt: summary.updatedAt ?? Date.now(),
-    ...(summary.source === "mcp" ? { source: "mcp" as const } : {}),
+    ...(isChatSource(summary.source) ? { source: summary.source } : {}),
   };
   pending.set(chatId, snapshot);
   attempted.add(chatId);
@@ -397,7 +397,7 @@ export async function startDesktopChatPersistence(): Promise<void> {
       const messages = sanitizeStoredMessages(chat.messages);
       initialMessages.set(m.id, messages);
       knownRev.set(m.id, Math.max(m.rev, typeof chat.rev === "number" ? chat.rev : 0));
-      lastSaved.set(m.id, { messages, title: m.title, titleIsAuto: m.titleIsAuto, model: m.model, updatedAt: m.updatedAt, ...(m.source === "mcp" ? { source: "mcp" as const } : {}) });
+      lastSaved.set(m.id, { messages, title: m.title, titleIsAuto: m.titleIsAuto, model: m.model, updatedAt: m.updatedAt, ...(isChatSource(m.source) ? { source: m.source } : {}) });
       summaries.push({
         id: m.id,
         title: m.title,
@@ -409,7 +409,7 @@ export async function startDesktopChatPersistence(): Promise<void> {
         needsAnswer: false,
         isBusy: false,
         // Only the exact value is trusted: anything else is a plain chat.
-        ...(m.source === "mcp" ? { source: "mcp" as const } : {}),
+        ...(isChatSource(m.source) ? { source: m.source } : {}),
       });
     });
     if (summaries.length > 0) {
