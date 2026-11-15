@@ -50,7 +50,19 @@ Sideform Light 0.1.1 on Windows 11, installed from the release `.exe` on a GitHu
 cd app && npm ci && SIDEFORM_LIGHT_BACKEND_URL=http://localhost:3001 npm start
 ```
 
-Both backend URLs must be the same. Releases are built by `.github/workflows/release.yml` on a `v*` tag.
+Both backend URLs must be the same.
+
+For development against the production backend, run one command from the repository root:
+
+```bash
+scripts/dev-prod.sh                                   # ui dev server (hot reload) + Electron, production backend
+BACKEND_URL=http://localhost:3001 scripts/dev-prod.sh # the same against a local backend
+```
+
+No API keys are needed locally: they live on the backend. Chats of this mode go to `chats-dev/`, not to the
+chats of the installed app.
+
+Releases are built by `.github/workflows/release.yml` on a `v*` tag.
 
 ## License
 
