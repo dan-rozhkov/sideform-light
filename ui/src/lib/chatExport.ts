@@ -1,18 +1,22 @@
 import type { UIMessage } from "ai";
 import { isToolUIPart, getToolName } from "ai";
+import { t } from "@/i18n";
 import { getToolDisplayName } from "@/lib/toolDisplayNames";
 import { redactBrowseSetupInput } from "@/lib/tools/browser/redactBrowseSetupInput";
 
 const MAX_BLOCK_CHARS = 4000;
 const DATA_IMAGE_RE = /data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi;
 
-function capitalize(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+function roleLabel(role: string): string {
+  if (role === "user") return t("chat.export.user");
+  if (role === "assistant") return t("chat.export.assistant");
+  if (role === "system") return t("chat.export.system");
+  return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
 /** Strip base64 image payloads so we never dump huge data URLs into markdown. */
 function stripDataImages(value: string): string {
-  return value.replace(DATA_IMAGE_RE, "[data-url omitted]");
+  return value.replace(DATA_IMAGE_RE, `[${t("chat.export.dataUrlOmitted")}]`);
 }
 
 /** Pretty-print a value as JSON; if it is already a JSON string, parse then re-stringify. */
@@ -35,7 +39,7 @@ function prettyJson(value: unknown): string {
 function jsonBlock(label: string, value: unknown): string {
   let body = stripDataImages(prettyJson(value));
   if (body.length > MAX_BLOCK_CHARS) {
-    body = `${body.slice(0, MAX_BLOCK_CHARS)}\n… [truncated]`;
+    body = `${body.slice(0, MAX_BLOCK_CHARS)}\n… [${t("chat.export.truncated")}]`;
   }
   return `${label}\n\`\`\`json\n${body}\n\`\`\``;
 }
@@ -50,23 +54,23 @@ type AnyToolPart = {
 function toolPartToMarkdown(part: unknown): string {
   const name = getToolName(part as never);
   const tp = part as AnyToolPart;
-  const lines: string[] = [`**Tool:** ${getToolDisplayName(name)}`];
+  const lines: string[] = [`**${t("chat.export.tool")}:** ${getToolDisplayName(name)}`];
 
   if (tp.input !== undefined) {
-    lines.push(jsonBlock("Input", name === "browse_agent" ? redactBrowseSetupInput(tp.input) : tp.input));
+    lines.push(jsonBlock(t("chat.export.input"), name === "browse_agent" ? redactBrowseSetupInput(tp.input) : tp.input));
   }
   if (tp.output !== undefined) {
-    lines.push(jsonBlock("Output", tp.output));
+    lines.push(jsonBlock(t("chat.export.output"), tp.output));
   }
   if (tp.errorText) {
-    lines.push(`**Error:** ${tp.errorText}`);
+    lines.push(`**${t("chat.export.error")}:** ${tp.errorText}`);
   }
   return lines.join("\n\n");
 }
 
 /** Serialize a single chat message to Markdown. */
 export function messageToMarkdown(msg: UIMessage): string {
-  const sections: string[] = [`## ${capitalize(msg.role)}`];
+  const sections: string[] = [`## ${roleLabel(msg.role)}`];
 
   for (const part of msg.parts) {
     if (part.type === "text" && part.text) {
@@ -78,7 +82,7 @@ export function messageToMarkdown(msg: UIMessage): string {
         .split("\n")
         .map((line) => `> ${line}`)
         .join("\n");
-      sections.push(`> **Thinking:**\n${quoted}`);
+      sections.push(`> **${t("chat.export.thinking")}:**\n${quoted}`);
       continue;
     }
     if (part.type === "file") {
@@ -86,9 +90,9 @@ export function messageToMarkdown(msg: UIMessage): string {
       if (typeof fp.mediaType === "string" && fp.mediaType.startsWith("image/")) {
         const url = fp.url ?? "";
         if (url.startsWith("data:")) {
-          sections.push("*[attached image]*");
+          sections.push(`*[${t("chat.attachedImage")}]*`);
         } else {
-          sections.push(`![image](${url})`);
+          sections.push(`![${t("chat.export.image")}](${url})`);
         }
       }
       continue;
@@ -115,7 +119,7 @@ export function messageToClipboardText(msg: UIMessage): string {
 
 /** Serialize an entire chat (list of messages) to a Markdown document. */
 export function chatToMarkdown(messages: UIMessage[], title?: string): string {
-  const header = `# ${title || "Chat"}`;
+  const header = `# ${title || t("chat.export.title")}`;
   const body = messages.map(messageToMarkdown).join("\n\n---\n\n");
   return body ? `${header}\n\n${body}` : header;
 }
@@ -126,7 +130,7 @@ export function sanitizeFilename(value: string): string {
     value
       .trim()
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/[^\p{L}\p{N}]+/gu, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 60) || "untitled"
   );

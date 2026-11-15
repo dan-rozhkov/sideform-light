@@ -5,11 +5,13 @@ import { IconButton } from "@/components/ui/IconButton";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { collectChatArtifacts, openChatArtifact, type ChatArtifact } from "@/lib/chatArtifacts";
 import { traceOpener } from "@/lib/traceOpener";
+import { useT } from "@/i18n";
 
 const SECTION_LIMIT = 5;
 
 /** Header button + popover listing the browse-run traces a chat touched. */
 export function ConversationFilesPopover({ getMessages }: { getMessages: () => UIMessage[] }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<ChatArtifact[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -35,8 +37,8 @@ export function ConversationFilesPopover({ getMessages }: { getMessages: () => U
             data-testid="conversation-files-trigger"
             variant="ghost"
             size="icon"
-            tooltip="Conversation files"
-            aria-label="Conversation files"
+            tooltip={t("chat.conversationFiles")}
+            aria-label={t("chat.conversationFiles")}
           >
             <ListBulletsIcon className="size-4" weight="light" />
           </IconButton>
@@ -44,10 +46,10 @@ export function ConversationFilesPopover({ getMessages }: { getMessages: () => U
       />
       <PopoverContent side="bottom" align="end" sideOffset={4} className="w-72 gap-3 rounded-xl p-3" data-testid="conversation-files-popover">
         {items.length === 0 ? (
-          <p className="px-1 py-1 text-[13px] text-text-muted">Traces from this chat appear here.</p>
+          <p className="px-1 py-1 text-[13px] text-text-muted">{t("chat.tracesEmpty")}</p>
         ) : (
           <section className="flex flex-col gap-0.5">
-            <h3 className="px-2 pb-1 text-[13px] text-text-muted">Traces</h3>
+            <h3 className="px-2 pb-1 text-[13px] text-text-muted">{t("chat.traces")}</h3>
             {shown.map((a) => (
               <button
                 key={a.traceId}
@@ -68,7 +70,7 @@ export function ConversationFilesPopover({ getMessages }: { getMessages: () => U
                 onClick={() => setExpanded(true)}
                 className="w-full rounded-lg px-2 py-1.5 text-left text-sm text-text-muted outline-none hover:bg-secondary focus-visible:ring-[2px] focus-visible:ring-ring"
               >
-                Show all ({items.length})
+                {t("chat.showAll", { count: items.length })}
               </button>
             )}
           </section>

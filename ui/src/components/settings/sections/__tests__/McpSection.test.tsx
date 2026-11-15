@@ -28,7 +28,7 @@ afterEach(() => {
 describe("McpSection", () => {
   it("registers the mcp section in the nav and the section list", () => {
     expect(SETTINGS_SECTIONS).toContain("mcp");
-    expect(SETTINGS_NAV.find((s) => s.id === "mcp")?.label).toBe("MCP");
+    expect(SETTINGS_NAV.find((s) => s.id === "mcp")?.labelKey).toBe("settings.nav.mcp");
   });
 
   it("says it is not available when penDesktop.mcp is absent", () => {

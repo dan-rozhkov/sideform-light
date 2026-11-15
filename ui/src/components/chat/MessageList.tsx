@@ -23,6 +23,7 @@ import { BrowseAgentIndicator } from "./BrowseAgentIndicator";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 import { ImageLightbox } from "./ImageLightbox";
 import { AskUserForm } from "./AskUserForm";
+import { useT } from "@/i18n";
 
 interface ImagePreviewProps {
   url: string;
@@ -37,6 +38,7 @@ export function ImagePreview({ url, alt, urls, index = 0 }: ImagePreviewProps) {
   const group = urls && urls.length > 0 ? urls : [url];
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
+  const t = useT();
   return (
     <>
       {failed ? (
@@ -46,7 +48,7 @@ export function ImagePreview({ url, alt, urls, index = 0 }: ImagePreviewProps) {
       ) : (
         <img
           src={url}
-          alt={alt ?? "attached image"}
+          alt={alt ?? t("chat.attachedImage")}
           onClick={() => setLightboxIndex(index)}
           onError={() => setFailed(true)}
           className="max-w-[120px] max-h-[120px] rounded-md cursor-pointer hover:opacity-80 transition-opacity object-cover img-outline"
@@ -65,6 +67,7 @@ export function ImagePreview({ url, alt, urls, index = 0 }: ImagePreviewProps) {
 }
 
 function MessageCopyButton({ msg }: { msg: UIMessage }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -96,7 +99,7 @@ function MessageCopyButton({ msg }: { msg: UIMessage }) {
           <button
             onClick={handleCopy}
             className="opacity-0 group-hover:opacity-100 shrink-0 p-1 rounded-control-sm hover:bg-secondary text-text-muted transition-colors"
-            aria-label={copied ? "Copied" : "Copy message"}
+            aria-label={copied ? t("common.copied") : t("chat.copyMessage")}
           >
             <IconSwap
               active={copied}
@@ -106,7 +109,7 @@ function MessageCopyButton({ msg }: { msg: UIMessage }) {
           </button>
         }
       />
-      <TooltipContent>{copied ? "Copied" : "Copy message"}</TooltipContent>
+      <TooltipContent>{copied ? t("common.copied") : t("chat.copyMessage")}</TooltipContent>
     </Tooltip>
   );
 }
@@ -145,6 +148,7 @@ export function MessageList({
   addToolOutput,
   isVisible = true,
 }: MessageListProps) {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   const isAutoScrollRef = useRef(true);
 
@@ -190,7 +194,7 @@ export function MessageList({
     >
       {messages.length === 0 && (
         <PanelEmptyState icon={<SparkleIcon size={20} weight="light" />}>
-          Ask Sideform Agent anything
+          {t("chat.emptyState")}
         </PanelEmptyState>
       )}
 
@@ -224,13 +228,13 @@ export function MessageList({
                       <button
                         onClick={() => onRollback(msg.id)}
                         className="opacity-0 group-hover:opacity-100 shrink-0 p-1 rounded-control-sm hover:bg-secondary text-text-muted transition-colors"
-                        aria-label="Roll back to this message"
+                        aria-label={t("chat.rollback")}
                       >
                         <ArrowCounterClockwiseIcon size={14} />
                       </button>
                     }
                   />
-                  <TooltipContent>Roll back to this message</TooltipContent>
+                  <TooltipContent>{t("chat.rollback")}</TooltipContent>
                 </Tooltip>
               )}
               <div className="max-w-[85%] rounded-xl px-3 py-2 rounded-md bg-secondary text-secondary-foreground transition-colors">

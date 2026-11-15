@@ -11,7 +11,7 @@ import {
   useModelSupportsVision,
 } from "@/hooks/useImageSupport";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
-import { OFFLINE_SEND_TITLE } from "@/lib/apiBase";
+import { useT } from "@/i18n";
 import {
   downscaleImageDataUrl,
   MAX_ATTACHMENT_SIDE,
@@ -122,6 +122,7 @@ export function ChatInput({
   shouldFocus = false,
   renderFooter,
 }: ChatInputProps) {
+  const t = useT();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Persisted in chatStore keyed by sessionId so a half-composed message keeps
@@ -161,11 +162,11 @@ export function ChatInput({
     !awaitingAnswer &&
     (input.trim().length > 0 || attachedImages.length > 0);
   const imageDisabledReason = !canAttachImages
-    ? "Selected model can't read images"
+    ? t("chat.imageCantRead")
     : attachedImages.length >= MAX_IMAGES
-      ? `Max ${MAX_IMAGES} images`
+      ? t("chat.imageMax", { count: MAX_IMAGES })
       : null;
-  const imageHint = nativeVision ? undefined : "described as text";
+  const imageHint = nativeVision ? undefined : t("chat.imageAsText");
   const attachMenu = (
     <AttachMenu
       imageDisabledReason={imageDisabledReason}
@@ -333,13 +334,12 @@ export function ChatInput({
       {/* Image previews */}
       {attachedImages.length > 0 && !canAttachImages && (
         <div className="mb-2 text-xs text-amber-500">
-          The selected model can't read images — attachments won't be sent.
+          {t("chat.warnImagesNotSent")}
         </div>
       )}
       {attachedImages.length > 0 && canAttachImages && !nativeVision && (
         <div className="mb-2 text-xs text-text-muted">
-          This model doesn't see images directly — attachments are converted
-          to a text description before it reads them.
+          {t("chat.warnImagesConverted")}
         </div>
       )}
       {attachedImages.length > 0 && (
@@ -354,7 +354,7 @@ export function ChatInput({
                 alt={img.name}
                 className="w-full h-full object-cover"
               />
-              <RemoveChipButton label="Remove image" onRemove={() => removeImage(i)} />
+              <RemoveChipButton label={t("chat.removeImage")} onRemove={() => removeImage(i)} />
             </div>
           ))}
         </div>
@@ -380,7 +380,7 @@ export function ChatInput({
           }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          placeholder={awaitingAnswer ? "Answer the question above to continue…" : "Ask Sideform Light…"}
+          placeholder={awaitingAnswer ? t("chat.inputPlaceholderAnswer") : t("chat.inputPlaceholder")}
           rows={1}
           disabled={awaitingAnswer}
           className="flex-1 resize-none bg-transparent pl-2 text-sm text-text-primary placeholder:text-text-disabled outline-none min-h-[29px] max-h-[96px] py-1 leading-normal"
@@ -393,13 +393,13 @@ export function ChatInput({
                   type="button"
                   onClick={stop}
                   className="shrink-0 p-1.5 rounded-control hover:bg-secondary transition-colors"
-                  aria-label="Stop"
+                  aria-label={t("chat.stop")}
                 >
                   <StopIcon size={16} weight="light" />
                 </button>
               }
             />
-            <TooltipContent>Stop</TooltipContent>
+            <TooltipContent>{t("chat.stop")}</TooltipContent>
           </Tooltip>
         )}
         {/* While loading, Stop stays available, and a mouse/touch user also
@@ -414,7 +414,7 @@ export function ChatInput({
                   disabled={!canSubmit}
                   className="shrink-0 p-1.5 rounded-control hover:bg-secondary disabled:text-text-disabled transition-colors"
                   aria-label={
-                    isLoading ? "Send now" : isOnline ? "Send" : OFFLINE_SEND_TITLE
+                    isLoading ? t("chat.sendNow") : isOnline ? t("chat.send") : t("chat.offlineSendDisabled")
                   }
                 >
                   <PaperPlaneRightIcon size={16} weight="light" />
@@ -423,10 +423,10 @@ export function ChatInput({
             />
             <TooltipContent>
               {isLoading
-                ? "Stop the agent and send"
+                ? t("chat.stopAndSend")
                 : isOnline
-                  ? "Send"
-                  : OFFLINE_SEND_TITLE}
+                  ? t("chat.send")
+                  : t("chat.offlineSendDisabled")}
             </TooltipContent>
           </Tooltip>
         )}

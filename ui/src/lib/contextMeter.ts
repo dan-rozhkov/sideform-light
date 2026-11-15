@@ -1,3 +1,5 @@
+import { t } from "@/i18n";
+
 // Pure helpers for ContextMeter (components/chat/ContextMeter.tsx) — kept
 // separate from the component so the percent/format math is unit-testable
 // without rendering.
@@ -37,5 +39,8 @@ export function formatContextUsage(tokens: number, contextWindow: number): strin
 
 /** The full tooltip/aria-label text: "Context: 12% · 128K / 1M". */
 export function contextMeterLabel(tokens: number, contextWindow: number): string {
-  return `Context: ${contextFillPercent(tokens, contextWindow)}% · ${formatContextUsage(tokens, contextWindow)}`;
+  return t("chat.contextMeter", {
+    percent: contextFillPercent(tokens, contextWindow),
+    usage: formatContextUsage(tokens, contextWindow),
+  });
 }

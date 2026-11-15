@@ -31,6 +31,7 @@
     removeNever(host: string): Promise<ActionResult>;
     onChanged(cb: () => void): void;
     onTheme(cb: (payload: { theme: "light" | "dark" }) => void): void;
+    onI18n(cb: (payload: { lang: string; strings: Record<string, string> }) => void): void;
   }
   type Section = "all" | "never";
   type Mode = "view" | "add" | "edit";
@@ -42,7 +43,33 @@
   api.onTheme(({ theme }) => {
     document.documentElement.dataset.theme = theme;
   });
-  $("storage-note").textContent = api.isMac ? "Encrypted with a key in your macOS Keychain" : "Encrypted on this device";
+  const paintStorageNote = (): void => {
+    $("storage-note").textContent = api.isMac
+      ? penI18n.tr("passwords.storageNoteMac", "Encrypted with a key in your macOS Keychain")
+      : penI18n.tr("passwords.storageNote", "Encrypted on this device");
+  };
+  paintStorageNote();
+
+  /**
+   * Text of the main process's own English errors (passwordsApi.ts), in the interface language. An unknown message (an
+   * Error text from the store) is shown as it is.
+   */
+  const MAIN_ERROR_KEYS: Record<string, string> = {
+    "Enter a valid site address.": "passwords.err.siteInvalid",
+    "Encryption is not available on this system.": "passwords.err.noEncryption",
+    "The username or label is not valid.": "passwords.err.invalidName",
+    "That login no longer exists.": "passwords.err.gone",
+    "That site is not on the list.": "passwords.err.siteNotListed",
+    "Malformed request.": "passwords.err.malformed",
+    "A login for that username already exists on this site.": "passwords.err.exists",
+    "Enter a username.": "passwords.enterUsername",
+    "Enter a password.": "passwords.enterPassword",
+    "Could not save the login.": "passwords.saveFailed",
+  };
+  const mainError = (text: string): string => {
+    const key = Object.prototype.hasOwnProperty.call(MAIN_ERROR_KEYS, text) ? MAIN_ERROR_KEYS[text] : undefined;
+    return key === undefined ? text : penI18n.tr(key, text);
+  };
 
   const neverLink = $<HTMLButtonElement>("never-link");
   const neverHead = $("never-head");
@@ -134,7 +161,7 @@
   function renderChrome(): void {
     const n = data.never.length;
     neverLink.hidden = section !== "all" || n === 0;
-    neverLink.textContent = n === 1 ? "1 site never asks to save" : n + " sites never ask to save";
+    neverLink.textContent = penI18n.tn("passwords.neverLink", n, "{n} site never asks to save", "{n} sites never ask to save");
     neverHead.hidden = section !== "never";
     unavailableEl.hidden = data.encryptionAvailable;
   }
@@ -159,10 +186,10 @@
     const row = el("div", "row row-static");
     row.setAttribute("role", "option");
     row.setAttribute("aria-selected", "false");
-    const remove = button("Remove", "btn btn-ghost btn-sm", () => {
-      void runAndRefresh(api.removeNever(host), "Could not remove the site.");
+    const remove = button(penI18n.tr("passwords.remove", "Remove"), "btn btn-ghost btn-sm", () => {
+      void runAndRefresh(api.removeNever(host), "passwords.removeSiteFailed", "Could not remove the site.");
     });
-    remove.setAttribute("aria-label", "Remove " + host + " from the never list");
+    remove.setAttribute("aria-label", penI18n.tr("passwords.removeNeverAria", "Remove {host} from the never list", { host }));
     row.append(icon("Globe"), el("span", "row-title", host), remove);
     return row;
   }
@@ -172,20 +199,23 @@
     const suffixes = isAll ? helpers.rowSuffixes(data.entries) : null;
     const rows = suffixes ? visibleEntries().map((e) => entryRow(e, suffixes.get(e.id) || "")) : visibleNever().map(neverRow);
     listEl.replaceChildren(...rows);
-    listEl.setAttribute("aria-label", isAll ? "Saved logins" : "Never saved sites");
+    listEl.setAttribute(
+      "aria-label",
+      isAll ? penI18n.tr("passwords.savedAria", "Saved logins") : penI18n.tr("passwords.neverAria", "Never saved sites"),
+    );
     const total = isAll ? data.entries.length : data.never.length;
     listEl.hidden = rows.length === 0;
     listEmptyEl.hidden = rows.length > 0;
     if (rows.length === 0) {
       if (total > 0) {
-        listEmptyTitle.textContent = "No results";
-        listEmptyText.textContent = "Nothing matches “" + query.trim() + "”.";
+        listEmptyTitle.textContent = penI18n.tr("passwords.noResults", "No results");
+        listEmptyText.textContent = penI18n.tr("passwords.noMatch", "Nothing matches “{query}”.", { query: query.trim() });
       } else if (isAll) {
-        listEmptyTitle.textContent = "No saved logins yet";
-        listEmptyText.textContent = "Save one when the browser asks, or add one with the + button.";
+        listEmptyTitle.textContent = penI18n.tr("passwords.emptyTitle", "No saved logins yet");
+        listEmptyText.textContent = penI18n.tr("passwords.emptyText", "Save one when the browser asks, or add one with the + button.");
       } else {
-        listEmptyTitle.textContent = "No sites on the list";
-        listEmptyText.textContent = "Sites you choose “Never for This Site” on appear here.";
+        listEmptyTitle.textContent = penI18n.tr("passwords.neverEmptyTitle", "No sites on the list");
+        listEmptyText.textContent = penI18n.tr("passwords.neverEmptyText", "Sites you choose “Never for This Site” on appear here.");
       }
     }
   }
@@ -207,15 +237,15 @@
     box.appendChild(glyph);
     if (section === "never") {
       box.append(
-        el("p", "empty-title", "Never saved"),
-        el("p", "empty-text", "No prompt to save a password appears on these sites."),
+        el("p", "empty-title", penI18n.tr("passwords.neverDetailTitle", "Never saved")),
+        el("p", "empty-text", penI18n.tr("passwords.neverDetailText", "No prompt to save a password appears on these sites.")),
       );
     } else if (data.entries.length === 0) {
       box.append(
-        el("p", "empty-title", "Your logins live here"),
-        el("p", "empty-text", "The agent can sign in for you without ever seeing a password."),
+        el("p", "empty-title", penI18n.tr("passwords.heroTitle", "Your logins live here")),
+        el("p", "empty-text", penI18n.tr("passwords.heroText", "The agent can sign in for you without ever seeing a password.")),
       );
-      box.appendChild(button("Add login", "btn btn-accent", startAdd, "Plus"));
+      box.appendChild(button(penI18n.tr("passwords.add", "Add login"), "btn btn-accent", startAdd, "Plus"));
     }
     detailEl.replaceChildren(box);
   }
@@ -225,14 +255,14 @@
     const actions = el("div", "actions");
     if (confirmDelete) {
       actions.append(
-        el("span", "confirm-text", "Delete this login?"),
-        button("Cancel", "btn btn-outline", () => {
+        el("span", "confirm-text", penI18n.tr("passwords.deleteConfirm", "Delete this login?")),
+        button(penI18n.tr("passwords.cancel", "Cancel"), "btn btn-outline", () => {
           confirmDelete = false;
           renderDetail();
         }),
       );
-      const del = button("Delete", "btn btn-destructive", () => {
-        void runAndRefresh(api.remove(entry.id), "Could not delete the login.", () => {
+      const del = button(penI18n.tr("passwords.delete", "Delete"), "btn btn-destructive", () => {
+        void runAndRefresh(api.remove(entry.id), "passwords.deleteFailed", "Could not delete the login.", () => {
           confirmDelete = false;
         });
       }, "Trash");
@@ -240,8 +270,8 @@
       requestAnimationFrame(() => del.focus());
     } else {
       actions.append(
-        button("Edit", "btn btn-outline", () => startEdit(entry), "PencilSimple"),
-        button("Delete", "btn btn-outline", () => {
+        button(penI18n.tr("passwords.edit", "Edit"), "btn btn-outline", () => startEdit(entry), "PencilSimple"),
+        button(penI18n.tr("passwords.delete", "Delete"), "btn btn-outline", () => {
           confirmDelete = true;
           renderDetail();
         }, "Trash"),
@@ -257,10 +287,10 @@
     const body = el("div", "detail-body");
     body.append(
       hero,
-      field("Username", entry.username),
-      field("Website", entry.origin),
-      ...(entry.label ? [field("Label", entry.label)] : []),
-      field("Last used", helpers.formatLastUsed(entry.lastUsedAt, Date.now())),
+      field(penI18n.tr("passwords.fieldUsername", "Username"), entry.username),
+      field(penI18n.tr("passwords.fieldWebsite", "Website"), entry.origin),
+      ...(entry.label ? [field(penI18n.tr("passwords.fieldLabel", "Label"), entry.label)] : []),
+      field(penI18n.tr("passwords.fieldLastUsed", "Last used"), helpers.formatLastUsed(entry.lastUsedAt, Date.now(), penI18n)),
     );
     detailEl.replaceChildren(body);
   }
@@ -292,23 +322,27 @@
     const form = el("form", "detail-body form");
     form.autocomplete = "off";
     form.noValidate = true;
-    const site = formField("Website", {
+    const site = formField(penI18n.tr("passwords.fieldWebsite", "Website"), {
       type: "text",
       value: existing ? existing.origin : "",
-      placeholder: "example.com or http://localhost:3000",
+      placeholder: penI18n.tr("passwords.sitePlaceholder", "example.com or http://localhost:3000"),
       disabled: !adding,
     });
-    const username = formField("Username", { type: "text", value: existing ? existing.username : "" });
-    const password = formField("Password", {
+    const username = formField(penI18n.tr("passwords.fieldUsername", "Username"), { type: "text", value: existing ? existing.username : "" });
+    const password = formField(penI18n.tr("passwords.fieldPassword", "Password"), {
       type: "password",
-      placeholder: adding ? "" : "Leave blank to keep the current password",
+      placeholder: adding ? "" : penI18n.tr("passwords.keepPasswordPlaceholder", "Leave blank to keep the current password"),
       autocomplete: "new-password",
     });
-    const label = formField("Label (optional)", { type: "text", value: existing ? existing.label : "", placeholder: "admin, test user" });
-    username.input.setAttribute("aria-label", "Username");
-    site.input.setAttribute("aria-label", "Website");
-    password.input.setAttribute("aria-label", "Password");
-    label.input.setAttribute("aria-label", "Label");
+    const label = formField(penI18n.tr("passwords.fieldLabelOptional", "Label (optional)"), {
+      type: "text",
+      value: existing ? existing.label : "",
+      placeholder: penI18n.tr("passwords.labelPlaceholder", "admin, test user"),
+    });
+    username.input.setAttribute("aria-label", penI18n.tr("passwords.fieldUsername", "Username"));
+    site.input.setAttribute("aria-label", penI18n.tr("passwords.fieldWebsite", "Website"));
+    password.input.setAttribute("aria-label", penI18n.tr("passwords.fieldPassword", "Password"));
+    label.input.setAttribute("aria-label", penI18n.tr("passwords.fieldLabel", "Label"));
 
     const warning = el("p", "form-warning");
     warning.setAttribute("role", "alert");
@@ -325,13 +359,13 @@
 
     const save = el("button", "btn btn-accent");
     save.type = "submit";
-    save.textContent = "Save";
+    save.textContent = penI18n.tr("passwords.save", "Save");
     let busy = false;
     const clearReplace = (): void => {
       if (!confirmReplace) return;
       confirmReplace = false;
       warning.hidden = true;
-      save.textContent = "Save";
+      save.textContent = penI18n.tr("passwords.save", "Save");
     };
     site.input.addEventListener("input", clearReplace);
     username.input.addEventListener("input", clearReplace);
@@ -347,20 +381,20 @@
       adding
         ? site.input.value !== "" || username.input.value !== "" || password.input.value !== "" || label.input.value !== ""
         : username.input.value !== existing.username || label.input.value !== existing.label || password.input.value !== "";
-    const cancel = button("Cancel", "btn btn-outline", cancelForm);
+    const cancel = button(penI18n.tr("passwords.cancel", "Cancel"), "btn btn-outline", cancelForm);
     // Save and Cancel stay under the fields, next to the warning and error they cause, and last in tab order.
     const row = el("div", "form-actions");
     row.append(cancel, save);
     const hero = el("div", "hero");
-    hero.appendChild(el("h1", "hero-title", adding ? "New login" : "Edit login"));
+    hero.appendChild(el("h1", "hero-title", adding ? penI18n.tr("passwords.newLogin", "New login") : penI18n.tr("passwords.editLogin", "Edit login")));
 
     form.append(hero, site.wrap, username.wrap, password.wrap, label.wrap, warning, error, row);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       if (save.disabled) return;
-      if (adding && site.input.value.trim() === "") return showError("Enter a website.");
-      if (username.input.value.trim() === "") return showError("Enter a username.");
-      if (adding && password.input.value === "") return showError("Enter a password.");
+      if (adding && site.input.value.trim() === "") return showError(penI18n.tr("passwords.enterWebsite", "Enter a website."));
+      if (username.input.value.trim() === "") return showError(penI18n.tr("passwords.enterUsername", "Enter a username."));
+      if (adding && password.input.value === "") return showError(penI18n.tr("passwords.enterPassword", "Enter a password."));
       showError("");
       busy = true;
       updateSaveState();
@@ -390,16 +424,19 @@
             // Same site + username already saved: ask before replacing its password.
             const found = result.id === undefined ? undefined : data.entries.find((e) => e.id === result.id);
             const where = found ? helpers.displayHost(found.origin) : site.input.value.trim();
-            warning.textContent = "A login for " + username.input.value.trim() + " on " + where + " exists. Saving replaces its password.";
+            warning.textContent = penI18n.tr("passwords.replaceWarning", "A login for {username} on {site} exists. Saving replaces its password.", {
+              username: username.input.value.trim(),
+              site: where,
+            });
             warning.hidden = false;
             confirmReplace = true;
-            save.textContent = "Replace";
+            save.textContent = penI18n.tr("passwords.replace", "Replace");
             busy = false;
             updateSaveState();
             return;
           }
           if (!result.ok) {
-            showError(result.error);
+            showError(mainError(result.error));
             busy = false;
             updateSaveState();
             return;
@@ -420,7 +457,7 @@
         })
         .catch(() => {
           if (activeFormToken !== token) return;
-          showError("Could not save the login.");
+          showError(penI18n.tr("passwords.saveFailed", "Could not save the login."));
           busy = false;
           updateSaveState();
         });
@@ -501,11 +538,11 @@
     detailEl.querySelector(".discard-bar")?.remove();
     const bar = el("div", "discard-bar");
     bar.setAttribute("role", "alertdialog");
-    bar.setAttribute("aria-label", "Discard changes?");
-    const keep = button("Keep editing", "btn btn-outline", keepEditing);
+    bar.setAttribute("aria-label", penI18n.tr("passwords.discardQuestion", "Discard changes?"));
+    const keep = button(penI18n.tr("passwords.keepEditing", "Keep editing"), "btn btn-outline", keepEditing);
     bar.append(
-      el("span", "confirm-text", "Discard changes?"),
-      button("Discard", "btn btn-destructive", () => {
+      el("span", "confirm-text", penI18n.tr("passwords.discardQuestion", "Discard changes?")),
+      button(penI18n.tr("passwords.discard", "Discard"), "btn btn-destructive", () => {
         const go = pendingNav;
         pendingNav = null;
         formDirty = null;
@@ -523,13 +560,13 @@
     statusEl.hidden = text === "";
   }
 
-  /** Runs a remove call, shows a fixed error on failure (also on an IPC rejection), refreshes the list. */
-  async function runAndRefresh(request: Promise<ActionResult>, failText: string, onOk?: () => void): Promise<void> {
+  /** Runs a remove call, shows a fixed error on failure (also on an IPC rejection), refreshes the list. `failKey` is the dictionary key of `failText`. */
+  async function runAndRefresh(request: Promise<ActionResult>, failKey: string, failText: string, onOk?: () => void): Promise<void> {
     try {
       const result = await request;
       if (!result.ok) {
         confirmDelete = false;
-        showStatus(result.error);
+        showStatus(mainError(result.error));
         await refresh().catch(() => undefined);
         return;
       }
@@ -538,7 +575,7 @@
       await refresh();
     } catch {
       confirmDelete = false;
-      showStatus(failText);
+      showStatus(penI18n.tr(failKey, failText));
       renderDetail();
     }
   }
@@ -642,6 +679,17 @@
   });
 
   api.onChanged(() => void reloadList().catch(() => undefined));
+
+  // The page's strings (`shell:i18n`, on load and on every language change): the markup carries `data-i18n` keys; the
+  // rendered list and chrome are painted again. An open Add/Edit form (and its discard bar) keeps what the person is
+  // typing: it is not rebuilt, so it stays in the old language until it closes.
+  api.onI18n((payload) => penI18n.set(payload));
+  penI18n.onChange(() => {
+    paintStorageNote();
+    renderChrome();
+    renderList();
+    if (mode === "view") renderDetail();
+  });
   renderAll();
   void refresh();
 })();

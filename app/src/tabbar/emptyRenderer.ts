@@ -6,8 +6,11 @@
     penEmpty: {
       newBrowserTab(): void;
       onState(cb: (state: { theme: "light" | "dark"; sessionTabs: number }) => void): void;
+      onI18n(cb: (payload: { lang: string; strings: Record<string, string> }) => void): void;
     };
   }).penEmpty;
+  // The page's strings (`shell:i18n`, on load and on every language change): the markup carries `data-i18n` keys.
+  bridge.onI18n((payload) => penI18n.set(payload));
   document.getElementById("new-browser")!.addEventListener("click", () => bridge.newBrowserTab());
   const note = document.getElementById("sessions-note")!;
   // Fade-in + 4px rise whenever the placeholder appears: first load, and each time the view is

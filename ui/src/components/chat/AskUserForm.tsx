@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { useT } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SelectWithOptions } from "@/components/ui/select";
@@ -22,6 +23,7 @@ interface QuestionFieldProps {
 }
 
 function QuestionField({ q, value, note, onValue, onNote }: QuestionFieldProps) {
+  const t = useT();
   const allowOther = q.allowOther ?? q.type !== "text";
   const arr = Array.isArray(value) ? value : [];
 
@@ -92,7 +94,7 @@ function QuestionField({ q, value, note, onValue, onNote }: QuestionFieldProps) 
       {allowOther && q.type !== "text" && (
         <Input
           value={note}
-          placeholder={q.placeholder ?? "Other…"}
+          placeholder={q.placeholder ?? t("tools.ask.other")}
           onChange={(e) => onNote(e.target.value)}
         />
       )}
@@ -111,6 +113,7 @@ export function AskUserForm({
   disabled?: boolean;
   onSubmit: (output: string) => void;
 }) {
+  const t = useT();
   const { questions } = input;
   const [answers, setAnswers] = useState(() => initAnswerState(questions ?? []));
   const [submitted, setSubmitted] = useState(state === "output");
@@ -134,7 +137,7 @@ export function AskUserForm({
     const rows = summarizeAnswers(input.questions, answers);
     return (
       <div className="mt-3 w-full space-y-3 rounded-lg border border-border-default bg-surface-panel/60 p-3 text-xs">
-        <div className="font-medium text-text-primary">Questions answered</div>
+        <div className="font-medium text-text-primary">{t("tools.ask.answered")}</div>
         {rows.map((row, i) => (
           <div key={i} className="space-y-1">
             <div className="font-normal text-text-muted">{row.label}</div>
@@ -163,7 +166,7 @@ export function AskUserForm({
         />
       ))}
       <Button size="sm" variant="accent" onClick={handleSubmit} disabled={!canSubmit}>
-        Continue
+        {t("tools.ask.continue")}
       </Button>
     </div>
   );

@@ -39,3 +39,23 @@ describe("formatRelativeTime", () => {
     expect(formatRelativeTime(at(2025, 12, 31, 9), NOW)).toBe("31 Dec 2025");
   });
 });
+
+describe("formatRelativeTime in another language", () => {
+  const ru = {
+    lang: "ru",
+    tr: (key: string, fallback: string) =>
+      ({ "time.justNow": "только что", "time.minutesAgo": "{n} мин назад", "time.hoursAgo": "{n} ч назад", "time.yesterday": "вчера" })[key] ?? fallback,
+  };
+  const withI18n = formatRelativeTime as (then: number, now: number, i18n?: typeof ru) => string;
+  it("uses the dictionary words and the locale's date", () => {
+    expect(withI18n(NOW - 10_000, NOW, ru)).toBe("только что");
+    expect(withI18n(NOW - 5 * 60_000, NOW, ru)).toBe("5 мин назад");
+    expect(withI18n(NOW - 3 * 3_600_000, NOW, ru)).toBe("3 ч назад");
+    expect(withI18n(at(2026, 10, 23, 15, 0), NOW, ru)).toBe("вчера");
+    expect(withI18n(at(2026, 10, 12, 9), NOW, ru)).toMatch(/^12 окт/);
+    expect(withI18n(at(2025, 12, 31, 9), NOW, ru)).toMatch(/^31 дек.* 2025$/);
+  });
+  it("English language keeps the fixed English months", () => {
+    expect(withI18n(at(2026, 9, 12, 9), NOW, { ...ru, lang: "en", tr: (_k: string, f: string) => f })).toBe("12 Sep");
+  });
+});

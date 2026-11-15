@@ -11,6 +11,10 @@ interface EmptyState {
 
 const api = {
   newBrowserTab: () => ipcRenderer.send("tabbar:new-browser"),
+  /** The page's dictionary (`shell:i18n`): the active language and the strings this page needs. Sent on load and on every change. */
+  onI18n: (cb: (payload: { lang: string; strings: Record<string, string> }) => void): void => {
+    ipcRenderer.on("shell:i18n", (_e: IpcRendererEvent, payload: { lang: string; strings: Record<string, string> }) => cb(payload));
+  },
   onState: (cb: (state: EmptyState) => void) => {
     ipcRenderer.on("tabbar:theme", (_e: IpcRendererEvent, state: EmptyState) => cb(state));
   },

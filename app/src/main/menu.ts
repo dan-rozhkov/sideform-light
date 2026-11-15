@@ -2,6 +2,7 @@ import { agentPanelMenuLabel } from "./agentPanelSettings";
 import type { MenuItemConstructorOptions } from "electron";
 import { defaultCursorSettings } from "./cursorSettings";
 import { revealMenuLabel } from "./revealMenuLabel";
+import { t, type Language } from "./i18n";
 
 /** Id of File > Reveal: window.ts toggles its `enabled` in place when the active tab changes (no menu rebuild). */
 export const REVEAL_MENU_ITEM_ID = "reveal-active-tab";
@@ -49,11 +50,12 @@ export interface RevealMenuState {
 export function buildTabContextMenuTemplate(
   reveal: RevealMenuState,
   actions: { reveal(): void; closeTab(): void },
+  lang: Language = "en",
 ): MenuItemConstructorOptions[] {
   return [
     { label: reveal.label, enabled: reveal.enabled, click: () => actions.reveal() },
     { type: "separator" },
-    { label: "Close Tab", click: () => actions.closeTab() },
+    { label: t(lang, "menu.closeTab"), click: () => actions.closeTab() },
   ];
 }
 
@@ -65,69 +67,72 @@ export function buildTabContextMenuTemplate(
  */
 export function buildMenuTemplate(
   actions: MenuActions,
-  opts: { isMac: boolean; appName?: string; agentPanel?: { collapsed: boolean }; reveal?: RevealMenuState },
+  opts: { isMac: boolean; appName?: string; agentPanel?: { collapsed: boolean }; reveal?: RevealMenuState; lang?: Language },
   cursor: CursorMenuState = { ...defaultCursorSettings(), enabledLocked: false },
 ): MenuItemConstructorOptions[] {
+  const lang = opts.lang ?? "en";
+  const L = (key: Parameters<typeof t>[1], params?: Record<string, string | number>): string => t(lang, key, params);
+  const appName = opts.appName ?? "App";
   const settingsItem: MenuItemConstructorOptions = {
-    label: "Settings…",
+    label: L("menu.settings"),
     accelerator: "CmdOrCtrl+,",
     click: () => actions.openSettings(),
   };
   const fileMenu: MenuItemConstructorOptions = {
-    label: "File",
+    label: L("menu.file"),
     submenu: [
-      { label: "New Browser Tab", accelerator: "CmdOrCtrl+T", click: () => actions.newBrowserTab() },
-      { label: "Passwords…", click: () => actions.openPasswords() },
+      { label: L("menu.newBrowserTab"), accelerator: "CmdOrCtrl+T", click: () => actions.newBrowserTab() },
+      { label: L("menu.passwords"), click: () => actions.openPasswords() },
       // Cmd+Y on macOS; on Windows/Linux Ctrl+Y is the Edit menu's Redo, so History uses Chrome's Ctrl+H there.
-      { label: "History…", accelerator: opts.isMac ? "Cmd+Y" : "Ctrl+H", click: () => actions.openHistory() },
+      { label: L("menu.history"), accelerator: opts.isMac ? "Cmd+Y" : "Ctrl+H", click: () => actions.openHistory() },
       // On macOS Settings… lives in the app menu (below), as in every mac app.
       ...(opts.isMac ? [] : [settingsItem]),
       // No accelerator. Without `opts.reveal` the item shows the platform label, disabled.
       {
         id: REVEAL_MENU_ITEM_ID,
-        label: opts.reveal?.label ?? revealMenuLabel(opts.isMac ? "darwin" : process.platform),
+        label: opts.reveal?.label ?? revealMenuLabel(opts.isMac ? "darwin" : process.platform, lang),
         enabled: opts.reveal?.enabled ?? false,
         click: () => actions.revealActiveTab(),
       },
       { type: "separator" },
-      { label: "Close Tab", accelerator: "CmdOrCtrl+W", click: () => actions.closeTab() },
-      { label: "Close Window", accelerator: "CmdOrCtrl+Shift+W", click: () => actions.closeWindow() },
+      { label: L("menu.closeTab"), accelerator: "CmdOrCtrl+W", click: () => actions.closeTab() },
+      { label: L("menu.closeWindow"), accelerator: "CmdOrCtrl+Shift+W", click: () => actions.closeWindow() },
     ],
   };
 
   const editMenu: MenuItemConstructorOptions = {
-    label: "Edit",
+    label: L("menu.edit"),
     submenu: [
-      { role: "undo" },
-      { role: "redo" },
+      { role: "undo", label: L("menu.undo") },
+      { role: "redo", label: L("menu.redo") },
       { type: "separator" },
-      { role: "cut" },
-      { role: "copy" },
-      { role: "paste" },
-      { role: "selectAll" },
+      { role: "cut", label: L("menu.cut") },
+      { role: "copy", label: L("menu.copy") },
+      { role: "paste", label: L("menu.paste") },
+      { role: "selectAll", label: L("menu.selectAll") },
     ],
   };
 
   const viewMenu: MenuItemConstructorOptions = {
-    label: "View",
+    label: L("menu.view"),
     submenu: [
-      { role: "reload" },
+      { role: "reload", label: L("menu.reload") },
       { type: "separator" },
-      { role: "resetZoom" },
-      { role: "zoomIn" },
-      { role: "zoomOut" },
+      { role: "resetZoom", label: L("menu.resetZoom") },
+      { role: "zoomIn", label: L("menu.zoomIn") },
+      { role: "zoomOut", label: L("menu.zoomOut") },
       { type: "separator" },
       { role: "togglefullscreen" },
-      { role: "toggleDevTools" },
+      { role: "toggleDevTools", label: L("menu.toggleDevTools") },
       { type: "separator" },
             ...(opts.agentPanel
         ? [
-            { label: agentPanelMenuLabel(opts.agentPanel.collapsed), accelerator: "CmdOrCtrl+Alt+B", click: () => actions.toggleAgentPanel() },
+            { label: agentPanelMenuLabel(opts.agentPanel.collapsed, lang), accelerator: "CmdOrCtrl+Alt+B", click: () => actions.toggleAgentPanel() },
             { type: "separator" } as MenuItemConstructorOptions,
           ]
         : []),
       {
-        label: "Show Agent Cursor",
+        label: L("menu.showAgentCursor"),
         type: "checkbox",
         checked: cursor.enabled,
         enabled: !cursor.enabledLocked,
@@ -138,13 +143,13 @@ export function buildMenuTemplate(
   };
 
   const windowMenu: MenuItemConstructorOptions = {
-    label: "Window",
+    label: L("menu.window"),
     submenu: [
-      { role: "minimize" },
-      { role: "zoom" },
+      { role: "minimize", label: L("menu.minimize") },
+      { role: "zoom", label: L("menu.zoom") },
       { type: "separator" },
-      { label: "Next Tab", accelerator: "Ctrl+Tab", click: () => actions.nextTab() },
-      { label: "Previous Tab", accelerator: "Ctrl+Shift+Tab", click: () => actions.prevTab() },
+      { label: L("menu.nextTab"), accelerator: "Ctrl+Tab", click: () => actions.nextTab() },
+      { label: L("menu.previousTab"), accelerator: "Ctrl+Shift+Tab", click: () => actions.prevTab() },
     ],
   };
 
@@ -153,19 +158,19 @@ export function buildMenuTemplate(
   // title is always the app name on macOS; `label` only matters for tests).
   if (opts.isMac) {
     template.unshift({
-      label: opts.appName ?? "App",
+      label: appName,
       submenu: [
-        { role: "about" },
+        { role: "about", label: L("menu.about", { appName }) },
         { type: "separator" },
         settingsItem,
         { type: "separator" },
         { role: "services" },
         { type: "separator" },
-        { role: "hide" },
-        { role: "hideOthers" },
-        { role: "unhide" },
+        { role: "hide", label: L("menu.hide", { appName }) },
+        { role: "hideOthers", label: L("menu.hideOthers") },
+        { role: "unhide", label: L("menu.unhide") },
         { type: "separator" },
-        { role: "quit" },
+        { role: "quit", label: L("menu.quit", { appName }) },
       ],
     });
   }

@@ -1,5 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+// The interface languages (src/main/i18n/languages.ts; a sandboxed preload cannot import it). Main validates again.
+const SUPPORTED_LANGUAGES: string[] = ["en", "ru", "de", "it", "fr"];
+
 // The agent panel's bridge. The panel's browser tools run here: its OWN browser bridge over
 // `browser:command` (main accepts the panel's webContents as the only browser owner), chat storage on disk,
 // trace storage and the Settings opener. No MCP, no menu, nothing else.
@@ -172,8 +175,19 @@ if (window === window.top) {
     lastTheme = theme;
     ipcRenderer.send("panel:theme", theme);
   };
+  // Language report (channel `panel:language`): the ui sets `<html lang>` to its active language code (the ui is the
+  // source of truth). Same shape as the theme report; only a supported code is sent, and only when it changes.
+  let lastLanguage: string | null = null;
+  const reportLanguage = () => {
+    const lang = document.documentElement.getAttribute("lang") ?? "";
+    if (!SUPPORTED_LANGUAGES.includes(lang) || lang === lastLanguage) return;
+    lastLanguage = lang;
+    ipcRenderer.send("panel:language", lang);
+  };
   document.addEventListener("DOMContentLoaded", () => {
     report();
+    reportLanguage();
     new MutationObserver(report).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    new MutationObserver(reportLanguage).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
   });
 }

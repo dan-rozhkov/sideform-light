@@ -1,6 +1,8 @@
 // Frequency presets of the Schedules editor <-> five-field cron strings (local time), and the human
 // description of a cron. Pure. Anything the presets cannot express stays "custom" (the raw cron).
 
+import { currentLocale, t, type MessageKey } from "@/i18n";
+
 export type Frequency =
   | { kind: "hourly"; minute: number }
   | { kind: "daily"; hour: number; minute: number }
@@ -10,18 +12,26 @@ export type Frequency =
 
 export type FrequencyKind = Frequency["kind"];
 
-/** Index = cron day-of-week (0 = Sunday). */
-export const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+/** Name of a cron day-of-week (0 = Sunday) in the interface language, as it reads inside a sentence. */
+export function dayName(day: number): string {
+  // 2024-01-07 was a Sunday.
+  return new Intl.DateTimeFormat(currentLocale(), { weekday: "long" }).format(new Date(2024, 0, 7 + (day % 7)));
+}
 
-export const FREQUENCY_LABELS: Record<FrequencyKind, string> = {
-  hourly: "Every hour",
-  daily: "Every day",
-  weekdays: "Weekdays",
-  weekly: "Weekly",
-  custom: "Custom cron",
+/** `dayName` with a capital first letter, for a list or a button. */
+export function dayLabel(day: number): string {
+  const name = dayName(day);
+  return name.charAt(0).toLocaleUpperCase(currentLocale()) + name.slice(1);
+}
+
+/** Message keys (translate at render, never at module load). */
+export const FREQUENCY_LABEL_KEYS: Record<FrequencyKind, MessageKey> = {
+  hourly: "schedules.frequency.hourly",
+  daily: "schedules.frequency.daily",
+  weekdays: "schedules.frequency.weekdays",
+  weekly: "schedules.frequency.weekly",
+  custom: "schedules.frequency.custom",
 };
-
-export const CUSTOM_CRON_HINT = "Five fields: minute hour day-of-month month day-of-week, local time. Example: 30 8 * * 1-5 is 08:30 on weekdays.";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -80,18 +90,18 @@ export function fromCron(cron: string): Frequency {
   return { kind: "weekly", day: d === 7 ? 0 : d, hour: h, minute };
 }
 
-/** "Every weekday at 09:00", or the raw cron when no preset fits. */
+/** "Every weekday at 09:00" in the interface language, or the raw cron when no preset fits. */
 export function describeCron(cron: string): string {
   const f = fromCron(cron);
   switch (f.kind) {
     case "hourly":
-      return `Every hour at :${pad(f.minute)}`;
+      return t("schedules.describe.hourly", { minute: pad(f.minute) });
     case "daily":
-      return `Every day at ${formatTime(f.hour, f.minute)}`;
+      return t("schedules.describe.daily", { time: formatTime(f.hour, f.minute) });
     case "weekdays":
-      return `Every weekday at ${formatTime(f.hour, f.minute)}`;
+      return t("schedules.describe.weekdays", { time: formatTime(f.hour, f.minute) });
     case "weekly":
-      return `Every ${DAY_NAMES[f.day]} at ${formatTime(f.hour, f.minute)}`;
+      return t("schedules.describe.weekly", { day: dayName(f.day), time: formatTime(f.hour, f.minute) });
     case "custom":
       return cron.trim();
   }
@@ -118,12 +128,12 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
-/** "in 5m", "in 2h", "in 3d" ("in under a minute" below that). A past time reads "now". */
+/** "in 5m", "in 2h", "in 3d" ("in under a minute" below that), in the interface language. A past time reads "now". */
 export function formatUntil(timestamp: number, now: number = Date.now()): string {
   const delta = timestamp - now;
-  if (delta <= 0) return "now";
-  if (delta < MINUTE_MS) return "in under a minute";
-  if (delta < HOUR_MS) return `in ${Math.floor(delta / MINUTE_MS)}m`;
-  if (delta < DAY_MS) return `in ${Math.floor(delta / HOUR_MS)}h`;
-  return `in ${Math.floor(delta / DAY_MS)}d`;
+  if (delta <= 0) return t("schedules.until.now");
+  if (delta < MINUTE_MS) return t("schedules.until.underMinute");
+  if (delta < HOUR_MS) return t("schedules.until.minutes", { count: Math.floor(delta / MINUTE_MS) });
+  if (delta < DAY_MS) return t("schedules.until.hours", { count: Math.floor(delta / HOUR_MS) });
+  return t("schedules.until.days", { count: Math.floor(delta / DAY_MS) });
 }

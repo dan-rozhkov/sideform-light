@@ -2,6 +2,7 @@ import { memo, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { keepInView } from "./keepInView";
 import { EmptyState } from "@/components/ui/empty-state";
+import { useT } from "@/i18n";
 import { RowButton, SectionHeading, StatusDot, ToneIcon } from "./parts";
 import { formatDuration, type StepRow } from "./traceModel";
 
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export const StepList = memo(function StepList({ rows, selected, flagged, withDom, onSelect }: Props) {
+  const t = useT();
   const listRef = useRef<HTMLOListElement>(null);
   useEffect(() => {
     // Keyboard navigation moves the selection; keep the row in view.
@@ -23,12 +25,12 @@ export const StepList = memo(function StepList({ rows, selected, flagged, withDo
   }, [selected]);
 
   return (
-    <section aria-label="Steps" className="flex min-h-0 flex-1 flex-col bg-surface-panel">
+    <section aria-label={t("trace.steps.title")} className="flex min-h-0 flex-1 flex-col bg-surface-panel">
       <SectionHeading as="h2" count={rows.length} className="flex h-10 shrink-0 items-center justify-between px-4">
-        Steps
+        {t("trace.steps.title")}
       </SectionHeading>
       {rows.length === 0 ? (
-        <EmptyState size="panel" title="No steps were recorded" description="The run ended before the agent took a step." className="mx-auto px-4 py-6" />
+        <EmptyState size="panel" title={t("trace.steps.emptyTitle")} description={t("trace.steps.emptyDescription")} className="mx-auto px-4 py-6" />
       ) : (
         <ol ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
           {rows.map(({ step, label, summary, durationMs, ratio }) => {
@@ -44,14 +46,14 @@ export const StepList = memo(function StepList({ rows, selected, flagged, withDo
                   <span className="min-w-0">
                     <span data-testid="step-title" className="flex h-[18px] items-center gap-1.5">
                       <span className="truncate text-[13px] leading-[18px] font-medium text-text-primary">{label}</span>
-                      {!step.ok && <ToneIcon tone="danger" label="Failed" className="size-3.5 shrink-0" />}
+                      {!step.ok && <ToneIcon tone="danger" label={t("trace.steps.failed")} className="size-3.5 shrink-0" />}
                       {withDom?.has(step.index) && (
-                        <span title="This step has a DOM snapshot" className="shrink-0 rounded border border-border-default px-1 text-[10px] leading-[14px] font-medium text-text-muted">
+                        <span title={t("trace.steps.domTitle")} className="shrink-0 rounded border border-border-default px-1 text-[10px] leading-[14px] font-medium text-text-muted">
                           DOM
                         </span>
                       )}
                       {flagged.has(step.index) && step.ok && (
-                        <StatusDot tone="warning" title="Console or network problems" className="size-1.5 shrink-0" />
+                        <StatusDot tone="warning" title={t("trace.steps.flagged")} className="size-1.5 shrink-0" />
                       )}
                     </span>
                     {summary && <span className="block truncate text-xs text-text-muted">{summary}</span>}

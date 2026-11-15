@@ -6,6 +6,7 @@ import {
 } from "@/components/icons";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { getToolName } from "ai";
+import { useT, type TFunction } from "@/i18n";
 import { getToolDisplayName } from "@/lib/toolDisplayNames";
 import { getToolIcon } from "@/lib/toolIcons";
 import { browseToolHint } from "@/lib/tools/browser/browseToolHint";
@@ -69,14 +70,14 @@ function ToolIcon({ name, className }: { name: string; className?: string }) {
   return createElement(getToolIcon(name), { size: 14, className });
 }
 
-function statusText(status: ToolStatus): string {
+function statusText(status: ToolStatus, t: TFunction): string {
   switch (status) {
     case "running":
-      return "Running...";
+      return t("tools.status.running");
     case "completed":
-      return "Done";
+      return t("tools.status.done");
     case "error":
-      return "Error";
+      return t("tools.status.error");
   }
 }
 
@@ -107,11 +108,12 @@ interface ToolCallIndicatorProps {
 }
 
 export function ToolCallIndicator({ part, statusLabel, statusError, extraPanes, hint, inputForDisplay }: ToolCallIndicatorProps) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const toolPart = part as AnyToolPart;
   const status = getToolStatus(toolPart);
   const toolName = getToolName(part as Parameters<typeof getToolName>[0]);
-  const displayName = getToolDisplayName(toolName);
+  const displayName = getToolDisplayName(toolName); // translated at render; `t` above re-renders on a language switch
   const isError = status === "error" || statusError === true;
   const shownHint = hint ?? browseToolHint(toolName, toolPart.input);
   const output = toolPart.output;
@@ -167,9 +169,9 @@ export function ToolCallIndicator({ part, statusLabel, statusError, extraPanes, 
           className="shrink-0 text-text-disabled"
         >
           {status === "running" ? (
-            <Shimmer as="span">{statusLabel ?? statusText(status)}</Shimmer>
+            <Shimmer as="span">{statusLabel ?? statusText(status, t)}</Shimmer>
           ) : (
-            (statusLabel ?? statusText(status))
+            (statusLabel ?? statusText(status, t))
           )}
         </span>
         <CaretDownIcon
@@ -186,7 +188,7 @@ export function ToolCallIndicator({ part, statusLabel, statusError, extraPanes, 
               className="mb-1.5 flex items-center gap-1 text-[13px] text-text-muted hover:text-text-secondary"
             >
               <DownloadSimpleIcon size={12} />
-              Download all
+              {t("tools.downloadAll")}
             </button>
           )}
           <div className="flex gap-1.5 overflow-x-auto overflow-y-hidden pb-1 layers-scrollbar">
@@ -201,14 +203,14 @@ export function ToolCallIndicator({ part, statusLabel, statusError, extraPanes, 
                           e.stopPropagation();
                           void downloadOne(url, i + 1);
                         }}
-                        aria-label="Download image"
+                        aria-label={t("tools.downloadImage")}
                         className="absolute top-1 right-1 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 hover:bg-black/80 transition-opacity"
                       >
                         <DownloadSimpleIcon size={12} />
                       </button>
                     }
                   />
-                  <TooltipContent>Download image</TooltipContent>
+                  <TooltipContent>{t("tools.downloadImage")}</TooltipContent>
                 </Tooltip>
               </div>
             ))}
@@ -229,7 +231,7 @@ export function ToolCallIndicator({ part, statusLabel, statusError, extraPanes, 
           ))}
           <div>
             <div className="text-text-disabled text-[10px] uppercase tracking-wider mb-0.5">
-              Input
+              {t("tools.input")}
             </div>
             <pre className="p-2 rounded bg-surface-elevated font-mono text-[11px] text-text-muted max-h-40 overflow-auto whitespace-pre-wrap break-all">
               {formatJson(inputForDisplay !== undefined ? inputForDisplay : toolPart.input)}
@@ -237,17 +239,17 @@ export function ToolCallIndicator({ part, statusLabel, statusError, extraPanes, 
           </div>
           <div>
             <div className="text-text-disabled text-[10px] uppercase tracking-wider mb-0.5">
-              Output
+              {t("tools.output")}
             </div>
             {status === "running" ? (
               <div className="p-2 rounded bg-surface-elevated">
-                <Shimmer as="span">Running...</Shimmer>
+                <Shimmer as="span">{t("tools.status.running")}</Shimmer>
               </div>
             ) : status === "error" ? (
               <pre className="p-2 rounded bg-red-500/10 font-mono text-[11px] text-red-400 max-h-40 overflow-auto whitespace-pre-wrap break-all">
                 {toolPart.errorText ??
                   errorFromToolOutput(toolPart.output) ??
-                  "Unknown error"}
+                  t("tools.unknownError")}
               </pre>
             ) : (
               <>

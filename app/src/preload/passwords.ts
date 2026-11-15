@@ -14,6 +14,10 @@ const api = {
   onTheme: (cb: (payload: { theme: "light" | "dark" }) => void): void => {
     ipcRenderer.on("passwords:theme", (_e: IpcRendererEvent, payload: { theme: "light" | "dark" }) => cb(payload));
   },
+  /** The page's dictionary (`shell:i18n`): the active language and the strings this page needs. Sent on load and on every change. */
+  onI18n: (cb: (payload: { lang: string; strings: Record<string, string> }) => void): void => {
+    ipcRenderer.on("shell:i18n", (_e: IpcRendererEvent, payload: { lang: string; strings: Record<string, string> }) => cb(payload));
+  },
   onChanged: (cb: () => void): void => {
     ipcRenderer.on("passwords:changed", () => cb());
   },

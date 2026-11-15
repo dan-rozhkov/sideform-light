@@ -1,5 +1,7 @@
 import type { BrowseTrace, BrowseTraceDom, BrowseTraceFrame, BrowseTraceLogEntry, BrowseTraceRequest, BrowseTraceStep } from "@sideform/browser-agent/agent/session";
 
+import { currentLocale, t } from "@/i18n";
+
 export { batchProgress, droppedRequests, requestFailed, stepActions, traceRequests, type BatchProgress } from "@/lib/trace/traceData";
 
 // Pure helpers of the trace viewer: no React, no DOM. Everything the UI
@@ -17,14 +19,19 @@ export function stepDuration(step: BrowseTraceStep): number {
   return Math.max(0, step.endedAt - step.startedAt);
 }
 
-/** "840 ms", "3.2 s", "1 m 05 s". */
+/** A number with a fixed count of decimals, in the interface language ("3.2" / "3,2"). */
+function localNumber(value: number, digits: number): string {
+  return value.toLocaleString(currentLocale(), { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+/** "840 ms", "3.2 s", "1 m 05 s" (units and decimal mark follow the interface language). */
 export function formatDuration(ms: number): string {
   const value = Math.max(0, Math.round(ms));
-  if (value < 1000) return `${value} ms`;
-  if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} s`;
+  if (value < 1000) return t("trace.duration.ms", { value });
+  if (value < 60_000) return t("trace.duration.s", { value: localNumber(value / 1000, value < 10_000 ? 1 : 0) });
   const minutes = Math.floor(value / 60_000);
   const seconds = Math.round((value % 60_000) / 1000);
-  return `${minutes} m ${String(seconds).padStart(2, "0")} s`;
+  return t("trace.duration.minutes", { minutes, seconds: String(seconds).padStart(2, "0") });
 }
 
 /** Offset from the run start for a frame or log row: "+0:03.2". */
@@ -42,7 +49,7 @@ export function formatClock(ms: number): string {
 
 /** The first line of a goal, or "Untitled run". */
 export function goalFirstLine(goal: string): string {
-  return goal.trim().split(/\r?\n/)[0]!.trim() || "Untitled run";
+  return goal.trim().split(/\r?\n/)[0]!.trim() || t("trace.untitled");
 }
 
 /** "browse_act" -> "act"; other names stay as they are. */
@@ -94,7 +101,7 @@ export function summarizeArgs(tool: string, args: unknown): string {
     if (Array.isArray(args.actions) && args.actions.length > 0) {
       const entries = args.actions.filter(isRecord);
       const first = entries[0] ? describeAction(entries[0]) : "";
-      return args.actions.length > 1 ? `${first} +${args.actions.length - 1} more` : first;
+      return args.actions.length > 1 ? t("trace.moreActions", { first, count: args.actions.length - 1 }) : first;
     }
     return describeAction(args);
   }
@@ -134,24 +141,24 @@ export interface Outcome {
 export function describeOutcomeOf({ status, qaOutcome }: { status: string; qaOutcome?: string }): Outcome {
   switch (qaOutcome) {
     case "passed":
-      return { label: "QA passed", tone: "success" };
+      return { label: t("trace.outcome.qaPassed"), tone: "success" };
     case "failed":
-      return { label: "QA failed", tone: "danger" };
+      return { label: t("trace.outcome.qaFailed"), tone: "danger" };
     case "inconclusive":
-      return { label: "QA inconclusive", tone: "warning" };
+      return { label: t("trace.outcome.qaInconclusive"), tone: "warning" };
     case "setup_failed":
-      return { label: "Setup failed", tone: "danger" };
+      return { label: t("trace.outcome.setupFailed"), tone: "danger" };
     case "error":
-      return { label: "QA error", tone: "danger" };
+      return { label: t("trace.outcome.qaError"), tone: "danger" };
     case "aborted":
-      return { label: "Aborted", tone: "neutral" };
+      return { label: t("trace.outcome.aborted"), tone: "neutral" };
   }
   const lower = status.toLowerCase();
   const label = lower.replace(/[_-]+/g, " ").replace(/^./, (c) => c.toUpperCase());
-  if (lower === "done" || lower === "completed" || lower === "success") return { label: "Done", tone: "success" };
+  if (lower === "done" || lower === "completed" || lower === "success") return { label: t("trace.outcome.done"), tone: "success" };
   if (/error|fail/.test(lower)) return { label, tone: "danger" };
   if (/abort|cancel|timeout|limit|stopped/.test(lower)) return { label, tone: "warning" };
-  return { label: label || "Unknown", tone: "neutral" };
+  return { label: label || t("trace.outcome.unknown"), tone: "neutral" };
 }
 
 /** The headline badge of a loaded trace. */
@@ -165,8 +172,8 @@ export function browserLabel(trace: BrowseTrace): string | undefined {
   if (app) return app;
   const browser = trace.labels?.browser;
   if (!browser) return undefined;
-  if (browser === "cloud") return "Cloud browser";
-  if (browser === "desktop") return "Desktop browser";
+  if (browser === "cloud") return t("trace.browser.cloud");
+  if (browser === "desktop") return t("trace.browser.desktop");
   return browser;
 }
 
@@ -269,28 +276,33 @@ export function traceTitle(goal: string): string {
 
 /** One-line text of a QA check: "Text “Pro” is visible", "URL contains /pricing". */
 export function describeCheck(check: unknown): string {
-  if (!isRecord(check) || typeof check.type !== "string") return "Check";
-  const where = typeof check.selector === "string" ? check.selector : typeof check.index === "number" ? `element #${check.index}` : "element";
+  if (!isRecord(check) || typeof check.type !== "string") return t("trace.check.generic");
+  const where = typeof check.selector === "string" ? check.selector : typeof check.index === "number" ? t("trace.check.elementIndex", { index: check.index }) : t("trace.check.element");
   switch (check.type) {
     case "text":
-      return `Text “${clip(String(check.text ?? ""), 48)}” is ${check.absent ? "absent" : "visible"}`;
+      return t(check.absent ? "trace.check.textAbsent" : "trace.check.textVisible", { text: clip(String(check.text ?? ""), 48) });
     case "element":
-      return `${clip(where, 48)} is ${String(check.state ?? "visible")}`;
+      return t("trace.check.state", { where: clip(where, 48), state: String(check.state ?? t("trace.check.visible")) });
     case "value": {
-      const rule = check.equals !== undefined ? `equals “${String(check.equals)}”` : check.contains !== undefined ? `contains “${String(check.contains)}”` : "has a value";
-      return `${clip(where, 40)} ${rule}`;
+      const w = clip(where, 40);
+      if (check.equals !== undefined) return t("trace.check.valueEquals", { where: w, value: String(check.equals) });
+      if (check.contains !== undefined) return t("trace.check.valueContains", { where: w, value: String(check.contains) });
+      return t("trace.check.valueHas", { where: w });
     }
     case "count":
-      return `${clip(where, 40)} count ${check.equals !== undefined ? `= ${String(check.equals)}` : `${check.min !== undefined ? `≥ ${String(check.min)}` : ""} ${check.max !== undefined ? `≤ ${String(check.max)}` : ""}`.trim()}`;
+      return t("trace.check.count", {
+        where: clip(where, 40),
+        range: check.equals !== undefined ? `= ${String(check.equals)}` : `${check.min !== undefined ? `≥ ${String(check.min)}` : ""} ${check.max !== undefined ? `≤ ${String(check.max)}` : ""}`.trim(),
+      });
     case "url": {
-      if (check.equals !== undefined) return `URL equals ${String(check.equals)}`;
-      if (check.contains !== undefined) return `URL contains ${String(check.contains)}`;
-      return `URL matches ${String(check.matches ?? "")}`;
+      if (check.equals !== undefined) return t("trace.check.urlEquals", { value: String(check.equals) });
+      if (check.contains !== undefined) return t("trace.check.urlContains", { value: String(check.contains) });
+      return t("trace.check.urlMatches", { value: String(check.matches ?? "") });
     }
     case "no_console_errors":
-      return "No console errors";
+      return t("trace.log.noConsoleErrors");
     case "no_failed_requests":
-      return "No failed requests";
+      return t("trace.log.noFailedRequests");
     default:
       return check.type.replace(/_/g, " ");
   }
@@ -434,7 +446,7 @@ export function filterLogEntries<T extends { at: number; stepIndex?: number }>(
 
 /** "3 of 12" when a filter narrows the list, else "12". */
 export function filteredCount(shown: number, total: number): string {
-  return shown === total ? String(total) : `${shown} of ${total}`;
+  return shown === total ? String(total) : t("trace.log.count", { shown, total });
 }
 
 // ---- requests --------------------------------------------------------------
@@ -447,9 +459,9 @@ export function requestText(request: BrowseTraceRequest): string {
 /** "512 B", "3.4 kB", "1.2 MB". */
 export function formatBytes(bytes: number): string {
   const value = Math.max(0, bytes);
-  if (value < 1000) return `${Math.round(value)} B`;
-  if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} kB`;
-  return `${(value / 1_000_000).toFixed(1)} MB`;
+  if (value < 1000) return t("trace.bytes.b", { value: Math.round(value) });
+  if (value < 1_000_000) return t("trace.bytes.kb", { value: localNumber(value / 1000, value < 10_000 ? 1 : 0) });
+  return t("trace.bytes.mb", { value: localNumber(value / 1_000_000, 1) });
 }
 
 /** Where a request's bar sits on the run's time axis, in percent of the run. */

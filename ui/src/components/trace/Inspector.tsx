@@ -4,6 +4,7 @@ import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/IconButton";
 import { Input } from "@/components/ui/input";
+import { useT } from "@/i18n";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { keepInView } from "./keepInView";
@@ -55,7 +56,7 @@ function LogToolbar({
   total,
   children,
 }: {
-  kind: string;
+  kind: "console" | "requests";
   filter: LogFilter;
   onChange(filter: LogFilter): void;
   /** A step is selected, so "This step" means something. */
@@ -64,23 +65,24 @@ function LogToolbar({
   total: number;
   children?: ReactNode;
 }) {
+  const t = useT();
   return (
     <div className="sticky top-0 z-10 -mx-2 mb-1 flex flex-wrap items-center gap-2 bg-surface-panel px-2 py-1.5">
       <Segmented
-        label={`${kind} scope`}
+        label={t(kind === "console" ? "trace.log.consoleScope" : "trace.log.requestsScope")}
         value={filter.scope}
         disabled={!canScope}
         options={[
-          { value: "all", label: "All" },
-          { value: "step", label: "This step" },
+          { value: "all", label: t("trace.log.all") },
+          { value: "step", label: t("trace.log.thisStep") },
         ]}
         onChange={(scope) => onChange({ ...filter, scope })}
       />
       {children}
       <Input
         type="search"
-        aria-label={`Filter ${kind}`}
-        placeholder="Filter"
+        aria-label={t(kind === "console" ? "trace.log.filterConsole" : "trace.log.filterRequests")}
+        placeholder={t("trace.log.filterPlaceholder")}
         value={filter.query}
         onChange={(e) => onChange({ ...filter, query: e.target.value })}
         className="w-40 min-w-0 flex-1 sm:flex-none"
@@ -106,6 +108,7 @@ interface LogProps {
 const stepOf = (trace: BrowseTrace, index: number | null) => trace.steps.find((s) => s.index === index);
 
 function LogPanel({ trace, entries: all, droppedCount, selectedStep, kind, filter, onFilter, onSelectStep }: LogProps) {
+  const t = useT();
   const listRef = useRef<HTMLUListElement>(null);
   useEffect(() => {
     // Playback moves the selected step; keep its first entry in view.
@@ -114,15 +117,15 @@ function LogPanel({ trace, entries: all, droppedCount, selectedStep, kind, filte
   const entries = filterLogEntries(all, filter, stepOf(trace, selectedStep), (e) => e.text);
   if (all.length === 0) {
     return kind === "console" ? (
-      <Empty title="No console errors" hint="The page logged nothing at error level during this run." />
+      <Empty title={t("trace.log.noConsoleErrors")} hint={t("trace.log.noConsoleErrorsHint")} />
     ) : (
-      <Empty title="No failed requests" hint="Every request the page made succeeded." />
+      <Empty title={t("trace.log.noFailedRequests")} hint={t("trace.log.noFailedRequestsHint")} />
     );
   }
   return (
     <>
       <LogToolbar kind={kind === "network" ? "requests" : kind} filter={filter} onChange={onFilter} canScope={selectedStep !== null} shown={entries.length} total={all.length} />
-      {entries.length === 0 && <Empty title="Nothing matches" hint="Change the filter to see more." />}
+      {entries.length === 0 && <Empty title={t("trace.log.noMatch")} hint={t("trace.log.noMatchHint")} />}
       <ul ref={listRef} className="-mx-2 space-y-0.5">
         {entries.map((entry, i) => {
           const net = kind === "network" ? parseNetworkEntry(entry.text) : null;
@@ -146,54 +149,55 @@ function LogPanel({ trace, entries: all, droppedCount, selectedStep, kind, filte
                 ) : (
                   <span className="min-w-0 break-words whitespace-pre-wrap text-text-secondary">{entry.text}</span>
                 )}
-                <span className="text-end text-text-muted">{linked ? `Step ${entry.stepIndex! + 1}` : ""}</span>
+                <span className="text-end text-text-muted">{linked ? t("trace.step.number", { n: entry.stepIndex! + 1 }) : ""}</span>
               </RowButton>
             </li>
           );
         })}
       </ul>
-      {droppedCount ? <p className="mt-3 text-xs text-text-muted">{droppedCount} more not recorded.</p> : null}
+      {droppedCount ? <p className="mt-3 text-xs text-text-muted">{t("trace.log.notRecorded", { count: droppedCount })}</p> : null}
     </>
   );
 }
 
 function QaPanel({ trace }: { trace: BrowseTrace }) {
+  const t = useT();
   const qa = trace.qa;
-  if (!qa) return <Empty title="Not a QA run" hint="QA verdicts, checks and the judge appear here for runs started in QA mode." />;
+  if (!qa) return <Empty title={t("trace.qa.notQaTitle")} hint={t("trace.qa.notQaHint")} />;
   const outcome = describeOutcome(trace);
   const judge = qa.judge;
   return (
     <div className="space-y-4">
       <section className="space-y-1.5">
         <OutcomeBadge tone={outcome.tone} label={outcome.label} />
-        {qa.reason ? <p className="text-pretty text-sm text-text-primary">{qa.reason}</p> : <EmptyNote title="The agent gave no reason." />}
+        {qa.reason ? <p className="text-pretty text-sm text-text-primary">{qa.reason}</p> : <EmptyNote title={t("trace.qa.noReason")} />}
       </section>
 
       <section className="space-y-2">
-        <SectionHeading count={qa.checks?.length ?? 0}>Checks</SectionHeading>
+        <SectionHeading count={qa.checks?.length ?? 0}>{t("trace.qa.checks")}</SectionHeading>
         {qa.checks && qa.checks.length > 0 ? (
           <ul className="space-y-1">
             {qa.checks.map((check, i) => (
               <li key={i} className="flex items-start gap-2 rounded-lg bg-surface-elevated px-3 py-2 text-xs/relaxed">
-                <ToneIcon tone={check.passed ? "success" : "danger"} label={check.passed ? "Passed" : "Failed"} className="mt-0.5 size-4 shrink-0" />
+                <ToneIcon tone={check.passed ? "success" : "danger"} label={check.passed ? t("trace.qa.passed") : t("trace.qa.failed")} className="mt-0.5 size-4 shrink-0" />
                 <div className="min-w-0">
                   <p className="font-medium break-words text-text-primary">{describeCheck(check.check)}</p>
                   {(check.actual || check.error) && <p className="break-words text-text-muted">{check.error ?? check.actual}</p>}
-                  <p className="text-[11px] text-text-disabled">{check.source === "final" ? "Final check" : "Agent check"}</p>
+                  <p className="text-[11px] text-text-disabled">{check.source === "final" ? t("trace.qa.finalCheck") : t("trace.qa.agentCheck")}</p>
                 </div>
               </li>
             ))}
           </ul>
         ) : (
-          <EmptyNote title="No checks ran." />
+          <EmptyNote title={t("trace.qa.noChecks")} />
         )}
       </section>
 
       {judge && (
         <section className="space-y-1.5">
-          <SectionHeading>Judge</SectionHeading>
+          <SectionHeading>{t("trace.qa.judge")}</SectionHeading>
           {"error" in judge ? (
-            <p className="rounded-lg bg-destructive/8 px-3 py-2 text-xs/relaxed break-words text-destructive">The judge did not finish: {judge.error}</p>
+            <p className="rounded-lg bg-destructive/8 px-3 py-2 text-xs/relaxed break-words text-destructive">{t("trace.qa.judgeError", { error: judge.error })}</p>
           ) : (
             <div className="space-y-1.5 rounded-lg bg-surface-elevated px-3 py-2">
               <OutcomeBadge size="sm" tone={judge.verdict === "pass" ? "success" : judge.verdict === "fail" ? "danger" : "warning"} label={judge.verdict} />
@@ -202,7 +206,7 @@ function QaPanel({ trace }: { trace: BrowseTrace }) {
           )}
         </section>
       )}
-      {qa.stepsDropped ? <p className="text-xs text-text-muted">{qa.stepsDropped} earlier QA steps are not listed.</p> : null}
+      {qa.stepsDropped ? <p className="text-xs text-text-muted">{t("trace.qa.stepsDropped", { count: qa.stepsDropped })}</p> : null}
     </div>
   );
 }
@@ -224,9 +228,10 @@ function Block({ title, text, copyLabel, empty }: { title: string; text: string;
 }
 
 function StepPanel({ trace, selectedStep, canLink }: { trace: BrowseTrace; selectedStep: number | null; canLink: boolean }) {
+  const t = useT();
   const [linkCopied, copy] = useCopy();
   const step = stepOf(trace, selectedStep);
-  if (!step) return <Empty title="No step selected" hint="Pick a step to see its arguments, output and errors." />;
+  if (!step) return <Empty title={t("trace.stepPanel.noStepTitle")} hint={t("trace.stepPanel.noStepHint")} />;
   const actions = stepActions(step);
   const batch = batchProgress(step);
   return (
@@ -235,17 +240,17 @@ function StepPanel({ trace, selectedStep, canLink }: { trace: BrowseTrace; selec
         <h3 className="text-sm font-medium text-text-primary">
           <span className="tabular-nums text-text-muted">{step.index + 1}</span> {toolLabel(step.tool)}
         </h3>
-        <OutcomeBadge size="sm" tone={step.ok ? "success" : "danger"} label={step.ok ? "OK" : "Failed"} />
+        <OutcomeBadge size="sm" tone={step.ok ? "success" : "danger"} label={step.ok ? t("trace.stepPanel.ok") : t("trace.stepPanel.failed")} />
         <span className="text-xs tabular-nums text-text-muted">
-          {formatDuration(stepDuration(step))} · starts {formatOffset(step.startedAt - trace.startedAt)}
+          {t("trace.stepPanel.timing", { duration: formatDuration(stepDuration(step)), offset: formatOffset(step.startedAt - trace.startedAt) })}
         </span>
         {canLink && (
           <IconButton
             variant="ghost"
             size="icon-xs"
             className="ms-auto"
-            tooltip={linkCopied ? "Link copied" : "Copy link to this step"}
-            aria-label="Copy link to this step"
+            tooltip={linkCopied ? t("trace.stepPanel.linkCopied") : t("trace.stepPanel.copyLink")}
+            aria-label={t("trace.stepPanel.copyLink")}
             onClick={() => copy(stepLinkUrl(window.location, step.index))}
           >
             <LinkSimpleIcon weight="light" />
@@ -253,7 +258,7 @@ function StepPanel({ trace, selectedStep, canLink }: { trace: BrowseTrace; selec
         )}
         {canLink && (
           <span aria-live="polite" className="sr-only">
-            {linkCopied ? "Link copied" : ""}
+            {linkCopied ? t("trace.stepPanel.linkCopied") : ""}
           </span>
         )}
       </div>
@@ -266,11 +271,11 @@ function StepPanel({ trace, selectedStep, canLink }: { trace: BrowseTrace; selec
 
       {actions && (
         <section className="space-y-1.5">
-          <SectionHeading count={actions.length}>Actions</SectionHeading>
+          <SectionHeading count={actions.length}>{t("trace.stepPanel.actions")}</SectionHeading>
           <ol className="space-y-1">
             {actions.map((action, i) => (
               <li key={i} className="flex items-start gap-2 rounded-lg bg-surface-elevated px-3 py-2 text-xs/relaxed">
-                <ToneIcon tone={action.ok ? "success" : "danger"} label={action.ok ? "Passed" : "Failed"} className="mt-0.5 size-4 shrink-0" />
+                <ToneIcon tone={action.ok ? "success" : "danger"} label={action.ok ? t("trace.stepPanel.passed") : t("trace.stepPanel.actionFailed")} className="mt-0.5 size-4 shrink-0" />
                 <span className="min-w-0">
                   <span className="font-medium break-words text-text-primary">{action.action}</span>
                   {action.error && <span className="block break-words text-destructive">{action.error}</span>}
@@ -278,13 +283,13 @@ function StepPanel({ trace, selectedStep, canLink }: { trace: BrowseTrace; selec
               </li>
             ))}
           </ol>
-          {batch && batch.notRun > 0 && <p className="text-xs text-text-muted">{batch.notRun} not run</p>}
+          {batch && batch.notRun > 0 && <p className="text-xs text-text-muted">{t("trace.stepPanel.notRun", { count: batch.notRun })}</p>}
         </section>
       )}
 
       <div className="grid gap-4 min-[1100px]:grid-cols-2">
-        <Block title="Arguments" text={prettyJson(step.args)} copyLabel="Copy arguments" empty="No arguments." />
-        <Block title="Output" text={prettyText(step.output)} copyLabel="Copy output" empty="No output." />
+        <Block title={t("trace.stepPanel.arguments")} text={prettyJson(step.args)} copyLabel={t("trace.stepPanel.copyArguments")} empty={t("trace.stepPanel.noArguments")} />
+        <Block title={t("trace.stepPanel.output")} text={prettyText(step.output)} copyLabel={t("trace.stepPanel.copyOutput")} empty={t("trace.stepPanel.noOutput")} />
       </div>
     </div>
   );
@@ -309,6 +314,7 @@ function HeaderTable({ title, headers }: { title: string; headers: Record<string
 }
 
 function RequestRow({ trace, request, open, onToggle, onSelectStep }: { trace: BrowseTrace; request: BrowseTraceRequest; open: boolean; onToggle(): void; onSelectStep(index: number): void }) {
+  const t = useT();
   const failed = requestFailed(request);
   const bar = requestWaterfall(trace, request);
   const body = prettyText(request.responseBody);
@@ -347,18 +353,18 @@ function RequestRow({ trace, request, open, onToggle, onSelectStep }: { trace: B
               <>
                 {" · "}
                 <button type="button" className="underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onSelectStep(request.stepIndex!)}>
-                  Step {request.stepIndex + 1}
+                  {t("trace.step.number", { n: request.stepIndex + 1 })}
                 </button>
               </>
             )}
           </p>
-          <HeaderTable title="Request headers" headers={request.requestHeaders} />
-          <HeaderTable title="Response headers" headers={request.responseHeaders} />
+          <HeaderTable title={t("trace.log.requestHeaders")} headers={request.requestHeaders} />
+          <HeaderTable title={t("trace.log.responseHeaders")} headers={request.responseHeaders} />
           {body ? (
             <section className="space-y-1">
-              <SectionHeading>Response body</SectionHeading>
+              <SectionHeading>{t("trace.log.responseBody")}</SectionHeading>
               <pre className="max-h-48 overflow-auto rounded-md bg-surface-panel p-2 font-mono text-[11px]/relaxed break-words whitespace-pre-wrap text-text-secondary">{body}</pre>
-              {request.bodyTruncated && <p className="text-[11px] text-text-muted">Body truncated.</p>}
+              {request.bodyTruncated && <p className="text-[11px] text-text-muted">{t("trace.log.bodyTruncated")}</p>}
             </section>
           ) : null}
         </div>
@@ -380,6 +386,7 @@ interface RequestsProps {
 
 /** Every request of the run, with a waterfall and details. */
 function RequestsPanel({ trace, requests: all, selectedStep, filter, onFilter, failedOnly, onFailedOnly, onSelectStep }: RequestsProps) {
+  const t = useT();
   const [openKey, setOpenKey] = useState<string | null>(null);
   const scoped = filterLogEntries(all, filter, stepOf(trace, selectedStep), requestText);
   const requests = failedOnly ? scoped.filter(requestFailed) : scoped;
@@ -389,11 +396,11 @@ function RequestsPanel({ trace, requests: all, selectedStep, filter, onFilter, f
     <>
       <LogToolbar kind="requests" filter={filter} onChange={onFilter} canScope={selectedStep !== null} shown={requests.length} total={all.length}>
         <Button variant="secondary" size="sm" aria-pressed={failedOnly} onClick={() => onFailedOnly(!failedOnly)} className={cn(failedOnly && "bg-accent-selection")}>
-          Failed only
+          {t("trace.log.failedOnly")}
         </Button>
       </LogToolbar>
       {requests.length === 0 ? (
-        <Empty title="Nothing matches" hint="Change the filter to see more." />
+        <Empty title={t("trace.log.noMatch")} hint={t("trace.log.noMatchHint")} />
       ) : (
         <ul className="-mx-2 space-y-0.5">
           {requests.map((request) => {
@@ -402,7 +409,7 @@ function RequestsPanel({ trace, requests: all, selectedStep, filter, onFilter, f
           })}
         </ul>
       )}
-      {dropped ? <p className="mt-3 text-xs text-text-muted">{dropped} more not recorded.</p> : null}
+      {dropped ? <p className="mt-3 text-xs text-text-muted">{t("trace.log.notRecorded", { count: dropped })}</p> : null}
     </>
   );
 }
@@ -416,6 +423,7 @@ interface Props {
 }
 
 export const Inspector = memo(function Inspector({ trace, selectedStep, onSelectStep, canLink = true }: Props) {
+  const t = useT();
   const failedChecks = trace.qa?.checks?.filter((c) => !c.passed).length ?? 0;
   const requests = traceRequests(trace);
   const failedRequests = requests.filter(requestFailed).length;
@@ -426,17 +434,17 @@ export const Inspector = memo(function Inspector({ trace, selectedStep, onSelect
   return (
     <Tabs defaultValue="step" className="min-h-0 flex-1 gap-0 bg-surface-panel">
       <div className={cn(BAR_ROW, "shrink-0")}>
-        <TabsList aria-label="Details">
-          <TabsTrigger value="step">Step</TabsTrigger>
+        <TabsList aria-label={t("trace.inspector.label")}>
+          <TabsTrigger value="step">{t("trace.inspector.step")}</TabsTrigger>
           <TabsTrigger value="console">
-            Console <Count n={trace.console.length} />
+            {t("trace.inspector.console")} <Count n={trace.console.length} />
           </TabsTrigger>
           <TabsTrigger value="network">
-            Network <Count n={requests.length > 0 ? requests.length : trace.network.length} />
-            {failedRequests > 0 && <span className="tabular-nums text-destructive">{failedRequests} failed</span>}
+            {t("trace.inspector.network")} <Count n={requests.length > 0 ? requests.length : trace.network.length} />
+            {failedRequests > 0 && <span className="tabular-nums text-destructive">{t("trace.inspector.failedCount", { count: failedRequests })}</span>}
           </TabsTrigger>
           <TabsTrigger value="qa">
-            QA {failedChecks > 0 && <Count n={failedChecks} />}
+            {t("trace.inspector.qa")} {failedChecks > 0 && <Count n={failedChecks} />}
           </TabsTrigger>
         </TabsList>
       </div>

@@ -53,5 +53,3 @@ export function isOffline(): boolean {
 // genuinely surface-specific and keep their own wording.
 export const OFFLINE_MESSAGE =
   "Offline. AI and backend features are disabled until the connection is restored.";
-
-export const OFFLINE_SEND_TITLE = "Offline — sending is disabled";

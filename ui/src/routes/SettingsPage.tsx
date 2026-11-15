@@ -27,6 +27,7 @@ export default function SettingsPage() {
   const section = parseSettingsSection(params.get("section"));
 
   useEffect(() => {
+    // Stays English: the shell stores it as the tab title and its tab bar translates "Settings".
     document.title = "Settings";
   }, []);
 

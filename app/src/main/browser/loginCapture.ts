@@ -1,3 +1,4 @@
+import { t, type Language } from "../i18n";
 import { normalizeHost, normalizeOrigin, type CredentialStore } from "./credentialStore";
 
 /**
@@ -216,7 +217,7 @@ const displaySite = (origin: string): string => origin.replace(/^https:\/\//, ""
  * working password, so there "Not Now" is the default and the cancel choice;
  * a new login defaults to "Save".
  */
-export function savePromptCopy(req: PromptRequest): {
+export function savePromptCopy(req: PromptRequest, lang: Language = "en"): {
   message: string;
   detail: string;
   buttons: string[];
@@ -225,9 +226,9 @@ export function savePromptCopy(req: PromptRequest): {
 } {
   const site = displaySite(req.origin);
   return {
-    message: req.update ? `Update password for ${site}?` : `Save password for ${site}?`,
+    message: t(lang, req.update ? "dialog.updatePassword.message" : "dialog.savePassword.message", { site }),
     detail: req.username,
-    buttons: ["Save", "Never for This Site", "Not Now"],
+    buttons: [t(lang, "dialog.savePassword.save"), t(lang, "dialog.savePassword.never"), t(lang, "dialog.savePassword.later")],
     defaultId: req.update ? 2 : 0,
     cancelId: 2,
   };

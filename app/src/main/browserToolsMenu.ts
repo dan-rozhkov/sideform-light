@@ -1,4 +1,5 @@
 import type { MenuItemConstructorOptions } from "electron";
+import { t, type Language } from "./i18n";
 
 /**
  * The browser chrome row's "Browser tools" popup: Viewport emulation, Developer
@@ -173,9 +174,15 @@ export interface BrowserToolsActions {
   openHistory(): void;
 }
 
+/** The menu label of a preset: device names stay as they are, the generic "Desktop" word follows the language. */
+function presetLabel(p: ViewportPreset, lang: Language): string {
+  return p.id.startsWith("desktop-") ? t(lang, "tools.desktopPreset", { size: `${p.width}×${p.height}` }) : p.label;
+}
+
 export function buildBrowserToolsMenuTemplate(
   state: BrowserToolsState,
   actions: BrowserToolsActions,
+  lang: Language = "en",
 ): MenuItemConstructorOptions[] {
   const viewportItem = (id: ViewportPresetId, label: string): MenuItemConstructorOptions => ({
     label,
@@ -186,28 +193,28 @@ export function buildBrowserToolsMenuTemplate(
   });
   return [
     {
-      label: "Viewport",
+      label: t(lang, "tools.viewport"),
       submenu: [
-        viewportItem("responsive", "Responsive (window size)"),
-        ...VIEWPORT_PRESETS.map((p) => viewportItem(p.id, p.label)),
+        viewportItem("responsive", t(lang, "tools.responsive")),
+        ...VIEWPORT_PRESETS.map((p) => viewportItem(p.id, presetLabel(p, lang))),
       ],
     },
     {
-      label: state.devToolsOpen ? "Close Developer Tools" : "Open Developer Tools",
+      label: t(lang, state.devToolsOpen ? "tools.closeDevTools" : "tools.openDevTools"),
       click: () => actions.toggleDevTools(),
     },
     {
       // Electron's zoom is stored per HOST in the shared persist:penbrowser
       // partition, so it applies to every tab on this site and is remembered
       // across sessions. Deliberately not made per-tab.
-      label: "Zoom",
+      label: t(lang, "tools.zoom"),
       submenu: [
         // Accelerators are display-only; the application menu owns the shortcuts.
-        { label: "Zoom In", accelerator: "CmdOrCtrl+Plus", registerAccelerator: false,
+        { label: t(lang, "menu.zoomIn"), accelerator: "CmdOrCtrl+Plus", registerAccelerator: false,
           click: () => actions.setZoomLevel(state.zoomLevel + ZOOM_LEVEL_STEP) },
-        { label: "Zoom Out", accelerator: "CmdOrCtrl+-", registerAccelerator: false,
+        { label: t(lang, "menu.zoomOut"), accelerator: "CmdOrCtrl+-", registerAccelerator: false,
           click: () => actions.setZoomLevel(state.zoomLevel - ZOOM_LEVEL_STEP) },
-        { label: "Actual Size", accelerator: "CmdOrCtrl+0", registerAccelerator: false,
+        { label: t(lang, "menu.resetZoom"), accelerator: "CmdOrCtrl+0", registerAccelerator: false,
           click: () => actions.setZoomLevel(0) },
         { type: "separator" },
         ...ZOOM_PRESETS.map((z): MenuItemConstructorOptions => ({
@@ -220,7 +227,7 @@ export function buildBrowserToolsMenuTemplate(
     },
     { type: "separator" },
     {
-      label: "Show History",
+      label: t(lang, "tools.showHistory"),
       click: () => actions.openHistory(),
     },
   ];

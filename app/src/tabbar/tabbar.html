@@ -11,19 +11,20 @@
   </head>
   <body>
     <div id="tab-row" class="tab-row">
-      <button id="toggle-panel" class="sidebar-toggle" type="button" aria-label="Hide agent panel" title="Hide agent panel (Cmd/Ctrl+Alt+B)" aria-pressed="true"></button>
+      <button id="toggle-panel" class="sidebar-toggle" type="button" aria-label="Hide agent panel" title="Hide agent panel (Cmd/Ctrl+Alt+B)" data-i18n-aria-label="tabbar.panel.hide" data-i18n-title="tabbar.panel.hide.title" aria-pressed="true"></button>
       <div id="tabs"></div>
-      <button id="new-tab" title="New Browser Tab (Cmd/Ctrl+T)" aria-label="New browser tab"></button>
+      <button id="new-tab" title="New Browser Tab (Cmd/Ctrl+T)" aria-label="New browser tab" data-i18n-title="tabbar.newTab.title" data-i18n-aria-label="tabbar.newTab"></button>
     </div>
     <div id="chrome-row" class="chrome-row" hidden>
-      <button id="nav-back" class="nav-btn" aria-label="Back" title="Back"></button>
-      <button id="nav-forward" class="nav-btn" aria-label="Forward" title="Forward"></button>
-      <button id="nav-reload" class="nav-btn" aria-label="Reload" title="Reload"></button>
+      <button id="nav-back" class="nav-btn" aria-label="Back" title="Back" data-i18n-aria-label="tabbar.back" data-i18n-title="tabbar.back"></button>
+      <button id="nav-forward" class="nav-btn" aria-label="Forward" title="Forward" data-i18n-aria-label="tabbar.forward" data-i18n-title="tabbar.forward"></button>
+      <button id="nav-reload" class="nav-btn" aria-label="Reload" title="Reload" data-i18n-aria-label="tabbar.reload" data-i18n-title="tabbar.reload"></button>
       <form id="url-form" class="url-form">
-        <input id="url-input" class="url-input" type="text" aria-label="Address" placeholder="Search or enter address" />
+        <input id="url-input" class="url-input" type="text" aria-label="Address" placeholder="Search or enter address" data-i18n-aria-label="tabbar.address" data-i18n-placeholder="tabbar.address.placeholder" />
       </form>
-      <button id="browser-tools" class="nav-btn browser-tools-btn" aria-label="Browser tools" title="Browser tools" aria-haspopup="menu"></button>
+      <button id="browser-tools" class="nav-btn browser-tools-btn" aria-label="Browser tools" title="Browser tools" data-i18n-aria-label="tabbar.browserTools" data-i18n-title="tabbar.browserTools" aria-haspopup="menu"></button>
     </div>
+    <script src="i18nClient.js"></script>
     <script src="glyphs.js"></script>
     <script src="urlNormalization.js"></script>
     <script src="omnibox.js"></script>

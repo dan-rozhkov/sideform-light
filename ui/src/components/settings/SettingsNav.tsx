@@ -1,3 +1,4 @@
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { SettingsSection } from "@/lib/openSettings";
 
@@ -11,11 +12,12 @@ export function SettingsNav({
   active: SettingsSection;
   onSelect: (section: SettingsSection) => void;
 }) {
+  const t = useT();
   return (
     <div className="shrink-0 border-b border-border-default bg-surface-panel md:w-[220px] md:overflow-y-auto md:border-r md:border-b-0">
-      <h1 className="px-4 pt-3 pb-1 text-base font-semibold text-text-primary md:px-5 md:pt-5 md:pb-3">Settings</h1>
-      <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto px-3 pb-2 md:flex-col md:overflow-visible md:pb-4">
-        {SETTINGS_NAV.map(({ id, label, icon: Icon }) => {
+      <h1 className="px-4 pt-3 pb-1 text-base font-semibold text-text-primary md:px-5 md:pt-5 md:pb-3">{t("settings.title")}</h1>
+      <nav aria-label={t("settings.nav.label")} className="flex gap-1 overflow-x-auto px-3 pb-2 md:flex-col md:overflow-visible md:pb-4">
+        {SETTINGS_NAV.map(({ id, labelKey, icon: Icon }) => {
           const isActive = id === active;
           return (
             <button
@@ -31,7 +33,7 @@ export function SettingsNav({
               )}
             >
               <Icon className="size-4 shrink-0" aria-hidden />
-              {label}
+              {t(labelKey)}
             </button>
           );
         })}

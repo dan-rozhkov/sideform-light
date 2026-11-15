@@ -41,7 +41,9 @@ function RemoteTrace({ id, source }: { id: string; source: TraceSource }) {
   const notFound = result !== null && !result.ok && result.reason === "not-found";
   useEffect(() => {
     const previous = document.title;
-    document.title = goal !== undefined ? traceTitle(goal) : notFound ? "Trace not found" : "Trace";
+    // Stays English and untranslated: the shell stores it as the tab title (its tab bar translates "Trace"), and the agent reads it via trace_list.
+    document.title =
+      goal !== undefined ? (goal.trim() ? traceTitle(goal) : "Untitled run") : notFound ? "Trace not found" : "Trace";
     return () => {
       document.title = previous;
     };

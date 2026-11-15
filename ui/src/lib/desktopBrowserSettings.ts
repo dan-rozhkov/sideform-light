@@ -1,3 +1,4 @@
+import { t } from "@/i18n";
 import type { DesktopBrowserSettings } from "@/lib/desktopBridge";
 
 export type { DesktopBrowserSettings };
@@ -15,13 +16,13 @@ function unwrap(result: DesktopBrowserSettings | { error: string }): DesktopBrow
 /** Reads the current switches. Rejects on a shell error or when the API is absent. */
 export async function getDesktopBrowserSettings(): Promise<DesktopBrowserSettings> {
   const api = window.penDesktop?.browserSettings;
-  if (!api) throw new Error("Browser settings are unavailable");
+  if (!api) throw new Error(t("settings.browser.unavailable"));
   return unwrap(await api.get());
 }
 
 /** Applies a patch and resolves the saved switches. Rejects on a shell error or when the API is absent. */
 export async function setDesktopBrowserSettings(patch: Partial<DesktopBrowserSettings>): Promise<DesktopBrowserSettings> {
   const api = window.penDesktop?.browserSettings;
-  if (!api) throw new Error("Browser settings are unavailable");
+  if (!api) throw new Error(t("settings.browser.unavailable"));
   return unwrap(await api.set(patch));
 }

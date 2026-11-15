@@ -2,6 +2,7 @@ import { InfoIcon } from "@/components/icons";
 import type { BrowseTrace } from "@sideform/browser-agent/agent/session";
 import { memo } from "react";
 import { Button } from "@/components/ui/button";
+import { currentLocale, useT } from "@/i18n";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StatusDot } from "./parts";
 import { resultText } from "./resultDoc";
@@ -9,23 +10,24 @@ import { browserLabel, formatDuration, traceDuration } from "./traceModel";
 
 /** "Run details": duration, steps, failures, browser and start time, plus the error and the result. */
 export const RunDetails = memo(function RunDetails({ trace }: { trace: BrowseTrace }) {
+  const t = useT();
   const failedSteps = trace.steps.filter((s) => !s.ok).length;
   const browser = browserLabel(trace);
   const inlineResult = resultText(trace);
   const problems = failedSteps > 0 || !!trace.error;
   const rows: { term: string; value: string; danger?: boolean }[] = [
-    { term: "Duration", value: formatDuration(traceDuration(trace)) },
-    { term: "Steps", value: String(trace.steps.length) },
-    ...(failedSteps > 0 ? [{ term: "Failed", value: String(failedSteps), danger: true }] : []),
-    ...(browser ? [{ term: "Browser", value: browser }] : []),
-    { term: "Started", value: new Date(trace.startedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) },
+    { term: t("trace.details.duration"), value: formatDuration(traceDuration(trace)) },
+    { term: t("trace.details.steps"), value: String(trace.steps.length) },
+    ...(failedSteps > 0 ? [{ term: t("trace.details.failed"), value: String(failedSteps), danger: true }] : []),
+    ...(browser ? [{ term: t("trace.details.browser"), value: browser }] : []),
+    { term: t("trace.details.started"), value: new Date(trace.startedAt).toLocaleString(currentLocale(), { dateStyle: "medium", timeStyle: "short" }) },
   ];
   return (
     <Popover>
       <PopoverTrigger
         render={
           // No tooltip: it would pop up again when focus returns to the trigger after the popover closes.
-          <Button type="button" variant="ghost" size="icon" aria-label={problems ? "Run details, has errors" : "Run details"} className="relative">
+          <Button type="button" variant="ghost" size="icon" aria-label={problems ? t("trace.details.ariaLabelErrors") : t("trace.details.ariaLabel")} className="relative">
             <InfoIcon className="size-4" weight="light" />
             {problems && <StatusDot tone="danger" aria-hidden data-testid="run-details-dot" className="absolute -end-0.5 -top-0.5 size-2 ring-2 ring-surface-panel" />}
           </Button>
@@ -42,13 +44,13 @@ export const RunDetails = memo(function RunDetails({ trace }: { trace: BrowseTra
         </dl>
         {trace.error && (
           <p className="break-words text-destructive">
-            <span className="font-medium">Error: </span>
+            <span className="font-medium">{t("trace.details.error")} </span>
             {trace.error}
           </p>
         )}
         {inlineResult && (
           <p className="break-words text-text-secondary">
-            <span className="font-medium">Result: </span>
+            <span className="font-medium">{t("trace.details.result")} </span>
             {inlineResult}
           </p>
         )}

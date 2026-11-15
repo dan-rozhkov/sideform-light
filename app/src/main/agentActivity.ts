@@ -9,6 +9,7 @@
  * thinks, instead of flickering on every command.
  */
 import { PAGE_DRIVING_COMMANDS } from "./browserCommands";
+import { t, type Language } from "./i18n";
 
 export const AGENT_ACTIVITY_IDLE_MS = 4000;
 
@@ -20,11 +21,14 @@ export const AGENT_ACTIVITY_IDLE_MS = 4000;
  */
 export const AGENT_AWAKE_HOLD_MS = 60_000;
 
-/** Notification shown when the window is minimized while an agent tab is awake. */
-// Shown during the whole awake hold, also after the agent finished, so it must not claim the agent is running.
-export const MINIMIZED_AGENT_NOTICE_TITLE = "The agent's browser tab is paused";
-export const MINIMIZED_AGENT_NOTICE_BODY =
-  "Pages in the agent's browser tab stop while the window is minimized. If the agent is still working, open the window to let it continue.";
+/**
+ * Notification shown when the window is minimized while an agent tab is awake: title and body in the interface language
+ * (keys `notice.agentPaused.title|body`). Shown during the whole awake hold, also after the agent finished, so it must not
+ * claim the agent is running.
+ */
+export function minimizedAgentNotice(lang: Language = "en"): { title: string; body: string } {
+  return { title: t(lang, "notice.agentPaused.title"), body: t(lang, "notice.agentPaused.body") };
+}
 
 /** Chromium switch: a window covered by another app's window keeps rendering. */
 export const KEEP_RENDERING_WHEN_OCCLUDED_SWITCH = "disable-backgrounding-occluded-windows";

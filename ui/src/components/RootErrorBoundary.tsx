@@ -1,5 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+import { t } from "@/i18n";
+
 interface Props {
   children: ReactNode;
 }
@@ -50,7 +52,7 @@ export class RootErrorBoundary extends Component<Props, State> {
           color: "#1a1a1a",
         }}
       >
-        <p style={{ margin: 0, fontSize: "14px" }}>Something went wrong.</p>
+        <p style={{ margin: 0, fontSize: "14px" }}>{t("settings.ui.rootError")}</p>
         {/* Mirrors the editor's default <Button> (ui/button.tsx: h-7, px-2,
             text-xs/relaxed, rounded-md, border-border, bg-primary) — spelled
             out as inline styles because this file must stay free of the UI kit
@@ -75,7 +77,7 @@ export class RootErrorBoundary extends Component<Props, State> {
             cursor: "pointer",
           }}
         >
-          Reload
+          {t("settings.ui.reload")}
         </button>
       </div>
     );

@@ -16,6 +16,7 @@
     clear(): Promise<ClearResult>;
     open(url: string): Promise<unknown>;
     onTheme(cb: (payload: { theme: "light" | "dark" }) => void): void;
+    onI18n(cb: (payload: { lang: string; strings: Record<string, string> }) => void): void;
     onChanged(cb: () => void): void;
   }
 
@@ -34,13 +35,15 @@
   const emptyText = $("empty-text");
 
   const SEARCH_DEBOUNCE_MS = 120;
-  const MONTH_FORMAT = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" });
-  const MONTH_YEAR_FORMAT = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  // Day headings use the interface language as the Intl locale (English keeps its en-GB "Monday 12 October" order).
+  const dateLocale = (): string => (penI18n.lang === "en" ? "en-GB" : penI18n.lang);
 
   let entries: Entry[] = [];
   let query = "";
   /** True once the store is known to hold something (an empty-query answer, or any match). Enables "Clear history…". */
   let hasAny = false;
+  /** True once the first answer arrived: before it there is nothing to paint (not even the empty state). */
+  let listed = false;
   /** Bumped per request: an answer for an older request is dropped. */
   let seq = 0;
   let searchTimer: number | undefined;
@@ -75,10 +78,13 @@
   };
   function dayLabel(ms: number, now: number): string {
     const days = Math.round((dayStart(now) - dayStart(ms)) / 86400000);
-    if (days <= 0) return "Today";
-    if (days === 1) return "Yesterday";
+    if (days <= 0) return penI18n.tr("history.today", "Today");
+    if (days === 1) return penI18n.tr("history.yesterday", "Yesterday");
     const sameYear = new Date(ms).getFullYear() === new Date(now).getFullYear();
-    return (sameYear ? MONTH_FORMAT : MONTH_YEAR_FORMAT).format(ms);
+    const format = sameYear
+      ? { weekday: "long", day: "numeric", month: "long" }
+      : { weekday: "long", day: "numeric", month: "long", year: "numeric" };
+    return new Intl.DateTimeFormat(dateLocale(), format as Intl.DateTimeFormatOptions).format(ms);
   }
   /** Host + path without scheme, a leading www. and a trailing slash. */
   function shortUrl(url: string): string {
@@ -126,8 +132,11 @@
     const remove = el("button", "row-remove");
     remove.type = "button";
     remove.tabIndex = -1; // Delete / Backspace on the row does the same from the keyboard
-    remove.setAttribute("aria-label", "Remove from history");
-    remove.title = "Remove from history";
+    // The keys let a language change re-label rows that are already on screen (penI18n.applyTo).
+    remove.setAttribute("data-i18n-aria-label", "history.remove");
+    remove.setAttribute("data-i18n-title", "history.remove");
+    remove.setAttribute("aria-label", penI18n.tr("history.remove", "Remove from history"));
+    remove.title = penI18n.tr("history.remove", "Remove from history");
     remove.appendChild(icon("X"));
     remove.addEventListener("click", () => removeEntry(entry.url, main));
     row.appendChild(remove);
@@ -159,10 +168,10 @@
     emptyEl.hidden = !empty;
     if (empty) {
       if (query.trim() === "") {
-        emptyTitle.textContent = "No history yet";
-        emptyText.textContent = "Pages you open in the browser appear here.";
+        emptyTitle.textContent = penI18n.tr("history.emptyTitle", "No history yet");
+        emptyText.textContent = penI18n.tr("history.emptyText", "Pages you open in the browser appear here.");
       } else {
-        emptyTitle.textContent = "No pages match “" + query.trim() + "”";
+        emptyTitle.textContent = penI18n.tr("history.noMatch", "No pages match “{query}”", { query: query.trim() });
         emptyText.textContent = "";
       }
     }
@@ -184,6 +193,7 @@
     }
     if (mine !== seq || !("entries" in result)) return; // a newer request is in flight, or this page is not answered
     entries = result.entries;
+    listed = true;
     if (asked.trim() === "") hasAny = entries.length > 0;
     else if (entries.length > 0) hasAny = true;
     render();
@@ -201,6 +211,13 @@
   // ---- events ----
 
   api.onChanged(() => void refresh());
+
+  // The page's strings (`shell:i18n`, on load and on every language change): the markup carries `data-i18n` keys, the
+  // list and the empty state are painted again in the new language.
+  api.onI18n((payload) => penI18n.set(payload));
+  penI18n.onChange(() => {
+    if (listed) render();
+  });
 
   searchEl.addEventListener("input", () => {
     window.clearTimeout(searchTimer);

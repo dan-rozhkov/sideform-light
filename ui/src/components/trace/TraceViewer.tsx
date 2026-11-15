@@ -1,5 +1,6 @@
 import type { BrowseTrace, BrowseTraceFrame } from "@sideform/browser-agent/agent/session";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLanguage } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { Filmstrip } from "./Filmstrip";
 import { FrameView } from "./FrameView";
@@ -75,7 +76,9 @@ function writeStepToUrl(stepIndex: number): void {
 }
 
 export function TraceViewer({ trace, initialStep, deepLink = true }: ViewerProps) {
-  const rows = useMemo(() => buildStepRows(trace), [trace]);
+  const language = useLanguage();
+  // Step summaries are translated text: rebuild them when the language changes.
+  const rows = useMemo(() => buildStepRows(trace), [trace, language]); // eslint-disable-line react-hooks/exhaustive-deps
   const flagged = useMemo(() => stepsWithProblems(trace), [trace]);
   const frames = useMemo(() => sortedFrames(trace), [trace]);
   const withDom = useMemo(() => stepsWithDom(trace), [trace]);

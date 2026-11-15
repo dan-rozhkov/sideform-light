@@ -2,6 +2,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { WarningCircleIcon, XIcon } from "@/components/icons";
 import { cva, type VariantProps } from "class-variance-authority";
 
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 const inlineAlertVariants = cva(
@@ -42,13 +43,15 @@ type InlineAlertProps = ComponentProps<"div"> &
 function InlineAlert({
   children,
   className,
-  dismissLabel = "Dismiss",
+  dismissLabel,
   icon,
   onDismiss,
   role = "alert",
   variant = "default",
   ...props
 }: InlineAlertProps) {
+  const t = useT();
+  const dismiss = dismissLabel ?? t("settings.ui.dismiss");
   const alertIcon =
     icon ??
     (variant === "error" ? <WarningCircleIcon size={18} weight="fill" /> : null);
@@ -76,8 +79,8 @@ function InlineAlert({
           type="button"
           onClick={onDismiss}
           className="shrink-0 rounded-control-xs p-0.5 text-text-muted hover:bg-secondary hover:text-text-primary"
-          aria-label={dismissLabel}
-          title={dismissLabel}
+          aria-label={dismiss}
+          title={dismiss}
         >
           <XIcon size={16} />
         </button>

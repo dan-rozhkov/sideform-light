@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { formatClock, type Timeline } from "./traceModel";
 
@@ -22,6 +23,7 @@ interface Props {
 
 /** The time axis: step spans, and the draggable playhead. */
 export function TimelineAxis({ timeline, startedAt, offset, selectedStep, onSelectStep, onSeek }: Props) {
+  const t = useT();
   const trackRef = useRef<HTMLDivElement>(null);
   const press = useRef<{ x: number; id: number; dragging: boolean } | null>(null);
   const swallowClick = useRef(false);
@@ -102,7 +104,7 @@ export function TimelineAxis({ timeline, startedAt, offset, selectedStep, onSele
           tabIndex={-1}
           data-span
           data-space-plays
-          aria-label={`Step ${s.index + 1}`}
+          aria-label={t("trace.step.number", { n: s.index + 1 })}
           onClick={() => {
             if (swallowClick.current) swallowClick.current = false;
             else onSelectStep(s.index);
@@ -118,12 +120,12 @@ export function TimelineAxis({ timeline, startedAt, offset, selectedStep, onSele
       <div
         role="slider"
         tabIndex={0}
-        aria-label="Playhead"
+        aria-label={t("trace.axis.playhead")}
         aria-orientation="horizontal"
         aria-valuemin={0}
         aria-valuemax={Math.round(span)}
         aria-valuenow={Math.round(offset)}
-        aria-valuetext={`${formatClock(offset)} of ${formatClock(span)}`}
+        aria-valuetext={t("trace.axis.valueText", { now: formatClock(offset), total: formatClock(span) })}
         data-testid="trace-playhead"
         onKeyDown={onKeyDown}
         className="group/playhead absolute -inset-y-1.5 z-10 w-3 -translate-x-1/2 cursor-ew-resize outline-none"

@@ -10,6 +10,8 @@ import {
 } from "react";
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
+import { useT } from "@/i18n";
+
 import { cn } from "@/lib/utils";
 import { usePointerDragGesture } from "@/hooks/usePointerDragGesture";
 import {
@@ -38,7 +40,7 @@ function PopoverContent({
   sideOffset = 8,
   className,
   draggable = false,
-  dragHandleContent = "Popover",
+  dragHandleContent,
   children,
   ...props
 }: PopoverPrimitive.Popup.Props &
@@ -60,6 +62,7 @@ function PopoverContent({
     /** Title or other content displayed beside the drag icon in the handle. */
     dragHandleContent?: ReactNode;
   }) {
+  const t = useT();
   const positionerRef = useRef<HTMLDivElement>(null);
   const [tornOffPosition, setTornOffPosition] = useState<Point | null>(null);
   // Pointer-capture drag/window-listener wiring, shared with PluginPanels'
@@ -161,7 +164,7 @@ function PopoverContent({
             // right regardless of a consumer's own padding overrides (e.g.
             // TypographySection's text-styles popover uses `p-0`).
             <DraggableSurfaceHandle onPointerDown={handleDragHandlePointerDown}>
-              {dragHandleContent}
+              {dragHandleContent ?? t("settings.ui.popover")}
             </DraggableSurfaceHandle>
           )}
           {children}

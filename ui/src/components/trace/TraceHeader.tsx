@@ -2,6 +2,7 @@ import type { BrowseTrace } from "@sideform/browser-agent/agent/session";
 import { SquareHalfBottomIcon } from "@/components/icons";
 import { memo } from "react";
 import { IconButton } from "@/components/ui/IconButton";
+import { useT } from "@/i18n";
 import { RunDetails } from "./RunDetails";
 import { TraceActionsMenu } from "./TraceActionsMenu";
 import { BAR_ROW, OutcomeBadge } from "./parts";
@@ -14,6 +15,7 @@ interface Props {
 }
 
 export const TraceHeader = memo(function TraceHeader({ trace, detailsOpen, onToggleDetails }: Props) {
+  const t = useT();
   const outcome = describeOutcome(trace);
   const title = goalFirstLine(trace.goal);
   return (
@@ -27,8 +29,8 @@ export const TraceHeader = memo(function TraceHeader({ trace, detailsOpen, onTog
         <RunDetails trace={trace} />
         <TraceActionsMenu trace={trace} />
         <IconButton
-          tooltip={detailsOpen ? "Hide details" : "Show details"}
-          aria-label="Details panel"
+          tooltip={detailsOpen ? t("trace.header.hideDetails") : t("trace.header.showDetails")}
+          aria-label={t("trace.header.detailsPanel")}
           variant="ghost"
           size="icon"
           aria-pressed={detailsOpen}

@@ -19,6 +19,11 @@ import { BROWSER_COMMANDS, PAGE_DRIVING_COMMANDS } from "../src/main/browserComm
 const CHANNELS: { name: string; direction: "main->renderer" | "renderer->main" }[] = [
   // Page tabs (trace, Settings) report the theme their page paints: colours that tab's own view.
   { name: "tab:theme", direction: "renderer->main" },
+  // Interface language (src/main/i18n): the ui is the source of truth and sets `<html lang>`; the panel and ui-tab preloads report
+  // the supported code, main checks the sender. `shell:i18n` hands every local shell page `{ lang, strings }`.
+  { name: "tab:language", direction: "renderer->main" },
+  { name: "panel:language", direction: "renderer->main" },
+  { name: "shell:i18n", direction: "main->renderer" },
   { name: "tabbar:state", direction: "main->renderer" },
   { name: "tabbar:theme", direction: "main->renderer" },
   { name: "tabbar:tail", direction: "main->renderer" },

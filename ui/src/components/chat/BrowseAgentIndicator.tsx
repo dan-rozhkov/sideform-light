@@ -1,3 +1,4 @@
+import { t, useT, type MessageKey } from "@/i18n";
 import { FilmStripIcon } from "@/components/icons";
 import type { SavedTrace } from "@/lib/browseTraces";
 import { traceOpener } from "@/lib/traceOpener";
@@ -27,16 +28,15 @@ function parseOutput(output: unknown): Rec | undefined {
 }
 
 const countOf = (v: unknown): number => (Array.isArray(v) ? v.length : 0);
-const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
 function expectPart(expectRaw: unknown): string | undefined {
   const e = asRecord(expectRaw);
   if (!e) return undefined;
   const text = typeof e.text === "string" && e.text !== "" ? e.text : undefined;
   const clipped = text && text.length > EXPECT_TEXT_MAX_CHARS ? `${text.slice(0, EXPECT_TEXT_MAX_CHARS)}…` : text;
-  if (typeof e.selector === "string" && e.selector !== "") return `expect ${e.selector}`;
-  if (clipped) return `expect "${clipped}"`;
-  if (typeof e.url === "string" && e.url !== "") return `expect ${e.url}`;
+  if (typeof e.selector === "string" && e.selector !== "") return t("tools.setup.expect", { value: e.selector });
+  if (clipped) return t("tools.setup.expect", { value: `"${clipped}"` });
+  if (typeof e.url === "string" && e.url !== "") return t("tools.setup.expect", { value: e.url });
   return undefined;
 }
 
@@ -52,28 +52,28 @@ function describeSetup(input: unknown, succeeded: boolean): string | undefined {
   const path = urlSummary(root?.url);
   if (path) parts.push(path);
   const steps = countOf(setup.steps);
-  if (steps > 0) parts.push(plural(steps, "step", "steps"));
+  if (steps > 0) parts.push(t("tools.setup.steps", { count: steps }));
   const mocks = countOf(setup.network);
-  if (mocks > 0) parts.push(plural(mocks, "API mock", "API mocks"));
-  if (setup.fresh === true) parts.push("fresh session");
+  if (mocks > 0) parts.push(t("tools.setup.mocks", { count: mocks }));
+  if (setup.fresh === true) parts.push(t("tools.setup.fresh"));
   const storage = asRecord(setup.storage);
   const cookies = countOf(storage?.cookies);
-  if (cookies > 0) parts.push(plural(cookies, "cookie", "cookies"));
+  if (cookies > 0) parts.push(t("tools.setup.cookies", { count: cookies }));
   const origins = countOf(storage?.origins);
-  if (origins > 0) parts.push(`storage for ${plural(origins, "origin", "origins")}`);
+  if (origins > 0) parts.push(t("tools.setup.origins", { count: origins }));
   const tabs = countOf(setup.tabs);
-  if (tabs > 0) parts.push(plural(tabs, "tab", "tabs"));
+  if (tabs > 0) parts.push(t("tools.setup.tabs", { count: tabs }));
   const expectText = expectPart(setup.expect);
-  if (expectText) parts.push(succeeded ? "expect ✓" : expectText);
+  if (expectText) parts.push(succeeded ? t("tools.setup.expectOk") : expectText);
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
-const QA_LABELS: Record<string, string> = {
-  passed: "Passed ✓",
-  failed: "Failed ✗",
-  inconclusive: "No verdict",
-  error: "Error",
-  aborted: "Stopped",
+const QA_LABELS: Record<string, MessageKey> = {
+  passed: "tools.qa.passed",
+  failed: "tools.qa.failed",
+  inconclusive: "tools.qa.inconclusive",
+  error: "tools.qa.error",
+  aborted: "tools.qa.aborted",
 };
 
 /** The `trace` field the handler adds to the result: where the stored run trace lives. */
@@ -89,6 +89,7 @@ function traceOf(v: unknown): SavedTrace | undefined {
  * cannot parse leaves the plain ToolCallIndicator.
  */
 export function BrowseAgentIndicator({ part }: { part: AnyPart }) {
+  useT(); // re-render on a language switch: the labels below are looked up with `t` while rendering
   const phase = useBrowseAgentPhaseStore((s) => s.phases[part.toolCallId as string]);
   const running = part.state !== "output-available" && part.state !== "output-error";
   const out = part.state === "output-available" ? parseOutput(part.output) : undefined;
@@ -102,8 +103,8 @@ export function BrowseAgentIndicator({ part }: { part: AnyPart }) {
   const hasResume = typeof resumedFrom === "string" && resumedFrom !== "";
 
   let statusLabel: string | undefined;
-  if (running && phase === "setup" && (setup !== undefined || hasResume)) statusLabel = "Preparing page...";
-  else if (setupFailed) statusLabel = "Setup failed";
+  if (running && phase === "setup" && (setup !== undefined || hasResume)) statusLabel = t("tools.browse.preparing");
+  else if (setupFailed) statusLabel = t("tools.browse.setupFailed");
 
   // QA mode: the package puts `qa.outcome` in the result (passed / failed /
   // anything else = no verdict reached).
@@ -111,32 +112,32 @@ export function BrowseAgentIndicator({ part }: { part: AnyPart }) {
   const qaOutcome = !setupFailed && typeof qa?.outcome === "string" ? qa.outcome : undefined;
   const qaFailed = qaOutcome === "failed" || qaOutcome === "error";
   if (qaOutcome !== undefined) {
-    statusLabel = QA_LABELS[qaOutcome] ?? "No verdict";
+    statusLabel = t(QA_LABELS[qaOutcome] ?? "tools.qa.inconclusive");
   }
 
   const extraPanes: Array<{ label: string; content: string }> = [];
-  if (setup !== undefined) extraPanes.push({ label: "Setup", content: setup });
+  if (setup !== undefined) extraPanes.push({ label: t("tools.pane.setup"), content: setup });
   if (setupFailed) {
-    const stage = typeof out?.setupStage === "string" ? out.setupStage : "unknown";
-    const error = typeof out?.error === "string" ? out.error : "The page could not be prepared.";
-    extraPanes.push({ label: "Stage", content: `${stage} — ${error}\nThe agent did not run.` });
+    const stage = typeof out?.setupStage === "string" ? out.setupStage : t("tools.browse.stageUnknown");
+    const error = typeof out?.error === "string" ? out.error : t("tools.browse.pageNotPrepared");
+    extraPanes.push({ label: t("tools.pane.stage"), content: `${stage} — ${error}\n${t("tools.browse.agentDidNotRun")}` });
   }
 
   if (qaOutcome !== undefined && typeof qa?.reason === "string" && qa.reason !== "") {
-    extraPanes.push({ label: qa.verdict === "pass" || qa.verdict === "fail" ? "Verdict" : "Reason", content: qa.reason });
+    extraPanes.push({ label: qa.verdict === "pass" || qa.verdict === "fail" ? t("tools.pane.verdict") : t("tools.pane.reason"), content: qa.reason });
   }
 
   // Counts and ids only: the checkpoint fixture never reaches the chat.
   // Only when the checkpoint really landed (not on setup_failed or an aborted run).
   if (hasResume && setupRan) {
-    extraPanes.push({ label: "Resume", content: `Resumed from ${resumedFrom}` });
+    extraPanes.push({ label: t("tools.pane.resume"), content: t("tools.browse.resumedFrom", { id: resumedFrom }) });
   }
   const checkpoint = asRecord(out?.checkpoint);
   if (checkpoint && typeof checkpoint.id === "string") {
     const partial = checkpoint.complete === false;
     extraPanes.push({
-      label: "Checkpoint",
-      content: `Checkpoint ${checkpoint.id} saved${partial ? " (partial)" : ""}`,
+      label: t("tools.pane.checkpoint"),
+      content: t(partial ? "tools.browse.checkpointSavedPartial" : "tools.browse.checkpointSaved", { id: checkpoint.id }),
     });
   }
 
@@ -164,7 +165,7 @@ export function BrowseAgentIndicator({ part }: { part: AnyPart }) {
           className="flex items-center gap-1.5 w-full rounded-sm py-0.5 text-[13px] leading-relaxed text-text-muted outline-none hover:text-text-secondary focus-visible:ring-[2px] focus-visible:ring-ring"
         >
           <FilmStripIcon size={14} className="shrink-0" aria-hidden />
-          <span className="truncate">View trace</span>
+          <span className="truncate">{t("tools.browse.viewTrace")}</span>
         </button>
       </div>
     </>

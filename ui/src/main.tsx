@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { RootErrorBoundary } from "@/components/RootErrorBoundary";
+import { installLanguageSync } from "@/i18n";
 import { loadModels } from "@/lib/chatModels";
 import { applyStoredUITheme, installUIThemeBroadcastSync, installUIThemeStorageSync } from "@/lib/uiTheme";
 
@@ -13,6 +14,8 @@ import { AppRouter } from "./AppRouter";
 applyStoredUITheme();
 installUIThemeStorageSync();
 installUIThemeBroadcastSync();
+// The interface language: <html lang> is set by the store on import; follow switches made in other views.
+installLanguageSync();
 
 // Start the model list request before the first render: the chat holds its first send while it is in flight.
 void loadModels();

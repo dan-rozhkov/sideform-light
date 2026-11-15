@@ -2,6 +2,7 @@ import type { BrowseTraceDom, BrowseTraceFrame } from "@sideform/browser-agent/a
 import { memo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
+import { t as translate, useT } from "@/i18n";
 import { BAR_ROW, FRAME_SURFACE, Segmented } from "./parts";
 import { DomView } from "./DomView";
 import { formatOffset, type FrameKind, type FrameSide } from "./traceModel";
@@ -22,18 +23,17 @@ interface Props {
   /** Set for a trace loaded from the backend: its DOM text is fetched through the backend route. */
 }
 
-const KIND_LABEL: Record<BrowseTraceFrame["kind"], string> = { step: "After step", screenshot: "Screenshot", final: "Final state" };
-
 function altLabel(frame: BrowseTraceFrame, kind: FrameKind): string {
-  if (kind === "before") return "Before step";
-  if (kind === "earlier") return "Earlier frame";
-  return KIND_LABEL[frame.kind];
+  if (kind === "before") return translate("trace.frame.beforeStep");
+  if (kind === "earlier") return translate("trace.frame.earlier");
+  return translate(frame.kind === "step" ? "trace.frame.afterStep" : frame.kind === "screenshot" ? "trace.frame.screenshot" : "trace.frame.final");
 }
 
 /** Natural sizes of loaded frames, cached per src so revisiting a frame does not jump. */
 const measuredSizes = new Map<string, { width: number; height: number }>();
 
 export const FrameView = memo(function FrameView({ frame, startedAt, position, kind = "own", compare, dom, stepNumber = 0 }: Props) {
+  const t = useT();
   // Screenshot is the default; the choice is per snapshot, so another step starts on Screenshot again.
   const [domPick, setDomPick] = useState<{ id: number | null; view: "screenshot" | "dom" }>({ id: null, view: "screenshot" });
   const showDom = !!dom && domPick.id === dom.id && domPick.view === "dom";
@@ -48,33 +48,33 @@ export const FrameView = memo(function FrameView({ frame, startedAt, position, k
   const naturalWidth = known?.width ?? frame?.width;
 
   return (
-    <section aria-label="Frame" className="flex min-h-0 min-w-0 flex-1 flex-col bg-surface-panel">
+    <section aria-label={t("trace.frame.label")} className="flex min-h-0 min-w-0 flex-1 flex-col bg-surface-panel">
       <div className={cn(BAR_ROW, "h-10 shrink-0 py-0")}>
         {dom && (
           <Segmented
-            label="Page view"
+            label={t("trace.frame.pageView")}
             value={showDom ? "dom" : "screenshot"}
             options={[
-              { value: "screenshot", label: "Screenshot" },
-              { value: "dom", label: "DOM" },
+              { value: "screenshot", label: t("trace.frame.screenshot") },
+              { value: "dom", label: t("trace.frame.dom") },
             ]}
             onChange={(view) => setDomPick({ id: dom.id, view })}
           />
         )}
         {compare && !showDom && (
           <Segmented
-            label="Frame view"
+            label={t("trace.frame.frameView")}
             value={compare.view}
             options={[
-              { value: "before", label: "Before" },
-              { value: "after", label: "After" },
+              { value: "before", label: t("trace.frame.before") },
+              { value: "after", label: t("trace.frame.after") },
             ]}
             onChange={compare.onChange}
           />
         )}
         {kind === "earlier" && (
           <p data-testid="frame-note" className="min-w-0 truncate text-xs text-amber-600 dark:text-amber-400">
-            Earlier frame — this step took no screenshot
+            {t("trace.frame.earlierNote")}
           </p>
         )}
         <span className="flex-1" />
@@ -87,7 +87,7 @@ export const FrameView = memo(function FrameView({ frame, startedAt, position, k
                   ·
                 </span>
                 <span>
-                  Frame {position.index + 1} of {position.total}
+                  {t("trace.frame.position", { index: position.index + 1, total: position.total })}
                 </span>
               </>
             )}
@@ -102,7 +102,7 @@ export const FrameView = memo(function FrameView({ frame, startedAt, position, k
             <img
               key={frame.id}
               src={frame.src}
-              alt={`${altLabel(frame, kind)} at ${formatOffset(frame.at - startedAt)}`}
+              alt={t("trace.frame.alt", { kind: altLabel(frame, kind), offset: formatOffset(frame.at - startedAt) })}
               onError={() => setFailedSrc(frame.src)}
               onLoad={(e) => {
                 const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
@@ -117,9 +117,9 @@ export const FrameView = memo(function FrameView({ frame, startedAt, position, k
               className={cn("rounded-lg object-contain shadow-[0_1px_2px_rgb(0_0_0/0.06),0_8px_24px_-8px_rgb(0_0_0/0.18)]", FRAME_SURFACE)}
             />
           ) : broken ? (
-            <EmptyState size="panel" title="This frame could not be loaded" description="The image file may have been removed." />
+            <EmptyState size="panel" title={t("trace.frame.brokenTitle")} description={t("trace.frame.brokenDescription")} />
           ) : (
-            <EmptyState size="panel" title="No frame for this step" description="Steps such as snapshot or read do not capture the page." />
+            <EmptyState size="panel" title={t("trace.frame.noneTitle")} description={t("trace.frame.noneDescription")} />
           )}
         </div>
       </div>

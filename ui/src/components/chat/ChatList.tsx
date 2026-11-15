@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatRelativeTime } from "@/lib/relativeTime";
 import { PanelEmptyState } from "@/components/PanelEmptyState";
+import { useT } from "@/i18n";
+import { displayChatTitle } from "@/lib/chatTitle";
 
 /** Chats needing an answer sort first, then most-recently-active first.
  * Copies the store's array rather than sorting it in place — the store's
@@ -18,18 +20,19 @@ function sortChats(chats: ChatSummary[]): ChatSummary[] {
 }
 
 function ChatStatus({ chat }: { chat: ChatSummary }) {
+  const t = useT();
   if (chat.needsAnswer) {
     return (
       <Badge variant="destructive" className="mt-0.5">
-        Needs your answer
+        {t("chat.needsAnswer")}
       </Badge>
     );
   }
   if (chat.isBusy) {
-    return <span className="text-xs text-text-muted">Working…</span>;
+    return <span className="text-xs text-text-muted">{t("chat.working")}</span>;
   }
   if (chat.unread) {
-    return <span className="text-xs text-text-muted">New reply</span>;
+    return <span className="text-xs text-text-muted">{t("chat.newReply")}</span>;
   }
   return (
     <span className="text-xs text-text-muted">{formatRelativeTime(chat.updatedAt)}</span>
@@ -37,6 +40,7 @@ function ChatStatus({ chat }: { chat: ChatSummary }) {
 }
 
 function ChatListRow({ chat }: { chat: ChatSummary }) {
+  const t = useT();
   const openChat = useChatStore((s) => s.openChat);
   const closeChat = useChatStore((s) => s.closeChat);
 
@@ -58,7 +62,7 @@ function ChatListRow({ chat }: { chat: ChatSummary }) {
             data-testid={`chat-unread-${chat.id}`}
             className="size-1.5 shrink-0 rounded-full bg-accent-primary"
           >
-            <span className="sr-only">Unread</span>
+            <span className="sr-only">{t("chat.unread")}</span>
           </span>
         )}
         <span className="flex min-w-0 flex-1 flex-col">
@@ -67,12 +71,12 @@ function ChatListRow({ chat }: { chat: ChatSummary }) {
               <ClockIcon
                 size={12}
                 role="img"
-                aria-label="Scheduled run"
+                aria-label={t("chat.scheduledRun")}
                 data-testid={`chat-scheduled-${chat.id}`}
                 className="shrink-0 text-text-muted"
               />
             )}
-            <span className="truncate text-xs font-semibold text-text-primary">{chat.title}</span>
+            <span className="truncate text-xs font-semibold text-text-primary">{displayChatTitle(chat)}</span>
           </span>
           <ChatStatus chat={chat} />
         </span>
@@ -80,7 +84,7 @@ function ChatListRow({ chat }: { chat: ChatSummary }) {
       <button
         type="button"
         data-testid={`delete-chat-${chat.id}`}
-        aria-label="Delete chat"
+        aria-label={t("chat.deleteChat")}
         onClick={(e) => {
           e.stopPropagation();
           closeChat(chat.id);
@@ -95,6 +99,7 @@ function ChatListRow({ chat }: { chat: ChatSummary }) {
 
 /** Landing view of the chat panel — shown while `activeChatId` is null. */
 export function ChatList() {
+  const t = useT();
   const chats = useChatStore((s) => s.chats);
   const createChat = useChatStore((s) => s.createChat);
   const sortedChats = useMemo(() => sortChats(chats), [chats]);
@@ -110,12 +115,12 @@ export function ChatList() {
           className="w-full"
         >
           <PlusIcon weight="light" />
-          New chat
+          {t("chat.newChat")}
         </Button>
       </div>
       {sortedChats.length === 0 ? (
         <PanelEmptyState icon={<PlusIcon size={20} weight="light" />}>
-          No chats yet — start one above.
+          {t("chat.noChats")}
         </PanelEmptyState>
       ) : (
         <div className="layers-scrollbar flex-1 overflow-y-auto px-2 pb-2">

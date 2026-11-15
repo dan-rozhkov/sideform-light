@@ -1,6 +1,7 @@
 import { browseTraceToPlaywrightSpec, type BrowseTrace } from "@sideform/browser-agent/agent/session";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { t } from "@/i18n";
 import { exportBrowseTrace, traceFileName } from "@/lib/browseTraceFile";
 import { saveBlob } from "@/lib/downloadFile";
 
@@ -12,15 +13,15 @@ export function useDownloadTrace(trace: BrowseTrace) {
   const [busy, setBusy] = useState(false);
   const download = async () => {
     setBusy(true);
-    const progress = toast.loading("Preparing the trace file…");
+    const progress = toast.loading(t("trace.actions.preparing"));
     try {
       const { blob, notInlined } = await exportBrowseTrace(trace);
       saveBlob(blob, traceFileName(trace));
       toast.dismiss(progress);
-      if (notInlined > 0) toast(`${notInlined} ${notInlined === 1 ? "frame stays a link" : "frames stay as links"}; the file needs network access to show ${notInlined === 1 ? "it" : "them"}.`);
+      if (notInlined > 0) toast(t("trace.actions.notInlined", { count: notInlined }));
     } catch (e) {
       console.error("Trace download failed", e);
-      toast.error("Download failed, try again.", { id: progress });
+      toast.error(t("trace.actions.downloadFailed"), { id: progress });
     } finally {
       setBusy(false);
     }

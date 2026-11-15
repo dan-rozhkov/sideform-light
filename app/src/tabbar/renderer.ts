@@ -54,6 +54,7 @@ interface PenTabbarApi {
   onOmniboxPicked(cb: (url: string) => void): void;
   onOmniboxRefresh(cb: () => void): void;
   onState(cb: (s: TabsSnapshot) => void): void;
+  onI18n(cb: (payload: { lang: string; strings: Record<string, string> }) => void): void;
   onTheme(cb: (theme: UITheme) => void): void;
   onTail(cb: (color: string | null) => void): void;
   onStripLeft(cb: (x: number) => void): void;
@@ -456,8 +457,11 @@ function createTabView(tab: TabRow): TabView {
 
   const close = document.createElement("button");
   close.className = "close";
-  close.setAttribute("aria-label", "Close tab");
-  close.title = "Close Tab";
+  // Both carry their key, so a language change re-labels the open tabs (penI18n.applyTo).
+  close.setAttribute("data-i18n-aria-label", "tabbar.closeTab");
+  close.setAttribute("data-i18n-title", "tabbar.closeTab.title");
+  close.setAttribute("aria-label", penI18n.tr("tabbar.closeTab", "Close tab"));
+  close.title = penI18n.tr("tabbar.closeTab.title", "Close Tab");
   close.addEventListener("mousedown", (e) => e.stopPropagation());
   close.addEventListener("click", () => window.penTabbar.closeTab(tab.id));
   el.appendChild(close);
@@ -465,9 +469,30 @@ function createTabView(tab: TabRow): TabView {
   return { el, progress, lead: [], leadKey: "", title, loading: false, anim: null };
 }
 
+/**
+ * The title a tab shows. Main keeps the English default titles (the agent reads them too): a blank browser tab is
+ * "New Tab", the page tabs start as "Trace" / "Settings" until their page sets a title, and Passwords / History
+ * have a fixed one. Those defaults are shown in the interface language; any other title is the page's own.
+ */
+function displayTitle(tab: TabRow): string {
+  switch (tab.kind) {
+    case "passwords":
+      return penI18n.tr("tabbar.tab.passwords", "Passwords");
+    case "history":
+      return penI18n.tr("tabbar.tab.history", "History");
+    case "settings":
+      return tab.title === "Settings" ? penI18n.tr("tabbar.tab.settings", "Settings") : tab.title;
+    case "trace":
+      return tab.title === "Trace" ? penI18n.tr("tabbar.tab.trace", "Trace") : tab.title;
+    default:
+      return tab.title === "New Tab" ? penI18n.tr("tabbar.tab.new", "New Tab") : tab.title;
+  }
+}
+
 function updateTabView(v: TabView, tab: TabRow, active: boolean, agentWorking: boolean): void {
   v.el.classList.toggle("active", active);
-  if (v.title.textContent !== tab.title) v.title.textContent = tab.title;
+  const shownTitle = displayTitle(tab);
+  if (v.title.textContent !== shownTitle) v.title.textContent = shownTitle;
   // Every tab has a leading icon; the agent's cursor takes its slot while it drives the tab.
   const leadKey = agentWorking ? "agent" : tab.kind;
   if (v.leadKey !== leadKey) {
@@ -475,7 +500,8 @@ function updateTabView(v: TabView, tab: TabRow, active: boolean, agentWorking: b
     if (agentWorking) {
       const hint = document.createElement("span");
       hint.className = "sr-only";
-      hint.textContent = "Agent is working";
+      hint.setAttribute("data-i18n", "tabbar.agentWorking");
+      hint.textContent = penI18n.tr("tabbar.agentWorking", "Agent is working");
       v.lead = [agentCursorIcon(), hint];
     } else {
       v.lead = [tabIconEl(tab)];
@@ -782,16 +808,36 @@ window.penTabbar.onStripLeft((x) => {
   document.documentElement.style.setProperty("--tab-strip-left", `${x}px`);
 });
 
+/** The sidebar toggle's pressed state and its label (they name the action it does next). Also re-run on a language change. */
+let panelCollapsedNow = false;
+function applyPanelToggle(collapsed: boolean): void {
+  panelCollapsedNow = collapsed;
+  const name = collapsed ? "show" : "hide";
+  const label = collapsed ? "Show agent panel" : "Hide agent panel";
+  const title = collapsed ? "Show agent panel (Cmd/Ctrl+Alt+B)" : "Hide agent panel (Cmd/Ctrl+Alt+B)";
+  togglePanelEl.setAttribute("aria-pressed", String(!collapsed));
+  // The key attributes follow the state too: a language change re-applies them through penI18n.applyTo.
+  togglePanelEl.setAttribute("data-i18n-aria-label", "tabbar.panel." + name);
+  togglePanelEl.setAttribute("data-i18n-title", "tabbar.panel." + name + ".title");
+  togglePanelEl.setAttribute("aria-label", penI18n.tr("tabbar.panel." + name, label));
+  togglePanelEl.title = penI18n.tr("tabbar.panel." + name + ".title", title);
+}
+
+// The dictionary of this page (`shell:i18n`): main sends it on load and on every language change. The markup carries the
+// keys (applied by penI18n); the dynamic parts are redone here.
+window.penTabbar.onI18n((payload) => penI18n.set(payload));
+penI18n.onChange(() => {
+  applyPanelToggle(panelCollapsedNow);
+  if (lastState) renderTabs(lastState);
+});
+
 window.penTabbar.onState((state) => {
   // The tab row's left padding is max(mac traffic-light padding, this) — see tabbar.css.
   if (state.islandGap !== undefined) document.documentElement.style.setProperty("--island-gap", `${state.islandGap}px`);
   if (state.islandRadius !== undefined) document.documentElement.style.setProperty("--island-radius", `${state.islandRadius}px`);
   if (state.addressRowHeight !== undefined) document.documentElement.style.setProperty("--address-row-height", `${state.addressRowHeight}px`);
   if (state.tabRowHeight !== undefined) document.documentElement.style.setProperty("--tab-row-height", `${state.tabRowHeight}px`);
-  const collapsed = state.panelCollapsed === true;
-  togglePanelEl.setAttribute("aria-pressed", String(!collapsed));
-  togglePanelEl.setAttribute("aria-label", collapsed ? "Show agent panel" : "Hide agent panel");
-  togglePanelEl.title = collapsed ? "Show agent panel (Cmd/Ctrl+Alt+B)" : "Hide agent panel (Cmd/Ctrl+Alt+B)";
+  applyPanelToggle(state.panelCollapsed === true);
   shellMotion = state.motion !== false;
   document.documentElement.style.setProperty("--tab-strip-left", `${state.tabStripLeft ?? 0}px`);
   lastState = state;

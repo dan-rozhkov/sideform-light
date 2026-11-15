@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/IconButton";
 import { IconSwap } from "@/components/ui/IconSwap";
 import { Switch } from "@/components/ui/switch";
+import { t, useT } from "@/i18n";
 import type { McpSettingsView } from "@/lib/desktopBridge";
 import { claudeCodeSnippet, hermesSnippet } from "@/lib/mcpSnippets";
 
@@ -17,13 +18,13 @@ const MASK = "••••••••••••••••";
 function statusText(view: McpSettingsView): string {
   switch (view.status.state) {
     case "off":
-      return "Off";
+      return t("settings.mcp.status.off");
     case "starting":
-      return "Starting…";
+      return t("settings.mcp.status.starting");
     case "listening":
-      return `Listening on ${view.url}`;
+      return t("settings.mcp.status.listening", { url: view.url });
     case "error":
-      return view.status.error ? `Could not start: ${view.status.error}` : "Could not start";
+      return view.status.error ? t("settings.mcp.status.error", { error: view.status.error }) : t("settings.mcp.status.errorBare");
   }
 }
 
@@ -35,6 +36,7 @@ const STATUS_DOT: Record<McpSettingsView["status"]["state"], string> = {
 };
 
 function CopyButton({ text, label, size = "icon" }: { text: string; label: string; size?: "icon" | "icon-sm" }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -49,18 +51,19 @@ function CopyButton({ text, label, size = "icon" }: { text: string; label: strin
     );
   };
   return (
-    <IconButton type="button" variant="ghost" size={size} tooltip={copied ? "Copied" : label} aria-label={label} onClick={copy}>
+    <IconButton type="button" variant="ghost" size={size} tooltip={copied ? t("common.copied") : label} aria-label={label} onClick={copy}>
       <IconSwap active={copied} activeIcon={<CheckIcon size={16} aria-hidden />} inactiveIcon={<CopyIcon size={16} aria-hidden />} />
     </IconButton>
   );
 }
 
 function Snippet({ title, text, shown }: { title: string; text: string; shown: string }) {
+  const t = useT();
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
         <h4 className="text-xs font-medium text-text-primary">{title}</h4>
-        <CopyButton text={text} label={`Copy ${title} snippet`} size="icon-sm" />
+        <CopyButton text={text} label={t("settings.mcp.snippet.copy", { title })} size="icon-sm" />
       </div>
       <pre className="overflow-x-auto rounded-control-lg bg-secondary px-3 py-2 text-xs/relaxed text-secondary-foreground">
         <code>{shown}</code>
@@ -70,6 +73,7 @@ function Snippet({ title, text, shown }: { title: string; text: string; shown: s
 }
 
 function McpControls({ api }: { api: NonNullable<NonNullable<typeof window.penDesktop>["mcp"]> }) {
+  const t = useT();
   const [view, setView] = useState<McpSettingsView | null>(null);
   // An error of a toggle / regenerate: only the next user action clears it. A poll never does.
   const [actionError, setError] = useState<string | null>(null);
@@ -98,7 +102,7 @@ function McpControls({ api }: { api: NonNullable<NonNullable<typeof window.penDe
         setPollError(null);
       },
       (e: unknown) =>
-        aliveRef.current && !busyRef.current && setPollError(e instanceof Error ? e.message : "Could not read the MCP settings"),
+        aliveRef.current && !busyRef.current && setPollError(e instanceof Error ? e.message : t("settings.mcp.readError")),
     );
   }, [api]);
 
@@ -131,13 +135,13 @@ function McpControls({ api }: { api: NonNullable<NonNullable<typeof window.penDe
         if ("error" in out) setError(out.error);
         else setView(out);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Something went wrong");
+        setError(e instanceof Error ? e.message : t("settings.mcp.genericError"));
       } finally {
         busyRef.current = false;
         setBusy(false);
       }
     },
-    [],
+    [t],
   );
 
   const enabled = view?.enabled ?? false;
@@ -149,25 +153,25 @@ function McpControls({ api }: { api: NonNullable<NonNullable<typeof window.penDe
     <>
       <SettingsGroup
         inline
-        title="Let other agents give tasks to Sideform"
-        description="Agents on this computer, such as Hermes Agent or Claude Code, can start tasks and read the results. Off by default."
+        title={t("settings.mcp.enable.title")}
+        description={t("settings.mcp.enable.description")}
       >
         <Switch
-          aria-label="Let other agents give tasks to Sideform"
+          aria-label={t("settings.mcp.enable.title")}
           checked={enabled}
           disabled={view === null || busy}
           onCheckedChange={(next) => void run(() => api.set({ enabled: next }))}
         />
       </SettingsGroup>
 
-      <SettingsGroup title="Status">
+      <SettingsGroup title={t("settings.mcp.status.title")}>
         <p
           role="status"
           data-testid="mcp-status"
           className="inline-flex h-7 max-w-full items-center gap-2 rounded-control bg-secondary px-3 text-xs text-text-primary"
         >
           <span aria-hidden className={`size-2 shrink-0 rounded-full ${view ? STATUS_DOT[view.status.state] : STATUS_DOT.off}`} />
-          <span className="truncate">{view ? statusText(view) : error ? "Unknown" : "Loading…"}</span>
+          <span className="truncate">{view ? statusText(view) : error ? t("settings.mcp.status.unknown") : t("common.loading")}</span>
         </p>
         {error && (
           <p role="alert" className="mt-2 text-xs text-destructive">
@@ -178,16 +182,16 @@ function McpControls({ api }: { api: NonNullable<NonNullable<typeof window.penDe
 
       {view && (
         <>
-          <SettingsGroup title="Address">
+          <SettingsGroup title={t("settings.mcp.address.title")}>
             <div className="flex items-center gap-1">
               <code data-testid="mcp-url" className="block h-7 min-w-0 flex-1 truncate rounded-control bg-secondary px-3 text-xs leading-7">
                 {url}
               </code>
-              <CopyButton text={url} label="Copy address" />
+              <CopyButton text={url} label={t("settings.mcp.address.copy")} />
             </div>
           </SettingsGroup>
 
-          <SettingsGroup title="Token" description="Clients send it with every request. Keep it private.">
+          <SettingsGroup title={t("settings.mcp.token.title")} description={t("settings.mcp.token.description")}>
             <div className="flex items-center gap-1">
               <code data-testid="mcp-token" className="block h-7 min-w-0 flex-1 truncate rounded-control bg-secondary px-3 text-xs leading-7">
                 {shownToken}
@@ -196,23 +200,23 @@ function McpControls({ api }: { api: NonNullable<NonNullable<typeof window.penDe
                 type="button"
                 variant="ghost"
                 size="icon"
-                tooltip={reveal ? "Hide token" : "Show token"}
-                aria-label={reveal ? "Hide token" : "Show token"}
+                tooltip={reveal ? t("settings.mcp.token.hide") : t("settings.mcp.token.show")}
+                aria-label={reveal ? t("settings.mcp.token.hide") : t("settings.mcp.token.show")}
                 aria-pressed={reveal}
                 onClick={() => setReveal((r) => !r)}
               >
                 <IconSwap active={reveal} activeIcon={<EyeSlashIcon size={16} aria-hidden />} inactiveIcon={<EyeIcon size={16} aria-hidden />} />
               </IconButton>
-              <CopyButton text={token} label="Copy token" />
+              <CopyButton text={token} label={t("settings.mcp.token.copy")} />
             </div>
             <div className="mt-3">
               <Button type="button" variant="outline" size="lg" disabled={busy} onClick={() => void run(() => api.regenerateToken())}>
-                Regenerate token
+                {t("settings.mcp.token.regenerate")}
               </Button>
             </div>
           </SettingsGroup>
 
-          <SettingsGroup title="Connect a client" description="Tasks run with everything the Sideform agent can do, including saved logins.">
+          <SettingsGroup title={t("settings.mcp.connect.title")} description={t("settings.mcp.connect.description")}>
             <div className="flex flex-col gap-4">
               <Snippet
                 title="Hermes Agent (~/.hermes/config.yaml)"
@@ -229,13 +233,14 @@ function McpControls({ api }: { api: NonNullable<NonNullable<typeof window.penDe
 }
 
 export function McpSection() {
+  const t = useT();
   const api = typeof window !== "undefined" ? window.penDesktop?.mcp : undefined;
   return (
-    <SettingsSection title="MCP">
+    <SettingsSection title={t("settings.nav.mcp")}>
       {api ? (
         <McpControls api={api} />
       ) : (
-        <SettingsGroup title="Not available in this version" description="Update Sideform Light to let other agents give it tasks." />
+        <SettingsGroup title={t("settings.mcp.unavailable.title")} description={t("settings.mcp.unavailable.description")} />
       )}
     </SettingsSection>
   );

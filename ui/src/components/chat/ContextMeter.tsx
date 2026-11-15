@@ -1,3 +1,4 @@
+import { useLanguage } from "@/i18n";
 import { useChatStore } from "@/store/chatStore";
 import { getModelContextWindow } from "@/lib/chatModels";
 import { contextFillPercent, contextMeterLabel } from "@/lib/contextMeter";
@@ -27,6 +28,7 @@ const DANGER_THRESHOLD = 90;
  * hasn't completed a turn yet, has nothing honest to show.
  */
 export function ContextMeter() {
+  useLanguage(); // re-render on a language switch: the label is translated
   const activeChatId = useChatStore((s) => s.activeChatId);
   const model = useChatStore((s) => s.model);
   const contextTokens = useChatStore((s) =>

@@ -4,24 +4,24 @@
     <meta charset="utf-8" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>History</title>
+    <title data-i18n="history.title">History</title>
     <link rel="stylesheet" href="../tabbar/tokens.css" />
     <link rel="stylesheet" href="history.css" />
   </head>
   <body>
     <div class="page">
       <header class="head">
-        <h1 class="title">History</h1>
+        <h1 class="title" data-i18n="history.title">History</h1>
         <div class="toolbar">
           <label class="search">
             <span class="icon" data-pen-slot="MagnifyingGlass"></span>
-            <input id="search" type="search" placeholder="Search history" aria-label="Search history" autocomplete="off" spellcheck="false" />
+            <input id="search" type="search" placeholder="Search history" aria-label="Search history" data-i18n-placeholder="history.searchPlaceholder" data-i18n-aria-label="history.searchPlaceholder" autocomplete="off" spellcheck="false" />
           </label>
-          <button id="clear-btn" class="btn-outline" type="button" disabled>Clear history…</button>
+          <button id="clear-btn" class="btn-outline" type="button" disabled data-i18n="history.clear">Clear history…</button>
         </div>
       </header>
       <main id="scroll" class="scroll">
-        <div id="list" class="list" role="list" aria-label="Visited pages"></div>
+        <div id="list" class="list" role="list" aria-label="Visited pages" data-i18n-aria-label="history.listAria"></div>
         <div id="empty" class="empty" hidden>
           <p id="empty-title" class="empty-title"></p>
           <p id="empty-text" class="empty-text"></p>
@@ -29,6 +29,7 @@
       </main>
     </div>
 
+    <script src="../tabbar/i18nClient.js"></script>
     <script src="../tabbar/glyphs.js"></script>
     <script src="renderer.js"></script>
   </body>

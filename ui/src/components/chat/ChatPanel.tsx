@@ -44,6 +44,8 @@ import { buildAnswerState, serializeAnswers } from "./askUserAnswers";
 import { useMcpBridge } from "@/hooks/useMcpBridge";
 import { reportChatActivity } from "@/lib/mcpTasks";
 import type { AskUserQuestion } from "@/types/askUser";
+import { useT } from "@/i18n";
+import { displayChatTitle } from "@/lib/chatTitle";
 
 const PARALLEL_COUNT_OPTIONS = [
   { value: "1", label: "x1" },
@@ -75,9 +77,11 @@ function OpenChatHeader({
 }: {
   chatId: string;
 }) {
-  const chatTitle = useChatStore(
-    (s) => s.chats.find((c) => c.id === chatId)?.title ?? "",
-  );
+  const t = useT();
+  const chatTitle = useChatStore((s) => {
+    const chat = s.chats.find((c) => c.id === chatId);
+    return chat ? displayChatTitle(chat) : "";
+  });
   const showChatList = useChatStore((s) => s.showChatList);
   const createChat = useChatStore((s) => s.createChat);
   const activeActions = useChatStore((s) => s.sessionActions[chatId]);
@@ -89,7 +93,7 @@ function OpenChatHeader({
         variant="ghost"
         size="icon"
         onClick={() => showChatList()}
-        tooltip="All chats"
+        tooltip={t("chat.allChats")}
       >
         <ArrowLeftIcon className="size-4" weight="light" />
       </IconButton>
@@ -104,7 +108,7 @@ function OpenChatHeader({
         variant="ghost"
         size="icon"
         onClick={() => createChat()}
-        tooltip="New chat"
+        tooltip={t("chat.newChat")}
       >
         <PlusIcon className="size-4" weight="light" />
       </IconButton>
@@ -117,7 +121,7 @@ function OpenChatHeader({
                 data-testid="chat-menu-trigger"
                 variant="ghost"
                 size="icon"
-                tooltip="Chat options"
+                tooltip={t("chat.chatOptions")}
               >
                 <DotsThreeVerticalIcon className="size-4" weight="bold" />
               </IconButton>
@@ -129,14 +133,14 @@ function OpenChatHeader({
               data-testid="chat-menu-download"
               onClick={() => activeActions?.exportChat()}
             >
-              Download chat
+              {t("chat.downloadChat")}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               data-testid="chat-menu-clear"
               onClick={() => activeActions?.clearChat()}
             >
-              Clear chat
+              {t("chat.clearChat")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -190,9 +194,11 @@ function ChatSession({
   const markChatUnread = useChatStore((s) => s.markChatUnread);
   const markChatRead = useChatStore((s) => s.markChatRead);
   const setChatActivity = useChatStore((s) => s.setChatActivity);
-  const chatTitle = useChatStore(
-    (s) => s.chats.find((c) => c.id === sessionId)?.title,
-  );
+  const t = useT();
+  const chatTitle = useChatStore((s) => {
+    const chat = s.chats.find((c) => c.id === sessionId);
+    return chat ? displayChatTitle(chat) : undefined;
+  });
 
   // Derives the chat's title from its first user message, once. `applyAutoTitle`
   // itself is a no-op once the chat's `titleIsAuto` flag is cleared, but the ref
@@ -394,9 +400,9 @@ function ChatSession({
           <InlineAlert
             variant="error"
             onDismiss={clearError}
-            dismissLabel="Dismiss error"
+            dismissLabel={t("chat.dismissError")}
           >
-            {error.message || "Something went wrong"}
+            {error.message || t("chat.somethingWrong")}
           </InlineAlert>
         </div>
       )}
@@ -406,11 +412,13 @@ function ChatSession({
       {retryState && !error && (
         <div className="px-3 pt-2">
           <InlineAlert role="status">
-            Connection problem — retrying
             {retryState.delayMs !== undefined
-              ? ` in ${Math.max(1, Math.round(retryState.delayMs / 1000))} s`
-              : ""}{" "}
-            (attempt {retryState.attempt}/{retryState.maxAttempts})…
+              ? t("chat.retryingIn", {
+                  seconds: Math.max(1, Math.round(retryState.delayMs / 1000)),
+                  attempt: retryState.attempt,
+                  max: retryState.maxAttempts,
+                })
+              : t("chat.retrying", { attempt: retryState.attempt, max: retryState.maxAttempts })}
           </InlineAlert>
         </div>
       )}
@@ -460,6 +468,7 @@ export function ChatPanelContent({
 } = {}) {
   const isStandalone = variant === "standalone";
   useMcpBridge();
+  const t = useT();
   const model = useChatStore((s) => s.model);
   const setModel = useChatStore((s) => s.setModel);
   const modelOptions = useModelOptions();
@@ -492,7 +501,7 @@ export function ChatPanelContent({
                 type="button"
                 variant="ghost"
                 size="icon"
-                tooltip={`Model: ${activeModelLabel}`}
+                tooltip={t("chat.model", { name: activeModelLabel })}
                 className="size-[30px] hover:bg-secondary"
               >
                 <BrainIcon size={16} weight="light" />
@@ -510,8 +519,8 @@ export function ChatPanelContent({
               })}
             </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => openSettings("schedules")}>Scheduled tasks…</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => openSettings()}>Settings…</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openSettings("schedules")}>{t("chat.scheduledTasks")}</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openSettings()}>{t("chat.settings")}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -523,7 +532,7 @@ export function ChatPanelContent({
               variant="ghost"
               size="default"
               className="inline-flex h-[30px] shrink-0 items-center gap-1 rounded-control-lg px-1.5 text-xs leading-none hover:bg-secondary"
-              aria-label={`Parallel agents: x${parallelCount}`}
+              aria-label={t("chat.parallelAgents", { count: parallelCount })}
             >
               <LightningIcon size={16} weight="light" />
               <span>x{parallelCount}</span>
@@ -552,13 +561,13 @@ export function ChatPanelContent({
                 type="button"
                 onClick={stop}
                 className="inline-flex size-[30px] shrink-0 items-center justify-center rounded-control-lg hover:bg-secondary transition-colors"
-                aria-label="Stop"
+                aria-label={t("chat.stop")}
               >
                 <StopIcon size={16} weight="light" />
               </button>
             }
           />
-          <TooltipContent>Stop</TooltipContent>
+          <TooltipContent>{t("chat.stop")}</TooltipContent>
         </Tooltip>
       )}
       {/* Stop above always stays available while loading; this button is the
@@ -578,14 +587,14 @@ export function ChatPanelContent({
                     ? "inline-flex size-[30px] shrink-0 items-center justify-center rounded-control-lg bg-accent-primary text-white hover:bg-accent-primary/90 transition-colors"
                     : "inline-flex size-[30px] shrink-0 items-center justify-center rounded-control-lg border border-border-default bg-transparent text-text-muted hover:bg-transparent disabled:opacity-100"
                 }
-                aria-label={isLoading ? "Send now" : "Send"}
+                aria-label={isLoading ? t("chat.sendNow") : t("chat.send")}
               >
                 <ArrowUpIcon size={16} weight="light" />
               </button>
             }
           />
           <TooltipContent>
-            {isLoading ? "Stop the agent and send" : "Send"}
+            {isLoading ? t("chat.stopAndSend") : t("chat.send")}
           </TooltipContent>
         </Tooltip>
       )}
@@ -597,7 +606,7 @@ export function ChatPanelContent({
       {!isStandalone && (
         <div className="flex h-[49px] items-center gap-2 px-4 py-3 border-b border-border-default shrink-0">
           <span className="text-sm font-medium text-text-primary flex-1">
-            Sideform Agent
+            {t("chat.agentTitle")}
           </span>
         </div>
       )}

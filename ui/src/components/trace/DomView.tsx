@@ -1,6 +1,7 @@
 import type { BrowseTraceDom } from "@sideform/browser-agent/agent/session";
 import { useEffect, useState } from "react";
 import { EmptyState } from "@/components/ui/empty-state";
+import { useT } from "@/i18n";
 import { FRAME_SURFACE } from "./parts";
 import { cn } from "@/lib/utils";
 import { buildDomSrcdoc } from "./domSrcdoc";
@@ -14,6 +15,7 @@ type Loaded = { src: string; text: string } | { src: string; error: string };
  * would run it without the sandbox.
  */
 export function DomView({ dom, stepNumber }: { dom: BrowseTraceDom; stepNumber: number }) {
+  const t = useT();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   // Per DOM view (the iframe is keyed by the snapshot): off until the viewer asks.
   const [remote, setRemote] = useState<{ id: number; on: boolean }>({ id: dom.id, on: false });
@@ -37,12 +39,12 @@ export function DomView({ dom, stepNumber }: { dom: BrowseTraceDom; stepNumber: 
   if (!current) {
     return (
       <p role="status" data-testid="dom-loading" className="text-sm text-text-muted">
-        Loading the DOM snapshot…
+        {t("trace.dom.loading")}
       </p>
     );
   }
   if ("error" in current) {
-    return <EmptyState size="panel" title="The DOM snapshot could not be loaded" description={current.error} />;
+    return <EmptyState size="panel" title={t("trace.dom.errorTitle")} description={current.error} />;
   }
   const caption = where ? (
     <p data-testid="dom-where" className="mb-1 truncate text-xs text-text-muted">
@@ -56,13 +58,13 @@ export function DomView({ dom, stepNumber }: { dom: BrowseTraceDom; stepNumber: 
         {caption}
         {from !== undefined && from !== dom.stepIndex && (
           <p data-testid="dom-ax-source" className="mb-1 text-xs text-text-muted">
-            Accessibility tree from step {from + 1} (no page change since)
+            {t("trace.dom.axSource", { step: from + 1 })}
           </p>
         )}
       <pre
         data-testid="dom-ax"
         tabIndex={0}
-        aria-label={`Accessibility tree of step ${stepNumber}`}
+        aria-label={t("trace.dom.axLabel", { step: stepNumber })}
         className={cn("min-h-0 w-full flex-1 overflow-auto rounded-lg p-3 text-left font-mono text-xs/relaxed whitespace-pre text-text-primary", FRAME_SURFACE)}
       >
         {current.text}
@@ -75,15 +77,15 @@ export function DomView({ dom, stepNumber }: { dom: BrowseTraceDom; stepNumber: 
       {caption}
       <label
         className="mb-1 flex w-fit items-center gap-1.5 text-xs text-text-muted"
-        title="Off: the snapshot loads nothing from the network. On: its images load from the recorded site, which contacts that site."
+        title={t("trace.dom.remoteImagesHint")}
       >
         <input type="checkbox" checked={remoteImages} onChange={(e) => setRemote({ id: dom.id, on: e.target.checked })} />
-        Load remote images
+        {t("trace.dom.remoteImages")}
       </label>
     <iframe
       key={dom.id}
       data-testid="dom-frame"
-      title={`DOM snapshot of step ${stepNumber}`}
+      title={t("trace.dom.frameTitle", { step: stepNumber })}
       sandbox=""
       referrerPolicy="no-referrer"
       srcDoc={buildDomSrcdoc(current.text, remoteImages)}

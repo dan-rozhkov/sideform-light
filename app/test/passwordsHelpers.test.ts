@@ -7,7 +7,7 @@ const h = require("../src/passwords/helpers.ts") as {
   matchesQuery(e: { origin: string; username: string; label: string }, q: string): boolean;
   duplicateHosts(origins: string[]): string[];
   rowSuffixes(e: { id: string; origin: string; username: string; label: string }[]): Map<string, string>;
-  formatLastUsed(ts: number | undefined, now: number): string;
+  formatLastUsed(ts: number | undefined, now: number, i18n?: { lang: string; tr(key: string, fallback: string): string }): string;
 };
 
 describe("displayHost", () => {
@@ -95,5 +95,25 @@ describe("rowSuffixes", () => {
     const m = h.rowSuffixes([e("1", "https://a.com", "x"), e("2", "http://a.com", "X")]);
     expect(m.get("1")).toBe("x \u00b7 https://a.com");
     expect(m.get("2")).toBe("X \u00b7 http://a.com");
+  });
+});
+
+describe("formatLastUsed in another language", () => {
+  const now = Date.UTC(2026, 10, 15, 12);
+  const ru = {
+    lang: "ru",
+    tr: (key: string, fallback: string) => ({ "passwords.never": "Никогда", "passwords.justNow": "Только что", "passwords.yesterday": "Вчера" })[key] ?? fallback,
+  };
+  it("uses the dictionary words and Intl phrases of the language", () => {
+    expect(h.formatLastUsed(undefined, now, ru)).toBe("Никогда");
+    expect(h.formatLastUsed(now - 5000, now, ru)).toBe("Только что");
+    expect(h.formatLastUsed(now - 5 * 60000, now, ru)).toBe("5 минут назад");
+    expect(h.formatLastUsed(now - 2 * 60000, now, ru)).toBe("2 минуты назад");
+    expect(h.formatLastUsed(now - 30 * 3600000, now, ru)).toBe("Вчера");
+    expect(h.formatLastUsed(now - 3 * 86400000, now, { lang: "de", tr: (_k, f) => f })).toBe("vor 3 Tagen");
+  });
+  it("old dates use the language's own locale", () => {
+    expect(h.formatLastUsed(now - 20 * 86400000, now, ru)).toMatch(/2026/);
+    expect(h.formatLastUsed(now - 20 * 86400000, now, ru)).toMatch(/окт/);
   });
 });

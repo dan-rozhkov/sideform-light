@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useT, type TFunction } from "@/i18n";
 import { CaretDownIcon } from "@/components/icons";
 import { SimpleMarkdown } from "./SimpleMarkdown";
 import { Shimmer } from "@/components/ai-elements/shimmer";
@@ -41,15 +42,16 @@ function useThinkingDuration(isStreaming: boolean) {
   return elapsed;
 }
 
-function formatDuration(seconds: number): string {
-  if (seconds < 1) return "less 1s";
-  if (seconds < 60) return `${seconds}s`;
+function formatDuration(seconds: number, t: TFunction): string {
+  if (seconds < 1) return t("tools.duration.lessThanSecond");
+  if (seconds < 60) return t("tools.duration.seconds", { s: seconds });
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
-  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  return s > 0 ? t("tools.duration.minutesSeconds", { m, s }) : t("tools.duration.minutes", { m });
 }
 
 export function ThinkingIndicator({ part }: ThinkingIndicatorProps) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const isStreaming = part.state === "streaming";
   const duration = useThinkingDuration(isStreaming);
@@ -62,13 +64,13 @@ export function ThinkingIndicator({ part }: ThinkingIndicatorProps) {
       >
         {isStreaming ? (
           <Shimmer as="span" className="truncate">
-            Thinking...
+            {t("tools.thinking")}
           </Shimmer>
         ) : (
-          <span className="truncate">Thought</span>
+          <span className="truncate">{t("tools.thought")}</span>
         )}
         <span className="text-text-disabled shrink-0">
-          {formatDuration(duration)}
+          {formatDuration(duration, t)}
         </span>
         <CaretDownIcon
           size={10}

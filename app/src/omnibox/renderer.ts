@@ -8,6 +8,7 @@
   const bridge = (window as unknown as {
     penOmnibox: {
       onRender(cb: (p: { items: Item[]; selected: number; query: string; theme: "light" | "dark"; isMac: boolean }) => void): void;
+      onI18n(cb: (payload: { lang: string; strings: Record<string, string> }) => void): void;
       pick(url: string): void;
       remove(url: string): void;
       openHistory(): void;
@@ -80,11 +81,11 @@
     row.appendChild(title);
     row.appendChild(div("url", displayUrl(item.url)));
     const trail = div("trail");
-    trail.appendChild(div("time", formatRelativeTime(item.lastVisitedAt, now)));
+    trail.appendChild(div("time", formatRelativeTime(item.lastVisitedAt, now, penI18n)));
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "remove";
-    remove.setAttribute("aria-label", "Remove from history");
+    remove.setAttribute("aria-label", penI18n.tr("omnibox.remove", "Remove from history"));
     remove.textContent = "×";
     onPrimaryMouseDown(remove, () => bridge.remove(item.url));
     trail.appendChild(remove);
@@ -95,17 +96,21 @@
     return row;
   }
 
+  // The popover's strings (`shell:i18n`, on load and on every language change). The rows are rebuilt on every render, so
+  // the next render uses the new language; the listbox label is markup (`data-i18n-aria-label`).
+  bridge.onI18n((payload) => penI18n.set(payload));
+
   bridge.onRender(({ items, selected, query, theme, isMac }) => {
     document.documentElement.dataset.theme = theme;
     const now = Date.now();
     card.replaceChildren();
-    if (query.trim() === "") card.appendChild(div("header", "Recent"));
+    if (query.trim() === "") card.appendChild(div("header", penI18n.tr("omnibox.recent", "Recent")));
     const rows = div("rows");
     items.forEach((item, i) => rows.appendChild(itemRow(item, i === selected, query, now)));
     card.appendChild(rows);
     card.appendChild(div("divider"));
     const footer = div("footer");
-    footer.appendChild(div("label", "Show all history"));
+    footer.appendChild(div("label", penI18n.tr("omnibox.showAll", "Show all history")));
     footer.appendChild(div("hint", isMac ? "⌘Y" : "Ctrl+H"));
     onPrimaryMouseDown(footer, () => bridge.openHistory());
     card.appendChild(footer);

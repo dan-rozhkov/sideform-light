@@ -6,6 +6,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { CHEVRON_WEIGHT } from "@/components/ui/chevron";
+import { useT } from "@/i18n";
 
 interface ImageLightboxProps {
   urls: string[];
@@ -21,6 +22,7 @@ export function ImageLightbox({
   onClose,
   onNavigate,
 }: ImageLightboxProps) {
+  const t = useT();
   const hasMultiple = urls.length > 1;
 
   const goTo = (next: number) => {
@@ -63,7 +65,7 @@ export function ImageLightbox({
     >
       <img
         src={url}
-        alt="attached image"
+        alt={t("chat.attachedImage")}
         onError={onClose}
         className="max-w-[90vw] max-h-[90vh] rounded-lg img-outline"
       />
@@ -79,14 +81,14 @@ export function ImageLightbox({
                     e.stopPropagation();
                     prev();
                   }}
-                  aria-label="Previous image"
+                  aria-label={t("chat.previousImage")}
                   className="absolute left-4 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
                 >
                   <CaretLeftIcon size={24} weight={CHEVRON_WEIGHT} />
                 </button>
               }
             />
-            <TooltipContent>Previous image</TooltipContent>
+            <TooltipContent>{t("chat.previousImage")}</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -96,14 +98,14 @@ export function ImageLightbox({
                     e.stopPropagation();
                     next();
                   }}
-                  aria-label="Next image"
+                  aria-label={t("chat.nextImage")}
                   className="absolute right-4 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
                 >
                   <CaretRightIcon size={24} weight={CHEVRON_WEIGHT} />
                 </button>
               }
             />
-            <TooltipContent>Next image</TooltipContent>
+            <TooltipContent>{t("chat.nextImage")}</TooltipContent>
           </Tooltip>
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/70 text-xs">
             {index + 1} / {urls.length}

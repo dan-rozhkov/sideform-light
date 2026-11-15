@@ -2,6 +2,7 @@ import { FileXIcon, MagnifyingGlassIcon, PlugsIcon, WarningCircleIcon } from "@/
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { useT } from "@/i18n";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { TraceLoadResult } from "@/lib/browseTraceLoad";
 
@@ -11,8 +12,9 @@ function Bar({ className }: { className: string }) {
 
 /** Shape of the loaded page, so nothing jumps when the trace arrives. */
 export function TraceSkeleton() {
+  const t = useT();
   return (
-    <div role="status" aria-label="Loading trace" className="flex h-dvh flex-col bg-surface-panel">
+    <div role="status" aria-label={t("trace.loading")} className="flex h-dvh flex-col bg-surface-panel">
       <div className="space-y-3 border-b border-border-default bg-surface-panel px-4 py-3">
         <Bar className="h-5 w-2/3" />
         <Bar className="h-3.5 w-1/2" />
@@ -51,11 +53,14 @@ function Message({ icon, title, children, action, fill }: { icon: ReactNode; tit
 type Failure = Extract<TraceLoadResult, { ok: false }>;
 
 /** Secondary way out of a dead end: pick a trace file instead. */
-const openFile = (
-  <Link to="/trace" className={buttonVariants({ variant: "outline" })}>
-    Open a trace file
-  </Link>
-);
+function OpenFileLink() {
+  const t = useT();
+  return (
+    <Link to="/trace" className={buttonVariants({ variant: "outline" })}>
+      {t("trace.openFile")}
+    </Link>
+  );
+}
 
 /** The failure message of a trace that could not be shown. */
 export function TraceFailure({ failure, onRetry }: { failure: Failure; onRetry(): void }) {
@@ -63,23 +68,25 @@ export function TraceFailure({ failure, onRetry }: { failure: Failure; onRetry()
 }
 
 function FailureMessage({ failure, onRetry, fill }: { failure: Failure; onRetry(): void; fill?: boolean }) {
+  const t = useT();
+  const openFile = <OpenFileLink />;
   switch (failure.reason) {
     case "not-found":
       return (
-        <Message fill={fill} icon={<MagnifyingGlassIcon size={32} weight="light" />} title="Trace not found" action={openFile}>
-          It may have been deleted, or the link is wrong.
+        <Message fill={fill} icon={<MagnifyingGlassIcon size={32} weight="light" />} title={t("trace.notFound.title")} action={openFile}>
+          {t("trace.notFound.description")}
         </Message>
       );
     case "no-bridge":
       return (
-        <Message fill={fill} icon={<PlugsIcon size={32} weight="light" />} title="Open this trace in the desktop app">
+        <Message fill={fill} icon={<PlugsIcon size={32} weight="light" />} title={t("trace.noBridge.title")}>
           {failure.message}
         </Message>
       );
     case "invalid":
       return (
-        <Message fill={fill} icon={<FileXIcon size={32} weight="light" />} title="This is not a Sideform trace" action={openFile}>
-          The file is not in a format this viewer knows.
+        <Message fill={fill} icon={<FileXIcon size={32} weight="light" />} title={t("trace.invalid.title")} action={openFile}>
+          {t("trace.invalid.description")}
           <code className="mt-2 block break-words rounded-md bg-surface-elevated px-2 py-1 font-mono text-[11px] text-text-secondary">{failure.message}</code>
         </Message>
       );
@@ -88,10 +95,10 @@ function FailureMessage({ failure, onRetry, fill }: { failure: Failure; onRetry(
         <Message
           fill={fill}
           icon={<WarningCircleIcon size={32} weight="light" />}
-          title="The trace could not be loaded"
+          title={t("trace.error.title")}
           action={
             <Button variant="outline" onClick={onRetry}>
-              Try again
+              {t("trace.tryAgain")}
             </Button>
           }
         >

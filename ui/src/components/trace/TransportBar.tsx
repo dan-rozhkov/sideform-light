@@ -2,12 +2,12 @@ import { CaretDownIcon, PauseIcon, PlayIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { IconButton } from "@/components/ui/IconButton";
+import { useT } from "@/i18n";
 import { BAR_ROW } from "./parts";
 import { PACE_MODES, SPEEDS, type PaceMode, type Speed } from "./playback";
 import { formatClock } from "./traceModel";
 import { CHEVRON_WEIGHT } from "@/components/ui/chevron";
 
-const PACE_LABEL: Record<PaceMode, string> = { realtime: "Real time", step: "Per step" };
 const speedLabel = (speed: Speed): string => `${speed}×`;
 
 interface MenuProps<T extends string> {
@@ -20,12 +20,13 @@ interface MenuProps<T extends string> {
 
 /** A compact ghost button that opens a menu of choices; its label is the current one. */
 function ChoiceMenu<T extends string>({ title, value, options, onChange }: MenuProps<T>) {
+  const t = useT();
   const current = options.find((o) => o.value === value)?.label ?? value;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button type="button" variant="ghost" size="sm" aria-label={`${title}: ${current}`} className="gap-1 px-2 text-text-secondary">
+          <Button type="button" variant="ghost" size="sm" aria-label={t("trace.transport.choice", { title, current })} className="gap-1 px-2 text-text-secondary">
             {current}
             <CaretDownIcon className="size-3" weight={CHEVRON_WEIGHT} />
           </Button>
@@ -44,7 +45,6 @@ function ChoiceMenu<T extends string>({ title, value, options, onChange }: MenuP
   );
 }
 
-const PACE_OPTIONS = PACE_MODES.map((value) => ({ value, label: PACE_LABEL[value] }));
 const SPEED_OPTIONS = SPEEDS.map((value) => ({ value: String(value), label: speedLabel(value) }));
 
 interface Props {
@@ -60,24 +60,26 @@ interface Props {
 }
 
 export function TransportBar({ playing, offset, span, speed, pace, onTogglePlay, onSpeedChange, onPaceChange }: Props) {
+  const t = useT();
   const Icon = playing ? PauseIcon : PlayIcon;
+  const paceOptions = PACE_MODES.map((value) => ({ value, label: t(value === "realtime" ? "trace.transport.realtime" : "trace.transport.perStep") }));
   return (
-    <div role="toolbar" aria-label="Playback" className={BAR_ROW}>
+    <div role="toolbar" aria-label={t("trace.transport.label")} className={BAR_ROW}>
       <IconButton
-        tooltip={playing ? "Pause" : "Play"}
-        shortcut="Space"
+        tooltip={playing ? t("trace.transport.pause") : t("trace.transport.play")}
+        shortcut={t("trace.transport.space")}
         variant="secondary"
         size="icon"
         onClick={onTogglePlay}
       >
         <Icon className="size-4" weight="fill" />
       </IconButton>
-      <p className="text-xs tabular-nums text-text-muted" data-testid="playback-time" aria-label="Playhead time">
+      <p className="text-xs tabular-nums text-text-muted" data-testid="playback-time" aria-label={t("trace.transport.time")}>
         <span className="text-text-secondary">{formatClock(offset)}</span> / {formatClock(span)}
       </p>
       <div className="ms-auto flex items-center gap-0.5">
-        <ChoiceMenu title="Pace" value={pace} options={PACE_OPTIONS} onChange={onPaceChange} />
-        <ChoiceMenu title="Speed" value={String(speed)} options={SPEED_OPTIONS} onChange={(v) => onSpeedChange(Number(v) as Speed)} />
+        <ChoiceMenu title={t("trace.transport.pace")} value={pace} options={paceOptions} onChange={onPaceChange} />
+        <ChoiceMenu title={t("trace.transport.speed")} value={String(speed)} options={SPEED_OPTIONS} onChange={(v) => onSpeedChange(Number(v) as Speed)} />
       </div>
     </div>
   );

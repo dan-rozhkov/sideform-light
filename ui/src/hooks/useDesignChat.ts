@@ -4,7 +4,8 @@ import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
 import { createToolExecutor } from "@sideform/agent-harness/executor";
 import type { RetryState } from "@sideform/agent-harness/retry-fetch";
 import { browseTaskInnerBoundMs } from "@sideform/browser-agent/loop";
-import { isOffline, OFFLINE_MESSAGE } from "@/lib/apiBase";
+import { isOffline } from "@/lib/apiBase";
+import { t, useLanguage } from "@/i18n";
 import { getRequestUserId } from "@/lib/auth/authState";
 import { createChatTransport, resolveChatApiUrl, CLIENT_CAPABILITIES } from "@/lib/chatTransport";
 import { resolveSessionModel } from "@/lib/sessionModel";
@@ -245,10 +246,6 @@ function mergePayloads(first: ChatLaunchPayload, second: ChatLaunchPayload): Cha
     images: images.length > 0 ? images : undefined,
   };
 }
-
-// One instance: the offline error carries no per-attempt information, and a
-// stable identity keeps it from re-rendering consumers that memo on `error`.
-const OFFLINE_SEND_ERROR = new Error(OFFLINE_MESSAGE);
 
 // A live isolated QA run: its tool call is answered later (not awaited in
 // onToolCall). `settle(output)` answers it once; `settle(null)` forgets it
@@ -692,8 +689,12 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   // Derived, not stored: the offline banner is exactly "a send was refused
   // and we are still offline". Coming back online retires it on its own, so
   // no send path — user-facing or the send drain — has to clear it.
-  const offlineError =
-    offlineSendRefused && !isOnline ? OFFLINE_SEND_ERROR : undefined;
+  // One instance per language: the offline error carries no per-attempt information, and a stable
+  // identity keeps it from re-rendering consumers that memo on `error`.
+  const language = useLanguage();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the message follows the interface language
+  const offlineSendError = useMemo(() => new Error(t("chat.offline")), [language]);
+  const offlineError = offlineSendRefused && !isOnline ? offlineSendError : undefined;
 
   // Invariant: while isolated QA runs are live the hook reports "streaming" even
   // though `chat.status` is "ready" (the stream ended, the runs did not). Every

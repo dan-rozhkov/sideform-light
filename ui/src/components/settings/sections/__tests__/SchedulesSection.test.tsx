@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ScheduleView } from "@/lib/desktopBridge";
+import { t, useLanguageStore } from "@/i18n";
 import { SETTINGS_NAV } from "@/components/settings/settingsSections";
 import { SETTINGS_SECTIONS } from "@/lib/openSettings";
 import { SchedulesSection } from "../SchedulesSection";
@@ -38,13 +39,15 @@ function setup(schedules: ScheduleView[] = [sched()], over: Record<string, unkno
 
 afterEach(() => {
   cleanup();
+  useLanguageStore.setState({ language: "en" });
   delete (window as { penDesktop?: unknown }).penDesktop;
 });
 
 describe("SchedulesSection", () => {
   it("is in the nav and the section list", () => {
     expect(SETTINGS_SECTIONS).toContain("schedules");
-    expect(SETTINGS_NAV.find((s) => s.id === "schedules")?.label).toBe("Schedules");
+    expect(SETTINGS_NAV.find((s) => s.id === "schedules")?.labelKey).toBe("settings.nav.schedules");
+    expect(t("settings.nav.schedules")).toBe("Schedules");
   });
 
   it("says it is not available without the bridge", () => {
@@ -220,5 +223,15 @@ describe("SchedulesSection", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("renders in Russian", async () => {
+    useLanguageStore.setState({ language: "ru" });
+    setup();
+    render(<SchedulesSection />);
+    await screen.findByText("Check prices");
+    expect(screen.getByRole("heading", { name: "Расписания" })).toBeTruthy();
+    expect(screen.getByText("По будням в 09:00")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Запустить сейчас" })).toBeTruthy();
   });
 });

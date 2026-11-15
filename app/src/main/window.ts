@@ -85,7 +85,11 @@ import { isLoginBindingCall, promptChoiceFromButton, savePromptCopy, type LoginC
 import { normalizeOrigin, type CredentialStore } from "./browser/credentialStore";
 import type { FaviconCache } from "./browser/faviconCache";
 import type { PasswordsService } from "./passwordsService";
-import { AGENT_AWAKE_HOLD_MS, MINIMIZED_AGENT_NOTICE_BODY, MINIMIZED_AGENT_NOTICE_TITLE, createTabAgentActivity, isAgentPageCommand } from "./agentActivity";
+import { AGENT_AWAKE_HOLD_MS, createTabAgentActivity, isAgentPageCommand, minimizedAgentNotice } from "./agentActivity";
+import { t } from "./i18n";
+import { getLanguageState } from "./i18n/languageInstance";
+import { isPanelLanguageSender, isTabLanguageSender } from "./i18n/languageIpc";
+import { pagePayload, type ShellPage } from "./i18n/pages";
 import { decideCloseTarget } from "./closeTarget";
 import { focusAfterCollapse, isTabCreationSender, planEmptyViewUpdate, resolveFocusTarget, type EmptyViewState } from "./emptyView";
 import { GLASS_SOLID, contentBackground, FALLBACK_THEME, glassTint, isPanelDocument, resolveWindowTheme } from "./windowTheme";
@@ -307,6 +311,20 @@ export function createMainWindow(
   });
 
   const themeKey = Symbol("main-window-theme");
+  // Interface language (src/main/i18n): ONE state per process, the ui is its source of truth (`panel:language` /
+  // `tab:language`, below). Every local shell page of this window (tab bar, empty start, suggestion popover, Passwords,
+  // History) gets its dictionary on `shell:i18n` when it finishes loading and again on every change.
+  const language = getLanguageState();
+  const shellPages = new Map<number, { wc: Electron.WebContents; page: ShellPage }>();
+  const sendShellI18n = (wc: Electron.WebContents, page: ShellPage) => {
+    if (!wc.isDestroyed()) wc.send("shell:i18n", pagePayload(language.get(), page));
+  };
+  const registerShellPage = (wc: Electron.WebContents, page: ShellPage) => {
+    const id = wc.id;
+    shellPages.set(id, { wc, page });
+    wc.on("did-finish-load", () => sendShellI18n(wc, page));
+    wc.once("destroyed", () => void shellPages.delete(id));
+  };
   // The OS appearance (vibrancy) is never changed; the glass is tinted
   // instead (`glassTintView`, windowTheme.ts `glassTint`). Fallback theme and colours: windowTheme.ts.
 
@@ -320,6 +338,7 @@ export function createMainWindow(
   const glassTintView = process.platform === "darwin" ? new View() : null;
   if (glassTintView) win.contentView.addChildView(glassTintView);
   win.contentView.addChildView(tabbarView);
+  registerShellPage(tabbarView.webContents, "tabbar");
   attachLocalOnlyPolicy(tabbarView.webContents);
   liveTabbarIds.add(tabbarView.webContents.id);
 
@@ -441,6 +460,7 @@ export function createMainWindow(
     webPreferences: secureWebPreferences(path.join(__dirname, "../preload/omnibox.js")),
   });
   win.contentView.addChildView(omniboxView);
+  registerShellPage(omniboxView.webContents, "omnibox");
   attachLocalOnlyPolicy(omniboxView.webContents);
   omniboxView.setBackgroundColor("#00000000");
   omniboxView.setVisible(false);
@@ -464,6 +484,7 @@ export function createMainWindow(
     webPreferences: secureWebPreferences(path.join(__dirname, "../preload/empty.js")),
   });
   win.contentView.addChildView(emptyView);
+  registerShellPage(emptyView.webContents, "empty");
   attachLocalOnlyPolicy(emptyView.webContents);
   emptyView.setBackgroundColor(backgroundColorForTheme(FALLBACK_THEME));
   emptyView.setBorderRadius(ISLAND_RADIUS);
@@ -1067,7 +1088,7 @@ export function createMainWindow(
                 .handleCdpEvent(method, params, {
                   send: (m, p) => view.webContents.debugger.sendCommand(m, p),
                   ask: async (req) => {
-                    const copy = savePromptCopy(req);
+                    const copy = savePromptCopy(req, language.get());
                     const { response } = await dialog.showMessageBox(win, {
                       type: "question",
                       message: copy.message,
@@ -1200,6 +1221,7 @@ export function createMainWindow(
         // A local page: no origin clamp to the frontend, every navigation and popup is denied.
         attachLocalOnlyPolicy(view.webContents);
         const contents = view.webContents;
+        registerShellPage(contents, "passwords");
         loginServices.passwords.attach(
           {
             id: contents.id,
@@ -1221,6 +1243,7 @@ export function createMainWindow(
       if (kind === "history") {
         attachLocalOnlyPolicy(view.webContents);
         const contents = view.webContents;
+        registerShellPage(contents, "history");
         history.service.attach(
           {
             id: contents.id,
@@ -1237,9 +1260,9 @@ export function createMainWindow(
             confirmClear: async () => {
               const { response } = await dialog.showMessageBox(win, {
                 type: "warning",
-                message: "Clear browsing history?",
-                detail: "This removes every page from History. It cannot be undone.",
-                buttons: ["Clear History", "Cancel"],
+                message: t(language.get(), "dialog.clearHistory.message"),
+                detail: t(language.get(), "dialog.clearHistory.detail"),
+                buttons: [t(language.get(), "dialog.clearHistory.confirm"), t(language.get(), "dialog.cancel")],
                 defaultId: 1,
                 cancelId: 1,
               });
@@ -2392,7 +2415,7 @@ export function createMainWindow(
   // A minimized window is always hidden by Chromium: an awake agent tab freezes. Tell the person once.
   const onMinimize = () => {
     if (!tabs.hasAwakeTab() || !Notification.isSupported()) return;
-    new Notification({ title: MINIMIZED_AGENT_NOTICE_TITLE, body: MINIMIZED_AGENT_NOTICE_BODY }).show();
+    new Notification(minimizedAgentNotice(language.get())).show();
   };
   win.on("minimize", onMinimize);
 
@@ -2484,6 +2507,7 @@ export function createMainWindow(
           setZoomLevel: (l) => handle.setZoomLevel?.(l),
           openHistory: () => void tabs.openHistoryTab({ focus: true }),
         },
+        language.get(),
       ),
     ).popup({ window: win, ...at });
   };
@@ -2495,13 +2519,14 @@ export function createMainWindow(
     const target = tabs.fileTargetOf(req.id);
     Menu.buildFromTemplate(
       buildTabContextMenuTemplate(
-        { label: revealMenuLabel(process.platform), enabled: target !== null },
+        { label: revealMenuLabel(process.platform, language.get()), enabled: target !== null },
         {
           reveal: () => {
             if (target) void revealStoredFile(target);
           },
           closeTab: () => closeTabByUser(req.id),
         },
+        language.get(),
       ),
     ).popup({ window: win, x: req.x, y: req.y });
   };
@@ -2516,6 +2541,17 @@ export function createMainWindow(
     if (panelTheme === theme) return;
     panelTheme = theme;
     pushState(tabs.getSnapshot());
+  };
+  // The panel's preload reports the ui language (`<html lang>`) on load and on every change; same sender rule as
+  // `panel:theme`. The ui is the source of truth: main only follows it (an unsupported code is ignored by the state).
+  const onPanelLanguage = (e: Electron.IpcMainEvent, code: unknown) => {
+    if (!isPanelLanguageSender(e, agentPanelView.webContents.id, panelUrl)) return;
+    language.set(code);
+  };
+  // Page tabs (trace, Settings) report it too: only the top frame of a ui tab of this window, on the ui origin.
+  const onTabLanguage = (e: Electron.IpcMainEvent, code: unknown) => {
+    if (!isTabLanguageSender(e, (id) => tabs.isPageTab(id), uiOrigin)) return;
+    language.set(code);
   };
   const onTabbarTogglePanel = (e: Electron.IpcMainEvent) => {
     if (fromOurTabbar(e)) setPanelCollapsed(!panelCollapsed);
@@ -2609,6 +2645,8 @@ export function createMainWindow(
   ipcMain.on("tabbar:reorder", onTabbarReorder);
   ipcMain.on("tabbar:toggle-panel", onTabbarTogglePanel);
   ipcMain.on("panel:theme", onPanelTheme);
+  ipcMain.on("panel:language", onPanelLanguage);
+  ipcMain.on("tab:language", onTabLanguage);
   ipcMain.on("tabbar:navigate", onTabbarNavigate);
   // Re-send current state when the tab bar (re)loads — it may have missed
   // snapshots emitted before its DOM was ready.
@@ -2648,6 +2686,9 @@ export function createMainWindow(
     ipcMain.removeListener("tabbar:reorder", onTabbarReorder);
     ipcMain.removeListener("tabbar:toggle-panel", onTabbarTogglePanel);
     ipcMain.removeListener("panel:theme", onPanelTheme);
+    ipcMain.removeListener("panel:language", onPanelLanguage);
+    ipcMain.removeListener("tab:language", onTabLanguage);
+    unsubscribeLanguage();
     ipcMain.removeListener("tabbar:navigate", onTabbarNavigate);
     ipcMain.removeListener("tab:theme", onTabTheme);
     withdrawBrowserSettings();
@@ -2715,13 +2756,19 @@ export function createMainWindow(
           }
         },
         },
-        { isMac: process.platform === "darwin", appName: app.name, agentPanel: { collapsed: panelCollapsed }, reveal: { label: revealMenuLabel(process.platform), enabled: lastRevealable } },
+        { isMac: process.platform === "darwin", appName: app.name, agentPanel: { collapsed: panelCollapsed }, reveal: { label: revealMenuLabel(process.platform, language.get()), enabled: lastRevealable }, lang: language.get() },
         effectiveCursor(),
       ),
     );
     Menu.setApplicationMenu(menu);
   };
   rebuildMenu();
+  // A language change (reported by the ui) re-labels the native menus and re-sends every local shell page its dictionary.
+  // The popups (tools, tab menu) and dialogs read the language when they open.
+  const unsubscribeLanguage = language.onChange(() => {
+    rebuildMenu();
+    for (const { wc, page } of shellPages.values()) sendShellI18n(wc, page);
+  });
   // The window starts with zero tabs and emits nothing: push the first snapshot so the empty state
   // shows (and the panel takes focus).
   pushState(tabs.getSnapshot());

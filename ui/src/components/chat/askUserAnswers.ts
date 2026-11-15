@@ -1,3 +1,4 @@
+import { t } from "@/i18n";
 import {
   DECIDE_FOR_ME,
   type AskUserAnswer,
@@ -47,7 +48,7 @@ export function serializeAnswers(
 }
 
 function labelFor(q: AskUserQuestion, value: string): string {
-  if (value === DECIDE_FOR_ME) return "Decide for me";
+  if (value === DECIDE_FOR_ME) return t("tools.ask.decideForMe");
   return q.options?.find((o) => o.value === value)?.label ?? value;
 }
 

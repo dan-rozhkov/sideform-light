@@ -91,19 +91,33 @@ var penPasswordsHelpers = (function () {
     return typeof value === "string" && ICON_DATA_URL.test(value);
   }
 
-  /** `Never` when absent, a relative phrase for the last week, else a date. */
-  function formatLastUsed(ts: number | undefined, now: number): string {
-    if (ts === undefined) return "Never";
+  /** The slice of `penI18n` (tabbar/i18nClient.ts) the label needs; absent = English. */
+  interface LastUsedI18n {
+    lang: string;
+    tr(key: string, fallback: string): string;
+  }
+
+  /**
+   * `Never` when absent, a relative phrase for the last week, else a date. The words come from the page's dictionary and
+   * the phrases and the date from `Intl` in the interface language (English without `i18n`).
+   */
+  function formatLastUsed(ts: number | undefined, now: number, i18n?: LastUsedI18n): string {
+    var tr = function (key: string, fallback: string): string {
+      return i18n ? i18n.tr(key, fallback) : fallback;
+    };
+    if (ts === undefined) return tr("passwords.never", "Never");
     var diff = now - ts;
-    if (diff < 60000) return "Just now";
+    if (diff < 60000) return tr("passwords.justNow", "Just now");
+    var lang = i18n ? i18n.lang : "en";
+    var relative = new Intl.RelativeTimeFormat(lang, { numeric: "always" });
     var minutes = Math.floor(diff / 60000);
-    if (minutes < 60) return minutes + (minutes === 1 ? " minute ago" : " minutes ago");
+    if (minutes < 60) return relative.format(-minutes, "minute");
     var hours = Math.floor(minutes / 60);
-    if (hours < 24) return hours + (hours === 1 ? " hour ago" : " hours ago");
+    if (hours < 24) return relative.format(-hours, "hour");
     var days = Math.floor(hours / 24);
-    if (days === 1) return "Yesterday";
-    if (days < 7) return days + " days ago";
-    return new Date(ts).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+    if (days === 1) return tr("passwords.yesterday", "Yesterday");
+    if (days < 7) return relative.format(-days, "day");
+    return new Date(ts).toLocaleDateString(lang === "en" ? "en-US" : lang, { year: "numeric", month: "short", day: "numeric" });
   }
 
   return { displayHost: displayHost, duplicateHosts: duplicateHosts, rowSuffixes: rowSuffixes, matchesQuery: matchesQuery, formatLastUsed: formatLastUsed, isIconDataUrl: isIconDataUrl };

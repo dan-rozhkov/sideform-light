@@ -44,6 +44,7 @@ Versioning: `package.json` is `sideform-light` 0.1.0. There is no release automa
 | `SIDEFORM_LIGHT_BROWSER_CURSOR` | `off`/`0`/`false`: kill switch of the in-page agent cursor. |
 | `SIDEFORM_LIGHT_BROWSER_CURSOR_MOTION` | Cursor motion override (see `cursorSettings.ts`). |
 | `SIDEFORM_LIGHT_MCP_PORT` | Port of the MCP agent bridge (default 47821; whole number 1..65535, else the default). Tests/e2e use a free port. The bridge itself is switched on in Settings (`<userData>/mcp-bridge.json`). `~/.sideform-light/mcp.json` follows `$HOME` (e2e points `HOME` at a temp dir). |
+| `SIDEFORM_LIGHT_LANGUAGE` | `en\|ru\|de\|it\|fr`: the initial interface language when `<userData>/ui-language.json` holds none (e2e pins `en`; else the system language is used). |
 | `SIDEFORM_LIGHT_SESSION_SLOT_WAIT_MS` | How long an isolated-session command waits for a free partition slot (tests). |
 
 The `PEN_DESKTOP_*` names of Sideform Desktop were renamed to `SIDEFORM_LIGHT_*` (a plain prefix swap; `PEN_DESKTOP_URL`, `PEN_DESKTOP_REGISTER_PROTOCOL` and the editor-URL logic are gone). Names inside tests and e2e helpers (`SIDEFORM_LIGHT_E2E_OWNED_USER_DATA_DIR`) follow the same prefix.
@@ -77,7 +78,7 @@ The shell's own HTML (tab bar, empty start, passwords, history, omnibox) stays o
 `window.penAgentPanel` (`preload/agentPanel.ts`) is `{ version: 3, browser, chats, traces, settings, mcp }`:
 `browser` = `open, act, findImages, snapshot, perform, assert, read, screenshot, tabs, applyFixture, releaseFixture, clearActEmulation, fillLogin, startJournal, stopJournal, captureCheckpoint, requests, capture (trace DOM snapshots only), isolated(sessionId), closeSession(sessionId), revealAgentTab(sessionId?)`; `chats` = `list, read, save, remove`; `traces` = `save, open, listTabs, read`; `settings` = `open(section?)`; `mcp` = `onRequest(handler)`, `notifyChanged(taskId)` (the MCP agent bridge, below). Removed from the Desktop shape: `launchApp`, `releaseApp`, `nativeApps`, `forChat`.
 
-`window.penDesktop` (`preload/tab.ts`, trace and settings pages only) is `{ traces: { read }, browserSettings: { get, set }, mcp: { get, set, regenerateToken }, settings: { open, onSection } }`, plus an invisible theme reporter (`tab:theme`). No browser bridge, no storage.
+`window.penDesktop` (`preload/tab.ts`, trace and settings pages only) is `{ traces: { read }, browserSettings: { get, set }, mcp: { get, set, regenerateToken }, settings: { open, onSection } }`, plus invisible theme and language reporters (`tab:theme`, `tab:language`). No browser bridge, no storage.
 
 `test/preloadTab.test.ts`, `test/preloadBrowserBridge.test.ts` and `test/ipcContract.test.ts` pin both shapes.
 
@@ -244,6 +245,17 @@ screenshot of the views).
 
 **Reveal in Finder.** A trace tab has a folder on disk: File ▸ Reveal in Finder (Show in Explorer / Show in Folder; enabled only while the active tab is a trace tab) and the tab's right-click menu (`tabbar:tab-menu`, native `buildTabContextMenuTemplate`) call `revealInFolder` (`revealInFolder.ts`; the target is `{kind: "trace", id}`, the id validated by `isValidTraceId`; file missing → the folder is opened). Right-clicking a tab does not activate it.
 
+## Interface language
+
+The shell is multilingual: `en` (default), `ru`, `de`, `it`, `fr`. **The ui is the source of truth** (its Language setting); `<html lang>` is the signal (`../CONTRACT.md` "Interface language").
+
+- **Reporting.** `preload/agentPanel.ts` (`panel:language`) and `preload/tab.ts` (`tab:language`) observe the `lang` attribute next to their theme reporters and send the bare code, only a supported one and only when it changes. The static `<html lang="en">` of the ui's index.html is NOT reported on its own (tab.ts reads at DOMContentLoaded and on mutations only). These are channels, not members of `penAgentPanel` / `penDesktop`. Senders: `i18n/languageIpc.ts` (`isPanelLanguageSender`: panel webContents + panel page; `isTabLanguageSender`: top frame of a ui tab, ui origin), unit-tested.
+- **State.** `src/main/i18n/`: `languages.ts` (`LANGUAGES`, `parseLanguage`, `detectLanguage(tags)`), `locales/{en,ru,de,it,fr}.ts` (flat `{ key: string }`; `en` defines the keys, the others are `Record<MessageKey, string>` so tsc fails on a missing or extra key), `index.ts` (`t(lang, key, params?)`, `{name}` placeholders), `pages.ts` (`pagePayload(lang, page)`: the keys of a page by prefix), `languageState.ts` (process-level state: persisted `<userData>/ui-language.json`, else `SIDEFORM_LIGHT_LANGUAGE`, else the system language; `set` ignores unsupported codes and repeats, persists, notifies), `languageInstance.ts` (`getLanguageState()`, created on first call like `getBrowserSettings`). `window.ts` subscribes per window: it rebuilds the menu and re-sends `shell:i18n` to every local page.
+- **Strings in main** (`menu.ts`, `browserToolsMenu.ts`, `revealMenuLabel.ts`, `agentPanelMenuLabel`, `savePromptCopy`, `minimizedAgentNotice`, the clear-history dialog) take an optional `lang` argument that defaults to `en`; role items (Edit, View, Window, app menu) keep their roles and get explicit translated labels, except `services` and `togglefullscreen` (the OS changes their label by itself). Popups and dialogs read the language when they open. Main keeps English tab titles ("New Tab", "Trace", "Settings", "Passwords", "History": the agent reads them too); the tab bar shows them translated (`displayTitle`).
+- **Delivery.** One channel, `shell:i18n` (main to a local page): `{ lang, strings }`, `strings` = only the keys of that page (prefixes in `pages.ts`: `tabbar.`, `empty.`, `omnibox.` + `time.`, `passwords.`, `history.`). Sent on the page's `did-finish-load` and on every change; the preloads of the tab bar, empty start, omnibox, Passwords and History pages expose `onI18n(cb)`. Renderers compile to plain scripts and cannot import: `src/tabbar/i18nClient.ts` is a global script (`penI18n`, loaded first by every page, also from `../tabbar/`). The HTML keeps English and carries `data-i18n` / `data-i18n-title` / `data-i18n-aria-label` / `data-i18n-placeholder` (the value is the key); dynamic text uses `penI18n.tr(key, englishFallback, params)` / `tn` (plural) and re-renders in `penI18n.onChange`. `set` also sets `<html lang>`. Dates use the language as the Intl locale (`en` keeps `en-GB` / `en-US` as before).
+- **Adding a string.** Add the key to `locales/en.ts` and to the four other files (tsc fails otherwise), use it with the same English text as the fallback or in the markup; `test/i18n.test.ts` pins locale key sets, placeholders, plural categories, that every `data-i18n` key and `tr` fallback equals the English locale and that each page only uses its own prefixes.
+- **e2e.** `e2e/userDataIsolation.ts` sets `SIDEFORM_LIGHT_LANGUAGE=en` for every launch (the machine's locale must not change the labels the specs assert); `e2e/language.spec.ts` sets the stub agent page's `<html lang>` and checks the tab bar, the empty start, the menu and persistence.
+
 ## MCP agent bridge
 
 An external agent (Hermes Agent, Claude Code, Codex: any MCP client on this machine) gives a task to the RUNNING app, polls it, answers the agent's questions and reads the result. It is a task giver, not a remote control: no browser tools over MCP. Spec: `../docs/superpowers/specs/2026-11-15-mcp-agent-bridge-design.md`; wire shapes: `../CONTRACT.md` "MCP agent bridge". OFF by default; switched on in Settings > MCP.
@@ -266,6 +278,9 @@ Channel names are plain strings; `test/ipcContract.test.ts` scans `src/` and pin
 | `omnibox:pick`, `omnibox:remove`, `omnibox:open-history` | popover → main | |
 | `panel:theme` | panel → main | the panel's theme; the window chrome follows it |
 | `tab:theme` | trace/settings page → main | colours that tab's own view only |
+| `panel:language` | panel → main | the ui language (`<html lang>`), panel webContents and panel page only |
+| `tab:language` | trace/settings page → main | same, top frame of a ui tab on the ui origin only |
+| `shell:i18n` | main → tab bar, empty start, omnibox popover, Passwords, History | `{ lang, strings }`: the page's own keys; on load and on every language change |
 | `browser:command`, `browser:reveal-agent-tab` | panel → main | the ONLY browser owner is the panel |
 | `passwords:list\|add\|update\|remove\|never-remove`, `passwords:theme`, `passwords:changed` | Passwords tab ↔ main | attached webContents only |
 | `history:list\|remove\|clear\|open`, `history:theme`, `history:changed` | History tab ↔ main | |

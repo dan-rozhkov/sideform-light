@@ -3,6 +3,7 @@ import type { BrowseTrace, BrowseTraceFrame } from "@sideform/browser-agent/agen
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
+import { useT } from "@/i18n";
 import { keepInView } from "./keepInView";
 import { FRAME_SURFACE, StatusDot } from "./parts";
 import type { Playback } from "./usePlayback";
@@ -60,6 +61,7 @@ interface ThumbsProps {
 
 /** The thumbnails; memoized so a moving playhead does not re-render them. */
 const Thumbnails = memo(function Thumbnails({ trace, timeline, n, tileW, selectedFrameId, flagged, onSelectFrame, onSeekSlot }: ThumbsProps) {
+  const t = useT();
   const tiles = useMemo(() => filmstripTiles(timeline, n), [timeline, n]);
   // Per frame: what the label and the badges need, computed once rather than per tile.
   const info = useMemo(
@@ -73,7 +75,7 @@ const Thumbnails = memo(function Thumbnails({ trace, timeline, n, tileW, selecte
   if (tiles.length === 0) {
     return (
       <div className="flex min-h-[52px] items-center justify-center">
-        <EmptyState size="panel" title="No frames were captured in this run" />
+        <EmptyState size="panel" title={t("trace.filmstrip.empty")} />
       </div>
     );
   }
@@ -114,7 +116,7 @@ const Thumbnails = memo(function Thumbnails({ trace, timeline, n, tileW, selecte
             key={frame.id}
             type="button"
             aria-current={active ? "true" : undefined}
-            aria-label={`Frame ${frameIndex + 1}, ${offset}${bad ? ", has errors" : ""}`}
+            aria-label={t(bad ? "trace.filmstrip.frameErrors" : "trace.filmstrip.frame", { n: frameIndex + 1, offset })}
             title={offset}
             data-space-plays
             onClick={() => onSelectFrame(frame)}
@@ -140,6 +142,7 @@ const Thumbnails = memo(function Thumbnails({ trace, timeline, n, tileW, selecte
 });
 
 export function Filmstrip({ trace, selectedFrameId, selectedStep, flagged, onSelectFrame, onSelectStep, player }: Props) {
+  const t = useT();
   const scrollRef = useRef<HTMLDivElement>(null);
   const visible = useWidth(scrollRef, 960);
   const timeline = useMemo(() => buildTimeline(trace), [trace]);
@@ -159,7 +162,7 @@ export function Filmstrip({ trace, selectedFrameId, selectedStep, flagged, onSel
 
   const offset = Math.min(timeline.span, Math.max(0, player.time - trace.startedAt));
   return (
-    <section aria-label="Filmstrip" className="shrink-0 border-b border-border-default bg-surface-panel">
+    <section aria-label={t("trace.filmstrip.label")} className="shrink-0 border-b border-border-default bg-surface-panel">
       <TransportBar
         playing={player.playing}
         offset={offset}

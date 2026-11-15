@@ -1,4 +1,5 @@
 import { parseBrowseTrace, type BrowseTrace } from "@sideform/browser-agent/agent/session";
+import { t } from "@/i18n";
 import type { TraceSource } from "@/lib/browseTraces";
 
 export type TraceLoadResult =
@@ -17,7 +18,7 @@ export function validate(value: unknown): TraceLoadResult {
 async function loadLocal(id: string): Promise<TraceLoadResult> {
   const read = window.penDesktop?.traces?.read;
   if (!read) {
-    return { ok: false, reason: "no-bridge", message: "Local traces open only inside the Sideform desktop app." };
+    return { ok: false, reason: "no-bridge", message: t("trace.load.noBridge") };
   }
   const value = await read(id);
   if (value && typeof value === "object" && "error" in value && typeof value.error === "string") {
@@ -25,7 +26,7 @@ async function loadLocal(id: string): Promise<TraceLoadResult> {
     return { ok: false, reason: missing ? "not-found" : "error", message: value.error };
   }
   if (!value || typeof value !== "object" || !("trace" in value)) {
-    return { ok: false, reason: "invalid", message: "The desktop app returned an unexpected answer." };
+    return { ok: false, reason: "invalid", message: t("trace.load.unexpected") };
   }
   return validate(value.trace);
 }

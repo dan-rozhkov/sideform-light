@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { t, type Language } from "./i18n";
 
 /**
  * The user's agent-panel choice (agent layout): collapsed or not, persisted in
@@ -42,6 +43,6 @@ export function writeAgentPanelSettings(filePath: string, settings: AgentPanelSe
 }
 
 /** View menu label for the toggle item. */
-export function agentPanelMenuLabel(collapsed: boolean): string {
-  return collapsed ? "Show Agent Panel" : "Hide Agent Panel";
+export function agentPanelMenuLabel(collapsed: boolean, lang: Language = "en"): string {
+  return t(lang, collapsed ? "menu.showAgentPanel" : "menu.hideAgentPanel");
 }

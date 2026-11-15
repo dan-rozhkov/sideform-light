@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toolDisplayNames } from "../toolDisplayNames";
+import { toolDisplayNames, getToolDisplayName } from "../toolDisplayNames";
 import { getToolIcon } from "../toolIcons";
 import { toolHandlers } from "../toolRegistry";
 
@@ -12,7 +12,7 @@ describe("toolIcons", () => {
 
   it("has a readable name and a dedicated icon for every tool the registry handles", () => {
     const unreadable = Object.keys(toolHandlers).filter(
-      (name) => !toolDisplayNames[name] || toolDisplayNames[name] === name || toolDisplayNames[name].includes("_"),
+      (name) => !toolDisplayNames[name] || getToolDisplayName(name) === name || getToolDisplayName(name).includes("_"),
     );
     expect(unreadable).toEqual([]);
     expect(Object.keys(toolHandlers).filter((name) => getToolIcon(name) === generic)).toEqual([]);

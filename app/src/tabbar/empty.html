@@ -12,10 +12,10 @@
   <body>
     <main class="empty" id="empty-state">
       <header class="intro">
-        <h1 class="headline">Where shall we start?</h1>
-        <p class="hint">Open a site, or ask the agent in the chat.</p>
+        <h1 class="headline" data-i18n="empty.headline">Where shall we start?</h1>
+        <p class="hint" data-i18n="empty.hint">Open a site, or ask the agent in the chat.</p>
       </header>
-      <p class="note" id="sessions-note" hidden>Background browser sessions are running.</p>
+      <p class="note" id="sessions-note" data-i18n="empty.sessionsNote" hidden>Background browser sessions are running.</p>
       <button id="new-browser" class="card" aria-labelledby="browser-cta" aria-describedby="browser-desc">
         <span class="preview" aria-hidden="true">
           <span class="window">
@@ -24,12 +24,13 @@
           </span>
         </span>
         <span class="body">
-          <span class="title">Browser</span>
-          <span class="desc" id="browser-desc">Open a site. The agent can read, test and capture it.</span>
-          <span class="cta"><span class="cta-label" id="browser-cta">New browser tab</span></span>
+          <span class="title" data-i18n="empty.browserTitle">Browser</span>
+          <span class="desc" id="browser-desc" data-i18n="empty.browserDesc">Open a site. The agent can read, test and capture it.</span>
+          <span class="cta"><span class="cta-label" id="browser-cta" data-i18n="empty.browserCta">New browser tab</span></span>
         </span>
       </button>
     </main>
+    <script src="i18nClient.js"></script>
     <script src="emptyRenderer.js"></script>
   </body>
 </html>

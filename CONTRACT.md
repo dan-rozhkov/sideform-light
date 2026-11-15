@@ -78,9 +78,19 @@ window.penAgentPanel = {
 }
 ```
 
-`window.penDesktop` (preload/tab.ts, trace + settings tabs only): theme reporting, `traces` (read), `settings.open`/`onSection`, `browserSettings` (`get`/`set` of `{ adBlock }`), `mcp` (`get`/`set`/`regenerateToken`, below), `schedules` (below). No canvas, docs, workflows, logins (doc @mention), appIcon, auth, browser bridge.
+`window.penDesktop` (preload/tab.ts, trace + settings tabs only): theme and language reporting (`tab:theme`, `tab:language`; the agent panel reports `panel:theme` and `panel:language`), `traces` (read), `settings.open`/`onSection`, `browserSettings` (`get`/`set` of `{ adBlock }`), `mcp` (`get`/`set`/`regenerateToken`, below), `schedules` (below). No canvas, docs, workflows, logins (doc @mention), appIcon, auth, browser bridge.
 
 Settings sections: `"appearance" | "browser" | "mcp" | "schedules"` only. Browser settings shape: `{ adBlock: boolean }` (`mcpBrowser` and `askAppAccess` removed). The Browser section also has "Record traces", a ui-only three-value `localStorage` setting (`pen.browseTraces`: `qa` = QA tests only, absent = `mcp` = QA tests and MCP tasks (default), `all` = every run), not part of the bridge; QA runs keep a trace in every mode.
+
+## Interface language (en, ru, de, it, fr)
+
+The Electron shell (native menus, dialogs, notifications, tab bar, empty start, suggestion popover, Passwords and History pages) speaks the language of the ui. **The ui is the source of truth; `<html lang>` is the signal.**
+
+- The ui ALWAYS sets `document.documentElement.lang` to its active language code (`en|ru|de|it|fr`; the Settings value `ui-language` in localStorage, absent = the system language, fallback `en`) at start and on every change.
+- The preloads observe that attribute and report it over **`panel:language`** (agent panel, `preload/agentPanel`) and **`tab:language`** (trace and Settings tabs, `preload/tab`): the bare code as the one argument, only a supported code, only when it changes. They are NEW channels, not members of `penAgentPanel` / `penDesktop` (those shapes do not change); a ui needs no code for this beyond setting `<html lang>`.
+- Main accepts `panel:language` only from the panel's own webContents while it shows the panel page, and `tab:language` only from the TOP frame of a ui tab on the ui origin; anything else, and any unsupported code, is ignored.
+- On a change main persists `<userData>/ui-language.json` `{ "language": "<code>" }` (atomic write), rebuilds the application menu and sends every local shell page its dictionary (`shell:i18n` `{ lang, strings }`, only the keys that page needs). Initial language: that file, else env `SIDEFORM_LIGHT_LANGUAGE` (tests), else the system language (`app.getLocale()`, `app.getPreferredSystemLanguages()`), else `en`.
+- The shell never changes the ui's language; the persisted file only makes the next start paint the shell right before the ui has loaded.
 
 ## MCP agent bridge (v1)
 
