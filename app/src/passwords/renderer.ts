@@ -234,6 +234,11 @@
   }
 
   function renderEmptyDetail(): void {
+    // Logins exist but none is selected: the pane stays blank (no lone icon without a message).
+    if (section !== "never" && data.entries.length > 0) {
+      detailEl.replaceChildren();
+      return;
+    }
     const wrap = el("div", "detail-empty");
     const box = el("div", "empty-state");
     const glyph = el("span", "empty-icon");
@@ -246,7 +251,7 @@
         el("p", "empty-title", penI18n.tr("passwords.neverDetailTitle", "Never saved")),
         el("p", "empty-text", penI18n.tr("passwords.neverDetailText", "No prompt to save a password appears on these sites.")),
       );
-    } else if (data.entries.length === 0) {
+    } else {
       box.append(
         el("p", "empty-title", penI18n.tr("passwords.heroTitle", "Your logins live here")),
         el("p", "empty-text", penI18n.tr("passwords.heroText", "The agent can sign in for you without ever seeing a password.")),
