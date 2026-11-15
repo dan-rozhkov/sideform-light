@@ -4407,8 +4407,11 @@ test("code review finding 5: a hidden text match no longer short-circuits the se
     const clickResult = (await callBrowser(editorPage, "act", {
       action: "click",
       target: "Select",
-    })) as { error?: string };
+    })) as { error?: string; via?: string };
     expect(clickResult.error).toBeUndefined();
+    // A dropdown <select> gets the DOM click, never a trusted CDP mouse-down: that would open the native popup,
+    // an NSMenu whose modal run loop blocks the main process on macOS (the next commands and app.close hung).
+    expect(clickResult.via).toBe("dom");
 
     // Text that exists ONLY inside a <style>/<script> element's own source
     // must never resolve to a click target at all.

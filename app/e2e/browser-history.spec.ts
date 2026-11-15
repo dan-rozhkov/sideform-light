@@ -164,10 +164,13 @@ test("browser history: removing a row with the popover x keeps the popover open 
     const rows = omnibox.locator(".rows .row");
     await expect(rows).toHaveCount(3);
 
-    // The real click on the popover's x blurs the tab bar field first; reproduce that, then click.
-    await tabbar.evaluate(() => (document.getElementById("url-input") as HTMLInputElement).blur());
+    // The real click on the popover's x blurs the tab bar field first; reproduce that, then click. Hover first:
+    // the blur starts the popover's 150 ms close timer, and in a real click the mouse-down follows the blur at
+    // once. A slow hover between them (a loaded machine) let the timer close the popover before the x landed.
+    const remove = rows.filter({ hasText: "Bravo Journal" }).locator(".remove");
     await rows.filter({ hasText: "Bravo Journal" }).hover();
-    await rows.filter({ hasText: "Bravo Journal" }).locator(".remove").dispatchEvent("mousedown", { button: 0 });
+    await tabbar.evaluate(() => (document.getElementById("url-input") as HTMLInputElement).blur());
+    await remove.dispatchEvent("mousedown", { button: 0 });
     await expect(rows).toHaveCount(2);
     await expect(rows.filter({ hasText: "Bravo Journal" })).toHaveCount(0);
     await expect(input).toHaveValue(typed);
