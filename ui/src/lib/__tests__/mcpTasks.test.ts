@@ -185,12 +185,10 @@ describe("createMcpTaskHandler", () => {
     expect(useChatStore.getState().chats.filter((c) => c.source === "mcp")).toHaveLength(0);
   });
 
-  it("start fails fast when offline and creates nothing", async () => {
+  it("start is not gated on navigator.onLine (the backend and the provider may be local)", async () => {
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
-    const n = useChatStore.getState().chats.length;
     const reply = await createMcpTaskHandler().handle({ op: "start", prompt: "x" });
-    expect(reply).toHaveProperty("error");
-    expect(useChatStore.getState().chats).toHaveLength(n);
+    expect(reply).toHaveProperty("task");
   });
 
   it("caps tasks in running or needs_answer at 3, counted at once (concurrent starts)", async () => {
@@ -256,7 +254,7 @@ describe("createMcpTaskHandler", () => {
     expect(await h.handle({ op: "answer", taskId: id, answers: [{ id: "k", value: 5 }] as never })).toEqual({ error: "Invalid answers" });
   });
 
-  it("message works on a finished task, not on a running one, not offline", async () => {
+  it("message works on a finished task, not on a running one", async () => {
     const h = createMcpTaskHandler();
     const id = task(await h.handle({ op: "start", prompt: "p" })).taskId;
     useChatStore.getState().consumeLaunchPayload(id);
@@ -269,7 +267,7 @@ describe("createMcpTaskHandler", () => {
     expect(await h.handle({ op: "message", taskId: id, text: "more" })).toHaveProperty("error");
     setActions(id, a);
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
-    expect(await h.handle({ op: "message", taskId: id, text: "more" })).toHaveProperty("error");
+    expect(await h.handle({ op: "message", taskId: id, text: "more" })).toEqual({ ok: true });
   });
 
   it("stop calls the session Stop, marks the task stopped, and frees the cap", async () => {
@@ -368,11 +366,9 @@ describe("schedule ops", () => {
     expect(useChatStore.getState().chats.filter((c) => c.source === "schedule")).toHaveLength(0);
   });
 
-  it("schedule-start fails when offline and creates nothing", async () => {
+  it("schedule-start is not gated on navigator.onLine", async () => {
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
-    const n = useChatStore.getState().chats.length;
-    expect(await createMcpTaskHandler().handle(req())).toHaveProperty("error");
-    expect(useChatStore.getState().chats).toHaveLength(n);
+    expect(await createMcpTaskHandler().handle(req())).toHaveProperty("task");
   });
 
   it("answers busy while the previous run is still running, and not when it is done or gone", async () => {

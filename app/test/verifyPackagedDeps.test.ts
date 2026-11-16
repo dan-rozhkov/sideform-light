@@ -89,7 +89,7 @@ describe("verifyPackagedDeps", () => {
   beforeEach(() => void (dir = fs.mkdtempSync(path.join(os.tmpdir(), "verifydeps-"))));
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-  const makeCtx = async (pkgs: string[]) => {
+  const makeCtx = async (pkgs: string[], withBackend = true) => {
     const projectDir = path.join(dir, "project");
     fs.mkdirSync(projectDir, { recursive: true });
     fs.writeFileSync(path.join(projectDir, "package-lock.json"), JSON.stringify(lockOf({ dependencies: { a: "1" } }, {
@@ -107,6 +107,10 @@ describe("verifyPackagedDeps", () => {
     const resources = path.join(appOutDir, "App.app", "Contents", "Resources");
     fs.mkdirSync(resources, { recursive: true });
     await asar.createPackage(src, path.join(resources, "app.asar"));
+    if (withBackend) {
+      fs.mkdirSync(path.join(resources, "app.asar.unpacked", "dist", "backend"), { recursive: true });
+      fs.writeFileSync(path.join(resources, "app.asar.unpacked", "dist", "backend", "server.mjs"), "");
+    }
     return { electronPlatformName: "darwin", appOutDir, packager: { projectDir, appInfo: { productFilename: "App" } } };
   };
 
@@ -132,8 +136,19 @@ describe("verifyPackagedDeps", () => {
     expect((err as Error).message).toContain("rm node_modules");
   });
 
-  it("does nothing on non-darwin", async () => {
-    const ctx = { electronPlatformName: "linux", appOutDir: "/nonexistent", packager: { projectDir: "/nonexistent", appInfo: { productFilename: "X" } } };
+  it("rejects a package without the local backend bundle", async () => {
+    const err = await verifyPackagedDeps(await makeCtx(["a", "b"], false)).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain("no local backend");
+    expect((err as Error).message).toContain("SIDEFORM_LIGHT_BACKEND_BUNDLE");
+  });
+
+  it("checks the backend bundle on Windows (resources/app.asar.unpacked) and skips the dependency check there", async () => {
+    const appOutDir = path.join(dir, "win");
+    const ctx = { electronPlatformName: "win32", appOutDir, packager: { projectDir: "/nonexistent", appInfo: { productFilename: "X" } } };
+    await expect(verifyPackagedDeps(ctx)).rejects.toThrow(/no local backend/);
+    fs.mkdirSync(path.join(appOutDir, "resources", "app.asar.unpacked", "dist", "backend"), { recursive: true });
+    fs.writeFileSync(path.join(appOutDir, "resources", "app.asar.unpacked", "dist", "backend", "server.mjs"), "");
     await expect(verifyPackagedDeps(ctx)).resolves.toBeUndefined();
   });
 });

@@ -1,11 +1,20 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { addByokModel, clearByokConfig, setByokConnection } from "@/lib/byokProvider";
 import { useChatStore } from "@/store/chatStore";
 import { ContextMeter } from "../ContextMeter";
 
-const KNOWN_MODEL = "deepseek/deepseek-v4.1-flash"; // contextWindow 1048576 (chatModels.ts)
+const KNOWN_MODEL = "byok/ctx-model"; // contextWindow 1048576 (an own-provider model, the only kind Light has)
 
-afterEach(() => cleanup());
+beforeEach(() => {
+  setByokConnection("https://api.example.com/v1", "k");
+  addByokModel({ id: "ctx-model", contextWindow: 1048576 });
+});
+
+afterEach(() => {
+  cleanup();
+  clearByokConfig();
+});
 
 function setChatState(overrides: {
   activeChatId?: string | null;

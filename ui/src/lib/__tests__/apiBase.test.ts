@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_BACKEND_URL, apiFetch, apiFetchUrl, resolveApiUrl } from "../apiBase";
+import { apiFetch, apiFetchUrl, resolveApiUrl } from "../apiBase";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -7,12 +7,11 @@ afterEach(() => {
 });
 
 describe("resolveApiUrl", () => {
-  it("defaults to the local backend when no env var is set (no same-origin fallback)", () => {
+  it("defaults to the SAME ORIGIN (a relative /api/... URL) when no env var is set", () => {
     vi.stubEnv("VITE_AI_API_URL", "");
     vi.stubEnv("VITE_DESIGN_AGENT_BACKEND_URL", "");
-    expect(DEFAULT_BACKEND_URL).toBe("http://localhost:3001");
-    expect(resolveApiUrl("/api/chat")).toBe("http://localhost:3001/api/chat");
-    expect(resolveApiUrl("/api/models")).toBe("http://localhost:3001/api/models");
+    expect(resolveApiUrl("/api/chat")).toBe("/api/chat");
+    expect(resolveApiUrl("/api/models")).toBe("/api/models");
   });
 
   it("uses VITE_DESIGN_AGENT_BACKEND_URL without a trailing slash", () => {

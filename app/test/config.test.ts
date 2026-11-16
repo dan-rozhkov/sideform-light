@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   APP_ORIGIN,
-  DEFAULT_BACKEND_URL,
   DISPLAY_APP_NAME,
   SETTINGS_SECTIONS,
   isAdBlockDisabledByEnv,
@@ -13,8 +12,7 @@ import {
   isValidTraceId,
   originOf,
   resolveAgentPanelUrl,
-  parseBuildConfigBackendUrl,
-  resolveBackendOrigin,
+  resolveBackendOverride,
   resolveBrowserCursorEnabled,
   resolveSettingsTabUrl,
   resolveTraceTabUrl,
@@ -61,32 +59,16 @@ describe("resolveUiOrigin", () => {
   });
 });
 
-describe("resolveBackendOrigin", () => {
-  it("defaults to the local backend", () => {
-    expect(resolveBackendOrigin({})).toBe("http://localhost:3001");
-    expect(DEFAULT_BACKEND_URL).toBe("http://localhost:3001");
+describe("resolveBackendOverride", () => {
+  it("is null without the env var: the bundled backend is used", () => {
+    expect(resolveBackendOverride({})).toBeNull();
+    expect(resolveBackendOverride({ SIDEFORM_LIGHT_BACKEND_URL: "" })).toBeNull();
   });
   it("reads the origin of SIDEFORM_LIGHT_BACKEND_URL (http/https only)", () => {
-    expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "https://api.sideform.pro/some/path" })).toBe("https://api.sideform.pro");
-    expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "http://127.0.0.1:4000" })).toBe("http://127.0.0.1:4000");
-    expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "ftp://x" })).toBe("http://localhost:3001");
-    expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "nope" })).toBe("http://localhost:3001");
-  });
-  it("uses the build-time URL when the env var is absent, and the env var wins over it", () => {
-    const prod = "https://pen-editor-backend.onrender.com";
-    expect(resolveBackendOrigin({}, prod)).toBe(prod);
-    expect(resolveBackendOrigin({}, "not a url")).toBe("http://localhost:3001");
-    expect(resolveBackendOrigin({}, null)).toBe("http://localhost:3001");
-    expect(resolveBackendOrigin({ SIDEFORM_LIGHT_BACKEND_URL: "http://localhost:3011" }, prod)).toBe("http://localhost:3011");
-  });
-});
-
-describe("parseBuildConfigBackendUrl", () => {
-  it("reads backendUrl and tolerates a missing or broken file", () => {
-    expect(parseBuildConfigBackendUrl('{"backendUrl":"https://b.example"}')).toBe("https://b.example");
-    expect(parseBuildConfigBackendUrl('{"backendUrl":null}')).toBeNull();
-    expect(parseBuildConfigBackendUrl("{oops")).toBeNull();
-    expect(parseBuildConfigBackendUrl(null)).toBeNull();
+    expect(resolveBackendOverride({ SIDEFORM_LIGHT_BACKEND_URL: "http://localhost:3001/some/path" })).toBe("http://localhost:3001");
+    expect(resolveBackendOverride({ SIDEFORM_LIGHT_BACKEND_URL: "http://127.0.0.1:4000" })).toBe("http://127.0.0.1:4000");
+    expect(resolveBackendOverride({ SIDEFORM_LIGHT_BACKEND_URL: "ftp://x" })).toBeNull();
+    expect(resolveBackendOverride({ SIDEFORM_LIGHT_BACKEND_URL: "nope" })).toBeNull();
   });
 });
 

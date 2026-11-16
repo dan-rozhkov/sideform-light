@@ -2,15 +2,16 @@
 # One command for local development against the production backend:
 #   - the ui runs from its Vite dev server (http://localhost:5174, hot reload),
 #   - the Electron shell loads it from there (SIDEFORM_LIGHT_UI_URL, chats go to chats-dev/),
-#   - both talk to the production backend (override with BACKEND_URL=...).
-# No API keys are needed locally: they live on the backend.
+#   - the ui's Vite dev server proxies /api to a backend you run yourself
+#     (pen-editor-backend: `npm run dev:local`, on http://localhost:3001; override with BACKEND_URL=...).
+# The shell does not start its bundled backend in this mode. Configure the model provider in Settings > Model.
 #
 # Usage: scripts/dev-prod.sh
-#        BACKEND_URL=http://localhost:3001 scripts/dev-prod.sh
+#        BACKEND_URL=http://localhost:3002 scripts/dev-prod.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BACKEND_URL="${BACKEND_URL:-https://pen-editor-backend.onrender.com}"
+BACKEND_URL="${BACKEND_URL:-http://localhost:3001}"
 UI_URL="http://localhost:5174"
 
 for dir in ui app; do
@@ -33,7 +34,7 @@ if curl -s -o /dev/null --max-time 2 "$UI_URL"; then
 fi
 
 echo "==> ui dev server on $UI_URL (backend $BACKEND_URL)"
-(cd "$ROOT/ui" && VITE_DESIGN_AGENT_BACKEND_URL="$BACKEND_URL" exec npm run dev) &
+(cd "$ROOT/ui" && VITE_DEV_BACKEND_URL="$BACKEND_URL" exec npm run dev) &
 UI_PID=$!
 
 cleanup() {
@@ -58,6 +59,6 @@ fi
 echo "==> Electron (ui $UI_URL, backend $BACKEND_URL)"
 cd "$ROOT/app"
 SIDEFORM_LIGHT_SKIP_UI=1 \
+SIDEFORM_LIGHT_SKIP_BACKEND=1 \
 SIDEFORM_LIGHT_UI_URL="$UI_URL" \
-SIDEFORM_LIGHT_BACKEND_URL="$BACKEND_URL" \
   npm start

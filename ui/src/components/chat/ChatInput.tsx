@@ -10,7 +10,6 @@ import {
   useCanSendImages,
   useModelSupportsVision,
 } from "@/hooks/useImageSupport";
-import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useT } from "@/i18n";
 import {
   downscaleImageDataUrl,
@@ -48,6 +47,8 @@ interface ChatInputProps {
    * a value that only flips on section switches would no longer re-fire
    * either effect on close/reopen. */
   shouldFocus?: boolean;
+  /** True while no model can run (no provider yet): sending is disabled, Enter included. */
+  sendBlocked?: boolean;
   renderFooter?: (props: ChatInputFooterProps) => ReactNode;
 }
 
@@ -123,6 +124,7 @@ export function ChatInput({
   awaitingAnswer,
   awaitingPlaceholder,
   shouldFocus = false,
+  sendBlocked = false,
   renderFooter,
 }: ChatInputProps) {
   const t = useT();
@@ -149,9 +151,6 @@ export function ChatInput({
   // flag land, not on the next unrelated re-render.
   const canAttachImages = useCanSendImages(model);
   const nativeVision = useModelSupportsVision(model);
-  // Sending always needs the backend — disable the send control while offline
-  // (the pre-send guard in useDesignChat is kept as defense in depth).
-  const isOnline = useOnlineStatus();
   const formId = `chat-composer-${sessionId}`;
 
   useEffect(() => {
@@ -159,7 +158,7 @@ export function ChatInput({
   }, [shouldFocus]);
 
   const canSubmit =
-    isOnline &&
+    !sendBlocked &&
     // Block sending while an ask_user question is unanswered so the answer
     // isn't stranded (covers both the built-in send button and renderFooter).
     !awaitingAnswer &&
@@ -234,11 +233,9 @@ export function ChatInput({
       // Drop attachments the selected model can't read (a warning is shown
       // above the previews) so the request doesn't fail at the provider.
       const images = canAttachImages ? attachedImages : [];
-      // Deliberately not gated on `isOnline`: the send button is already
-      // disabled while offline, but Enter bypasses it. Calling onSubmit
-      // unconditionally lets its offline guard (in useDesignChat) surface a
-      // visible per-message error instead of Enter being a silent no-op.
-      if ((input.trim() || images.length > 0) && !awaitingAnswer) {
+      // Not gated on connectivity: the backend is local and the provider may be too (Ollama, LM Studio).
+      // A real network failure to a remote provider surfaces as the normal chat error.
+      if ((input.trim() || images.length > 0) && !awaitingAnswer && !sendBlocked) {
         const text = input.trim();
         const didSend = onSubmit({
           text,
@@ -252,7 +249,7 @@ export function ChatInput({
         }
       }
     },
-    [input, attachedImages, canAttachImages, awaitingAnswer, onSubmit, setAttachedImages]
+    [input, attachedImages, canAttachImages, awaitingAnswer, sendBlocked, onSubmit, setAttachedImages]
   );
 
   const handleKeyDown = useCallback(
@@ -416,20 +413,14 @@ export function ChatInput({
                   type="submit"
                   disabled={!canSubmit}
                   className="shrink-0 p-1.5 rounded-control hover:bg-secondary disabled:text-text-disabled transition-colors"
-                  aria-label={
-                    isLoading ? t("chat.sendNow") : isOnline ? t("chat.send") : t("chat.offlineSendDisabled")
-                  }
+                  aria-label={isLoading ? t("chat.sendNow") : t("chat.send")}
                 >
                   <PaperPlaneRightIcon size={16} weight="light" />
                 </button>
               }
             />
             <TooltipContent>
-              {isLoading
-                ? t("chat.stopAndSend")
-                : isOnline
-                  ? t("chat.send")
-                  : t("chat.offlineSendDisabled")}
+              {isLoading ? t("chat.stopAndSend") : t("chat.send")}
             </TooltipContent>
           </Tooltip>
         )}

@@ -34,6 +34,16 @@ describe("CustomProviderGroup", () => {
     expect(screen.getByRole("button", { name: "Load models" }).hasAttribute("disabled")).toBe(false);
   });
 
+  it("hints that any key works for a local provider URL and saves it", () => {
+    render(<CustomProviderGroup />);
+    expect(screen.queryByText(/any value/i)).toBeNull();
+    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "http://localhost:11434/v1" } });
+    expect(screen.getByText(/any value works, e\.g\. ollama/i)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "ollama" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(getByokConfig()).toMatchObject({ baseUrl: "http://localhost:11434/v1", apiKey: "ollama" });
+  });
+
   it("loads models, adds one, and it appears in the model options", async () => {
     const fetchMock = stubFetch({ ok: true, models: [{ id: "gpt-a", contextWindow: 16000 }, { id: "gpt-b" }] });
     render(<CustomProviderGroup />);
@@ -74,7 +84,7 @@ describe("CustomProviderGroup", () => {
     [{ ok: false, reason: "invalid_key" }, 200, "The provider rejected this key."],
     [{ ok: false, reason: "no_model_list" }, 200, "This provider has no model list. Add a model ID manually."],
     [{ ok: false, reason: "upstream_error" }, 200, "Could not reach the provider. Check the base URL."],
-    [{ code: "byok_base_url_invalid", error: "x" }, 400, "Base URL must be a public https:// address."],
+    [{ code: "byok_base_url_invalid", error: "x" }, 400, "Base URL must be https://, or http://localhost for a local provider."],
     [{ error: "rate" }, 429, "Too many requests. Try again in a minute."],
   ])("shows an error for %j", async (body, status, message) => {
     stubFetch(body, status);
@@ -114,7 +124,7 @@ describe("CustomProviderGroup", () => {
     render(<CustomProviderGroup />);
     fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "http://example.com/v1" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-own" } });
-    expect(screen.getByRole("alert").textContent).toBe("Base URL must be a public https:// address.");
+    expect(screen.getByRole("alert").textContent).toBe("Base URL must be https://, or http://localhost for a local provider.");
     expect(screen.getByRole("button", { name: "Save" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("button", { name: "Load models" }).hasAttribute("disabled")).toBe(true);
     expect(fetchMock).not.toHaveBeenCalled();

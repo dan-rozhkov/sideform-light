@@ -36,15 +36,15 @@ export function mimeTypeFor(filePath: string): string {
   return MIME_TYPES[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
 }
 
-/** The Content-Security-Policy of every ui response. `backendOrigin` is the one origin the ui may call. */
-export function buildCsp(backendOrigin: string): string {
+/** The Content-Security-Policy of every ui response. `/api` is same origin (proxied), so no backend origin appears. */
+export function buildCsp(): string {
   return [
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https: http:",
     "font-src 'self' data:",
-    `connect-src 'self' data: blob: ${backendOrigin}`,
+    "connect-src 'self' data: blob:",
     "frame-src 'none'",
     "object-src 'none'",
     "base-uri 'none'",

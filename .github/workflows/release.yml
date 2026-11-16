@@ -1,7 +1,8 @@
 name: release
 
 # Push a tag v* (or run manually with a tag) to build the macOS and Windows installers
-# against the production backend and attach them to the GitHub release of that tag.
+# and attach them to the GitHub release of that tag. Each installer bundles the local backend, built
+# from the pen-editor-backend commit pinned in backend-ref.txt.
 on:
   push:
     tags: ["v*"]
@@ -15,7 +16,6 @@ permissions:
   contents: write
 
 env:
-  BACKEND_URL: https://pen-editor-backend.onrender.com
   TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
@@ -40,15 +40,35 @@ jobs:
           node-version: 24
       - name: Build ui
         working-directory: ui
-        env:
-          VITE_DESIGN_AGENT_BACKEND_URL: ${{ env.BACKEND_URL }}
         run: |
           npm ci
           npm run build
+      - name: Read the pinned backend commit
+        id: backend
+        shell: bash
+        run: |
+          ref="$(tr -d '[:space:]' < backend-ref.txt)"
+          if ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "backend-ref.txt must hold one 40-character commit SHA, got: $ref" >&2
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - name: Check out the backend
+        uses: actions/checkout@v4
+        with:
+          repository: dan-rozhkov/pen-editor-backend
+          ref: ${{ steps.backend.outputs.ref }}
+          path: backend-src
+          token: ${{ secrets.BACKEND_REPO_TOKEN || github.token }}
+      - name: Build the local backend bundle
+        working-directory: backend-src
+        run: |
+          npm ci
+          npm run build:local
       - name: Build installer
         working-directory: app
         env:
-          SIDEFORM_LIGHT_BACKEND_URL: ${{ env.BACKEND_URL }}
+          SIDEFORM_LIGHT_BACKEND_BUNDLE: ${{ github.workspace }}/backend-src/dist-local
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
           npm ci

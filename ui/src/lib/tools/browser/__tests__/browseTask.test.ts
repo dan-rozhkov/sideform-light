@@ -87,7 +87,7 @@ describe("browse backend transport", () => {
     const res = await browseBackend.request("/api/browse/step", { goal: "g" }, { timeoutMs: 1000 });
     expect(res).toEqual({ status: 429, ok: false, body: { error: "slow down" }, retryAfterSec: 3 });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("http://localhost:3001/api/browse/step");
+    expect(url).toBe("/api/browse/step");
     expect(init.method).toBe("POST");
     expect(init.headers).toMatchObject({ "Content-Type": "application/json" });
     expect(init.body).toBe(JSON.stringify({ goal: "g" }));

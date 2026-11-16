@@ -1,20 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
-import { app, BaseWindow, ipcMain, net, protocol, safeStorage, session } from "electron";
+import { app, BaseWindow, ipcMain, net, protocol, safeStorage, session, utilityProcess } from "electron";
 import { KEEP_RENDERING_WHEN_OCCLUDED_SWITCH } from "./agentActivity";
 import {
   APP_SCHEME,
-  BUILD_CONFIG_FILE,
   DISPLAY_APP_NAME,
   isAdBlockDisabledByEnv,
   resolveDevDockIconPath,
   resolveMcpPort,
-  parseBuildConfigBackendUrl,
-  resolveBackendOrigin,
+  resolveBackendOverride,
   resolveUiOrigin,
   resolveUserDataDir,
 } from "./config";
 import { APP_SCHEME_PRIVILEGES, buildCsp, resolveAppRequest } from "./localProtocol";
+import { API_READY_WAIT_MS, apiPathOf, proxyApiRequest, type ApiTarget } from "./localApiProxy";
+import { createLocalBackend, unpackedPath, type BackendFork, type LocalBackend } from "./localBackend";
 import { createMainWindow, flushAllForQuit, hasQuitFlushWork, isAgentPanelSender, isLiveTabbar, type HistoryServices } from "./window";
 import { createQuitFlush } from "./quitFlush";
 import { UI_ALLOWED_PERMISSIONS, denyAllPermissions, restrictPermissions } from "./browser/permissions";
@@ -52,14 +52,8 @@ import {
 } from "./browser/adBlock";
 
 const uiOrigin = resolveUiOrigin(process.env);
-function readBuildConfigText(): string | null {
-  try {
-    return fs.readFileSync(path.join(__dirname, "..", BUILD_CONFIG_FILE), "utf8");
-  } catch {
-    return null;
-  }
-}
-const backendOrigin = resolveBackendOrigin(process.env, parseBuildConfigBackendUrl(readBuildConfigText()));
+/** SIDEFORM_LIGHT_BACKEND_URL (dev): `/api/*` goes there and the bundled backend is not started. */
+const backendOverride = resolveBackendOverride(process.env);
 /** The bundled ui: `dist/ui` (`__dirname` is `dist/main`, which also holds inside the asar). */
 const UI_DIST_DIR = path.join(__dirname, "../ui");
 
@@ -179,7 +173,7 @@ const unregisterSchedulesIpc = registerSchedulesIpc({
  * Registered on the default session, the one the agent panel and the trace/settings pages use.
  */
 function serveUi(): void {
-  const csp = buildCsp(backendOrigin);
+  const headers = { "Content-Security-Policy": buildCsp(), "X-Content-Type-Options": "nosniff" };
   const isFile = (p: string): boolean => {
     try {
       return fs.statSync(p).isFile();
@@ -187,19 +181,44 @@ function serveUi(): void {
       return false;
     }
   };
+  const backend = backendOverride ? null : startLocalBackend();
+  // The dev override forwards without a token; the bundled backend answers only with its per-launch token.
+  const target = async (waitMs: number): Promise<ApiTarget | null> => {
+    if (backendOverride) return { origin: backendOverride };
+    return backend ? backend.whenReady(waitMs) : null;
+  };
   session.defaultSession.protocol.handle(APP_SCHEME, async (request) => {
+    // `/api/*` is the backend (same origin for the ui). Only this default-session handler does it: browser tabs
+    // use other partitions (persist:penbrowser, qa-*) that have no `app` handler, so they cannot reach it.
+    const apiPath = apiPathOf(request.url);
+    if (apiPath !== null) return proxyApiRequest(request, apiPath, { target, fetch, responseHeaders: headers, waitMs: API_READY_WAIT_MS });
     const resolved = resolveAppRequest(request.url, UI_DIST_DIR, isFile);
     if (resolved.status === 404) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     try {
       const body = await fs.promises.readFile(resolved.filePath);
-      return new Response(body, {
-        status: 200,
-        headers: { "Content-Type": resolved.mimeType, "Content-Security-Policy": csp, "X-Content-Type-Options": "nosniff" },
-      });
+      return new Response(body, { status: 200, headers: { "Content-Type": resolved.mimeType, ...headers } });
     } catch {
       return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     }
   });
+}
+
+/** Starts the bundled backend (dist/backend/server.mjs) as a utility process; killed on quit. */
+function startLocalBackend(): LocalBackend {
+  const bundlePath = unpackedPath(path.join(__dirname, "../backend/server.mjs"), app.isPackaged);
+  const backend = createLocalBackend({
+    fork: (modulePath, args, options) => utilityProcess.fork(modulePath, args, options) as unknown as ReturnType<BackendFork>,
+    bundlePath,
+    dataDir: path.join(app.getPath("userData"), "backend"),
+    baseEnv: process.env,
+    exists: (p) => fs.existsSync(p),
+    ensureDir: (p) => fs.mkdirSync(p, { recursive: true }),
+    log: (line) => console.log(line),
+    warn: (line) => console.warn(line),
+  });
+  backend.start();
+  app.on("will-quit", () => backend.stop());
+  return backend;
 }
 
 app.whenReady().then(() => {

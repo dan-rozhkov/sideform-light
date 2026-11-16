@@ -8,12 +8,13 @@
   "scripts": {
     "build:ts": "tsc",
     "copy-static": "node scripts/copy-static.mjs",
-    "build": "npm run build:ts && npm run copy-static",
+    "copy-backend": "node scripts/copy-backend.mjs",
+    "build": "npm run build:ts && npm run copy-static && npm run copy-backend",
     "start": "npm run build && electron .",
     "dev": "SIDEFORM_LIGHT_SKIP_UI=1 SIDEFORM_LIGHT_UI_URL=http://localhost:5174 npm run start",
     "lint": "tsc --noEmit && tsc --noEmit -p tsconfig.e2e.json",
     "test": "vitest run",
-    "test:e2e": "SIDEFORM_LIGHT_SKIP_UI=1 npm run build && playwright test",
+    "test:e2e": "SIDEFORM_LIGHT_SKIP_UI=1 SIDEFORM_LIGHT_SKIP_BACKEND=1 npm run build && playwright test",
     "dist": "npm run build && electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win"
   },
@@ -36,6 +37,9 @@
     "files": [
       "dist/**",
       "THIRD_PARTY_NOTICES.md"
+    ],
+    "asarUnpack": [
+      "dist/backend/**"
     ],
     "mac": {
       "target": [

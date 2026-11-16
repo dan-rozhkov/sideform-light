@@ -35,8 +35,16 @@ for (let i = 0; i < 30 && !panel; i++) {
   if (!panel) await sleep(1000);
 }
 if (!panel) throw new Error("agent panel not found: " + pages().map((p) => p.url()).join(", "));
-panel.on("response", (r) => r.url().includes("onrender.com") && console.log("RESP", r.status(), r.request().method(), r.url()));
+panel.on("response", (r) => r.url().includes("/api/") && console.log("RESP", r.status(), r.request().method(), r.url()));
 panel.on("requestfailed", (r) => console.log("FAILED", r.url(), r.failure()?.errorText));
+// The app ships with no model provider: configure the user's own (Settings > Model storage) from the
+// SMOKE_BYOK_* env, then reload so the panel picks it up.
+const byok = { baseUrl: process.env.SMOKE_BYOK_BASE_URL, apiKey: process.env.SMOKE_BYOK_KEY, model: process.env.SMOKE_BYOK_MODEL };
+if (!byok.baseUrl || !byok.apiKey || !byok.model) throw new Error("set SMOKE_BYOK_BASE_URL, SMOKE_BYOK_KEY and SMOKE_BYOK_MODEL");
+await panel.evaluate((c) => {
+  localStorage.setItem("pen.byok.v1", JSON.stringify({ baseUrl: c.baseUrl, apiKey: c.apiKey, models: [{ id: c.model }] }));
+}, byok);
+await panel.reload();
 await panel.waitForSelector("textarea");
 await sleep(3000);
 desktop("1-start-desktop");

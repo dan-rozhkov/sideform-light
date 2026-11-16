@@ -14,9 +14,6 @@ export const APP_ORIGIN = `${APP_SCHEME}://${APP_HOST}`;
 /** The product name shown to the user, and the userData directory name (never shared with Sideform Desktop). */
 export const DISPLAY_APP_NAME = "Sideform Light";
 
-/** Backend the ui talks to for agent requests; the CSP `connect-src` of the ui pages names it. */
-export const DEFAULT_BACKEND_URL = "http://localhost:3001";
-
 /** `protocol//host` of a URL: the origin as Chromium sees it, also for the standard `app:` scheme. Null when unparsable. */
 export function originOf(rawUrl: string | undefined): string | null {
   if (rawUrl === undefined) return null;
@@ -64,26 +61,11 @@ function httpOrigin(raw: string | undefined | null): string | null {
 }
 
 /**
- * The origin of the backend. Order: SIDEFORM_LIGHT_BACKEND_URL at run time, then `builtIn` (the
- * SIDEFORM_LIGHT_BACKEND_URL of the build, from dist/build-config.json), then `http://localhost:3001`.
- * A released app has no env var, so without `builtIn` its CSP would block the production backend.
+ * SIDEFORM_LIGHT_BACKEND_URL (dev): the origin `/api/*` is forwarded to INSTEAD of the bundled backend, which
+ * is then not started. Null (unset or not an http(s) URL) means "use the bundled backend".
  */
-export function resolveBackendOrigin(env: NodeJS.ProcessEnv, builtIn?: string | null): string {
-  return httpOrigin(env.SIDEFORM_LIGHT_BACKEND_URL) ?? httpOrigin(builtIn) ?? DEFAULT_BACKEND_URL;
-}
-
-/** File name, inside dist/, of the build-time config that copy-static writes. */
-export const BUILD_CONFIG_FILE = "build-config.json";
-
-/** Reads `backendUrl` from the build-time config JSON text. Returns null for a missing or broken file. */
-export function parseBuildConfigBackendUrl(text: string | null): string | null {
-  if (!text) return null;
-  try {
-    const value = (JSON.parse(text) as { backendUrl?: unknown }).backendUrl;
-    return typeof value === "string" ? value : null;
-  } catch {
-    return null;
-  }
+export function resolveBackendOverride(env: NodeJS.ProcessEnv): string | null {
+  return httpOrigin(env.SIDEFORM_LIGHT_BACKEND_URL);
 }
 
 /** The agent panel page. */

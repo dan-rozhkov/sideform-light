@@ -171,36 +171,32 @@ interface ChatState {
 const DEFAULT_PARALLEL_COUNT: ParallelCount = 1;
 
 function normalizeModel(model: string | null): string {
-  // The backend-served list is the authority and isn't loaded yet at init, so
-  // accept any saved id here rather than rejecting it against the fallback
-  // list. reconcileModels() below resets ids the backend doesn't offer, once
-  // it answers. A saved id the backend no longer knows is harmless in the
-  // meantime: /api/chat ignores an unknown id and runs its own default.
+  // The model list isn't loaded yet at init, so accept any saved id here rather than rejecting it.
+  // reconcileModels() below resets an id that cannot run, once the list is known. With no provider there
+  // is no default: "" means "no model selected" (the panel shows its provider-required state).
   return model || getDefaultModel();
 }
 
-// Re-validate the active/per-chat models against the freshly loaded backend
-// list. Called after loadModels() resolves; resets any selection the backend
-// no longer offers, so the picker can't keep showing a model nobody runs.
-// Also resets a selection that IS still offered but cannot run — an own-provider
-// (`byok/`) model without a configured provider — otherwise the user would hit a 400 on every
-// turn instead of falling back to a model that actually works. canUseModel
-// (chatModels.ts) is the single rule for "is this selection usable right
-// now" — the picker's disabled/lock state follows the exact same function.
+// Re-validate the active/per-chat models against the available ones: the user's own-provider (`byok/`)
+// models while a provider is configured, plus any server-listed model. A selection that cannot run falls
+// back to the first own-provider model, or "" when there is none (never a preselected model). canUseModel
+// (chatModels.ts) is the single rule for "is this selection usable right now" — the picker's
+// disabled/lock state follows the exact same function.
 export function reconcileModels() {
   const { model, chats, setModel } = useChatStore.getState();
   const isValid = canUseModel;
-  if (chats.some((c) => !isValid(c.model)) || !isValid(model)) {
+  const fallback = getDefaultModel();
+  if (chats.some((c) => !isValid(c.model) && c.model !== fallback) || (!isValid(model) && model !== fallback)) {
     useChatStore.setState((s) => ({
-      chats: s.chats.map((c) => (isValid(c.model) ? c : { ...c, model: getDefaultModel() })),
+      chats: s.chats.map((c) => (isValid(c.model) ? c : { ...c, model: fallback })),
     }));
-    if (!isValid(model)) setModel(getDefaultModel());
+    if (!isValid(model)) setModel(fallback);
   }
 }
 
 // An own-provider model that can no longer run (provider or model removed, here or in the Settings tab)
 // must move a selection back to the default.
-// Before loadModels() settles the list is only the fallback, so reconciling would wrongly reset a hosted
+// Before loadModels() settles the server list is unknown, so reconciling would wrongly reset a listed
 // selection; the post-load reconcile (desktopChatPersistence) covers that case.
 subscribeByok(() => {
   if (areModelsLoaded()) reconcileModels();

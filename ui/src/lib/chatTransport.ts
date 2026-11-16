@@ -1,7 +1,6 @@
 import { createHarnessTransport } from "@sideform/agent-harness/transport";
 import type { RetryState } from "@sideform/agent-harness/retry-fetch";
-import { CREDENTIALS_MODE, isOffline, resolveApiUrl } from "@/lib/apiBase";
-import { t } from "@/i18n";
+import { CREDENTIALS_MODE, resolveApiUrl } from "@/lib/apiBase";
 import { getByokConfig, isByokModel, isHeaderSafe } from "@/lib/byokProvider";
 import { getAgentPanelTraceTabsBridge } from "@/lib/agentPanel";
 import { isDesktopBrowserAvailable } from "@/lib/tools/browser/bridge";
@@ -52,8 +51,6 @@ export function createChatTransport({ body, onRetryStateChange, fetchImpl }: Cha
     api: resolveChatApiUrl(),
     // No accounts and no cookies.
     credentials: () => CREDENTIALS_MODE,
-    isOffline,
-    offlineMessage: t("chat.offline"),
     onRetryStateChange,
     fetchImpl,
     body,

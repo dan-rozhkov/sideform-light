@@ -28,4 +28,4 @@ jobs:
       - run: npx playwright install chromium
       - run: npm run lint
       - run: npm test
-      - run: SIDEFORM_LIGHT_SKIP_UI=1 npm run build
+      - run: SIDEFORM_LIGHT_SKIP_UI=1 SIDEFORM_LIGHT_SKIP_BACKEND=1 npm run build

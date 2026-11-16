@@ -16,7 +16,7 @@ describe("buildChatBody (main chat request body)", () => {
   it('sends agentMode "browser", the model, the anonymous user id and the client capabilities', () => {
     const body = buildChatBody() as Record<string, unknown>;
     expect(body.agentMode).toBe("browser");
-    expect(body.model).toBe(useChatStore.getState().model);
+    expect(body.model).toBe(useChatStore.getState().model || undefined);
     expect(body.userId).toBe(getUserId());
     expect(body.clientCapabilities).toBe(CLIENT_CAPABILITIES);
   });
@@ -112,7 +112,7 @@ describe("the request the main chat sends", () => {
     });
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("http://localhost:3001/api/chat");
+    expect(url).toBe("/api/chat");
     expect(init.credentials).toBe("omit");
     const body = JSON.parse(String(init.body));
     expect(body.agentMode).toBe("browser");

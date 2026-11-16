@@ -25,8 +25,8 @@ before installation.
 
 ## Privacy
 
-Your chats, saved logins, history and traces stay on your computer. The app sends data to the Sideform
-backend only when you send a message to the agent. See [PRIVACY.md](PRIVACY.md).
+Your chats, saved logins, history and traces stay on your computer. The backend runs inside the app; the
+page content and your messages leave your computer only for the model provider you configure. See [PRIVACY.md](PRIVACY.md).
 
 ## Windows
 
@@ -45,24 +45,32 @@ Sideform Light 0.1.1 on Windows 11, installed from the release `.exe` on a GitHu
 
 ## Build
 
-```bash
-(cd ui && npm ci && VITE_DESIGN_AGENT_BACKEND_URL=http://localhost:3001 npm run build)
-cd app && npm ci && SIDEFORM_LIGHT_BACKEND_URL=http://localhost:3001 npm start
-```
-
-Both backend URLs must be the same.
-
-For development against the production backend, run one command from the repository root:
+The app bundles the backend ([pen-editor-backend](https://github.com/dan-rozhkov/pen-editor-backend), local build)
+and runs it on your machine. You set your own model provider in Settings > Model.
 
 ```bash
-scripts/dev-prod.sh                                   # ui dev server (hot reload) + Electron, production backend
-BACKEND_URL=http://localhost:3001 scripts/dev-prod.sh # the same against a local backend
+(cd ui && npm ci && npm run build)
+# the backend repo: npm ci && npm run build:local  ->  dist-local/
+cd app && npm ci && SIDEFORM_LIGHT_BACKEND_BUNDLE=/path/to/pen-editor-backend/dist-local npm start
 ```
 
-No API keys are needed locally: they live on the backend. Chats of this mode go to `chats-dev/`, not to the
-chats of the installed app.
+Without `SIDEFORM_LIGHT_BACKEND_BUNDLE` the build warns and the app runs without a backend; packaging
+(`npm run dist`) fails. `SIDEFORM_LIGHT_SKIP_BACKEND=1` skips the bundle silently (CI, e2e).
 
-Releases are built by `.github/workflows/release.yml` on a `v*` tag.
+For development, run the backend yourself and point the shell at it:
+
+```bash
+# in pen-editor-backend
+npm run dev:local                      # http://localhost:3001
+# here
+SIDEFORM_LIGHT_BACKEND_URL=http://localhost:3001 npm --prefix app start   # the shell forwards /api/* there
+scripts/dev-prod.sh                    # ui dev server (hot reload) + Electron, backend on :3001
+```
+
+`BACKEND_URL=http://localhost:3002 scripts/dev-prod.sh` uses another port. Chats of the dev mode go to `chats-dev/`.
+
+Releases are built by `.github/workflows/release.yml` on a `v*` tag. It builds the backend bundle from the commit
+pinned in `backend-ref.txt` (one 40-character SHA of pen-editor-backend).
 
 ## License
 

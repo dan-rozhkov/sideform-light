@@ -90,6 +90,7 @@ export function CustomProviderGroup() {
     }
   }
 
+  const isLocal = BYOK_PRESETS.some((p) => p.local && p.id === presetId);
   const url = baseUrl.trim();
   const key = apiKey.trim();
   const normalizedUrl = url === "" ? null : normalizeByokBaseUrl(url);
@@ -279,6 +280,7 @@ export function CustomProviderGroup() {
             spellCheck={false}
           />
         </label>
+        <div className="flex flex-col gap-1">
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">{t("settings.model.apiKey")}</span>
           <Input
@@ -288,11 +290,13 @@ export function CustomProviderGroup() {
               setApiKey(e.target.value);
               invalidateLoad();
             }}
-            placeholder="sk-…"
+            placeholder={isLocal ? "ollama" : "sk-…"}
             autoComplete="off"
             spellCheck={false}
           />
         </label>
+        {isLocal && <span className="text-xs text-text-muted">{t("settings.model.keyHintLocal")}</span>}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="accent" onClick={handleSave} disabled={connection === null}>
             {t("settings.model.save")}

@@ -63,7 +63,28 @@ function findMissingPackages(expected, packaged) {
   return expected.filter((name) => !have.has(name));
 }
 
+/** The `resources` dir of the packaged app (macOS: inside the .app bundle). */
+function resourcesDir(context) {
+  return context.electronPlatformName === "darwin"
+    ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, "Contents", "Resources")
+    : path.join(context.appOutDir, "resources");
+}
+
+/** Fails when the bundled local backend is not in the package. `asarUnpack` puts dist/backend next to app.asar. */
+function verifyBackendBundle(context) {
+  const server = path.join(resourcesDir(context), "app.asar.unpacked", "dist", "backend", "server.mjs");
+  if (!fs.existsSync(server)) {
+    throw new Error(
+      `The packaged app has no local backend (${server} is missing).\n` +
+        "Build the backend (pen-editor-backend: npm run build:local) and set SIDEFORM_LIGHT_BACKEND_BUNDLE to its dist-local dir, then build again.\n" +
+        "SIDEFORM_LIGHT_SKIP_BACKEND=1 is not allowed for a release build.",
+    );
+  }
+  console.log("  • verified the local backend bundle (dist/backend/server.mjs)");
+}
+
 async function verifyPackagedDeps(context) {
+  verifyBackendBundle(context);
   if (context.electronPlatformName !== "darwin") return;
   const nodeModules = path.join(context.packager.projectDir, "node_modules");
   if (fs.lstatSync(nodeModules, { throwIfNoEntry: false })?.isSymbolicLink()) {
@@ -95,4 +116,4 @@ async function verifyPackagedDeps(context) {
   console.log(`  • verified ${expected.length} production packages in app.asar`);
 }
 
-module.exports = { afterPack: verifyPackagedDeps, expectedProdPackages, packagedPackages, findMissingPackages };
+module.exports = { afterPack: verifyPackagedDeps, verifyBackendBundle, expectedProdPackages, packagedPackages, findMissingPackages };

@@ -15,7 +15,7 @@ row + omnibox, browse_agent with parallel isolated sessions, saved logins
 
 - `app/` — Electron shell (from pen-editor-desktop 87a9d1c). CommonJS, `npm test`, `npm run lint`, `npm run build`.
 - `ui/` — Vite + React app (from pen-editor 6ff39bbd), reduced to the agent panel, the trace page and a small settings page. Built into `ui/dist` and bundled into the Electron app. **No frontend is loaded from the network.**
-- Backend: the existing `pen-editor-backend`. Light talks to it ONLY for agent requests (list below).
+- Backend: `pen-editor-backend` in its LOCAL mode, bundled INTO the app and run on the user's machine (see "Backend"). Light talks to it ONLY for agent requests (list below). There is no hosted backend and no built-in model provider.
 
 ## Local origin: `app://sideform`
 
@@ -28,9 +28,10 @@ protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: t
 and serves `ui/dist` with `protocol.handle("app", ...)` on the default session:
 
 - host must be `sideform`; any other host → 404.
+- path `/api` or under `/api/` → NOT a file: proxied to the local backend (see "Backend"), any method.
 - path that maps to an existing file inside the ui dist dir → that file (correct MIME). Path traversal outside the dir → 404.
 - any other path (no file) → `index.html` (SPA fallback) ONLY when it is route-like: no file extension in the last segment and not under `/assets/`; otherwise 404.
-- response header `Content-Security-Policy`: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' data: blob: <backend origin>; frame-src 'none'; object-src 'none'; base-uri 'none'`.
+- response header `Content-Security-Policy`: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' data: blob:; frame-src 'none'; object-src 'none'; base-uri 'none'`.
 
 Packaged app: ui dist is copied to `app/dist/ui` by `app`'s build (`copy-static`), path resolved relative to `__dirname` of main. Dev override: env `SIDEFORM_LIGHT_UI_URL` (e.g. `http://localhost:5174`) makes the shell load pages from the Vite dev server instead; then the page origin is that URL's origin and all origin checks use it.
 
@@ -48,7 +49,11 @@ Local shell HTML (tab bar, empty start, passwords, history, omnibox) stays on `f
 
 ## Backend
 
-- Base URL: build-time `VITE_DESIGN_AGENT_BACKEND_URL`, default `http://localhost:3001` (the local backend). The shell's CSP `connect-src` uses the same origin; the shell reads it from env `SIDEFORM_LIGHT_BACKEND_URL` (default `http://localhost:3001`). Both must agree; the ui build and the app build read the same value.
+- **Bundled local backend.** The app ships pen-editor-backend's local bundle (`npm run build:local` in pen-editor-backend → `dist-local/`: `server.mjs` + its data files) at `app/dist/backend/`. The pinned backend commit is in `backend-ref.txt` at the repo root; `app`'s build copies the bundle from `SIDEFORM_LIGHT_BACKEND_BUNDLE` (a `dist-local` dir); `SIDEFORM_LIGHT_SKIP_BACKEND=1` builds without it (tests, CI). `npm run dist`/`dist:win` refuse to package without it.
+- **Process.** After `app.ready` the shell starts it with `utilityProcess.fork(dist/backend/server.mjs)` and env `SIDEFORM_LOCAL=1`, `PORT=0`, `SIDEFORM_LOCAL_TOKEN=<random per launch>`, `SIDEFORM_LOCAL_DATA_DIR=<userData>/backend`. The backend answers on its `process.parentPort` with `{ type: "ready", port }` once it listens (and prints `SIDEFORM_LOCAL_READY port=<n>` to stdout outside Electron). The backend always binds `127.0.0.1` (it ignores `HOST`), refuses to start without `SIDEFORM_LOCAL_TOKEN` (except `npm run dev:local`, which sets `SIDEFORM_LOCAL_INSECURE_DEV=1`) and answers 403 to a `Host` header other than `127.0.0.1:<port>` / `localhost:<port>`. It exits when its parent process is gone. The shell kills it on quit and restarts it after a crash (backoff, at most 3 restarts per minute; after that it stays down for a cool-down of 60 s, then the next `/api` request starts it again).
+- **Base URL in the ui: same origin.** The ui calls `/api/*` relative to its own origin. On `app://sideform` the shell's protocol handler forwards every `/api/*` request (method, headers, streamed body; a renderer abort cancels the response body, which closes the upstream connection) to `http://127.0.0.1:<port>` and adds `X-Sideform-Local-Token`; the response streams back. Before the backend is ready the handler waits up to 25 s, then answers 502 `{ "error": "local_backend_unavailable" }` (502, not 503: the chat client retries 503); an upstream connection error is the same 502. Dev overrides: `SIDEFORM_LIGHT_BACKEND_URL` (e.g. `http://localhost:3001`) makes the shell forward to that origin instead and NOT start the bundled backend (no token added); the Vite dev server (`SIDEFORM_LIGHT_UI_URL`) proxies `/api` to `VITE_DEV_BACKEND_URL` (default `http://localhost:3001`). `VITE_DESIGN_AGENT_BACKEND_URL` / `VITE_AI_API_URL` still force an absolute base if set: for a ui served outside the app only (the `app://` CSP allows `'self'` alone, so a bundled ui built with them cannot reach the backend). CSP `connect-src` is `'self' data: blob:` — no backend origin.
+- **Local mode (pen-editor-backend `SIDEFORM_LOCAL=1`).** Only the Light routes below exist. No database, no auth, no PostHog, no TypeSafe, no OpenRouter key: there is NO server-side model. Every request must carry `X-Sideform-Local-Token` equal to `SIDEFORM_LOCAL_TOKEN` (else 401) when that env is set. `BYOK_ALLOW_PRIVATE_NETWORK` is on (a local Ollama / LM Studio is a valid provider). `GET /api/models` answers `{ models: [], default: null, visionFallback: false, imageOps: { removeBackground: false, vectorize: false } }`. `POST /api/chat` with a model that is not `byok/…` (or none) answers 400 `{ error: "provider_required" }`; an `agentMode` other than `browser` / `browse` answers 400 `{ error: "agent_mode_unsupported" }`. A `byok/` model is assumed to accept images: screenshots from browse tools reach it as image parts of a user message that follows the tool result. `/api/browse/{step,plan,locate}` answer 503 (browse_task / `element` lookup are off; browse_agent uses its lower-level tools). `/api/browse/judge` answers 200 `{ disabled: true }`. Helpers that need a server model (image description fallback, prompt suggestions, titles) are off.
+- **No default provider.** The agent works only after the user adds their own provider in Settings > Model (see "Own model provider"). Until then the composer shows that a provider is needed, with a button that opens Settings > Model, and sending is disabled.
 - Endpoints Light uses (nothing else): `POST /api/chat`, `GET /api/models`, `POST /api/browse/step`, `POST /api/browse/plan`, `POST /api/browse/locate`, `POST /api/browse/judge`, `POST /api/byok/models` (see "Own model provider"). No auth, no cookies (`credentials: "omit"`), no PostHog, no memory, no user skills, no Mobbin, no cloud browser, no cloud traces, no uploads.
 - Identity: anonymous `pen.userId` from localStorage, sent as `userId` in the body as today.
 - Agent mode: the main chat sends `agentMode: "browser"` (NEW mode in pen-editor-backend). The nested browse_agent chat keeps sending `agentMode: "browse"` as today.
@@ -63,12 +68,12 @@ Local shell HTML (tab bar, empty start, passwords, history, omnibox) stays on `f
 
 ### Own model provider (BYOK)
 
-The user may run the agent on their own OpenAI-compatible provider instead of the backend's models (pen-editor-backend spec `docs/specs/2026-11-13-byok-custom-provider-design.md`). Settings > Model keeps `{ baseUrl, apiKey, models[] }` in the ui's localStorage `pen.byok.v1` (shared by the panel and the Settings tab on `app://sideform`; the shell never reads it). Such models appear in the picker as `byok/<modelId>`.
+The user may run the agent on their own OpenAI-compatible provider — in Light this is the ONLY provider (pen-editor-backend spec `docs/specs/2026-11-13-byok-custom-provider-design.md`). Settings > Model keeps `{ baseUrl, apiKey, models[] }` in the ui's localStorage `pen.byok.v1` (shared by the panel and the Settings tab on `app://sideform`; the shell never reads it). Such models appear in the picker as `byok/<modelId>`.
 
 - `POST /api/chat` with a `byok/` model carries `X-BYOK-Base-URL` and `X-BYOK-Key` headers; never in the body, never on other turns. Without them the backend answers 400 `byok_key_required`; a private/non-https URL is 400 `byok_base_url_invalid` (unless the backend runs with `BYOK_ALLOW_PRIVATE_NETWORK=true`).
 - The nested `browse_agent` chat (`agentMode: "browse"`) sends the parent chat's `model` and the same headers when that model is `byok/`; the backend then runs the browsing subagent on it. Otherwise it sends no `model` and the backend pins its own.
 - `POST /api/byok/models` (same headers) loads the provider's model list: `{ ok: true, models: [{ id, contextWindow? }] }` or `{ ok: false, reason: "invalid_key" | "no_model_list" | "upstream_error" }`.
-- Helper calls (`/api/browse/{step,plan,locate,judge}`, image description) still use the backend's own models.
+- Helper calls (`/api/browse/{step,plan,locate,judge}`, image description) need the backend's own models, which the local backend does not have: they are off (see "Local mode").
 
 ## penAgentPanel API (preload/agentPanel.ts) — v1 shape
 

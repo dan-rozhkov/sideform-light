@@ -4,7 +4,6 @@
 
 import type { UIMessage } from "ai";
 import { findPendingAskUser, hasPendingAskUser } from "@/components/chat/pendingAskUser";
-import { isOffline, OFFLINE_MESSAGE } from "@/lib/apiBase";
 import { takeInitialMessages } from "@/lib/chats/desktopChatPersistence";
 import type { McpPanelReply, McpPanelRequest, TaskState, TaskStatus, TaskTrace } from "@/lib/mcpTypes";
 import { isMcpTaskChat, useChatStore, type ChatSummary } from "@/store/chatStore";
@@ -209,7 +208,6 @@ export function createMcpTaskHandler(): McpTaskHandler {
     if (req.title !== undefined && (typeof req.title !== "string" || req.title.length > MAX_TITLE_CHARS)) {
       return { error: `Title must be at most ${MAX_TITLE_CHARS} characters` };
     }
-    if (isOffline()) return { error: OFFLINE_MESSAGE };
     // Count and create in one synchronous step: two concurrent starts cannot both pass the cap.
     const active = mcpChats().filter((c) => isOpen(statusOf(c))).length;
     if (active >= MAX_ACTIVE_MCP_TASKS) {
@@ -234,7 +232,6 @@ export function createMcpTaskHandler(): McpTaskHandler {
       return { error: `Title must be at most ${MAX_TITLE_CHARS} characters` };
     }
     if (req.previousChatId !== undefined && !validTaskId(req.previousChatId)) return { error: "Invalid previous chat id" };
-    if (isOffline()) return { error: OFFLINE_MESSAGE };
     if (req.previousChatId) {
       const previous = store().chats.find((c) => c.id === req.previousChatId);
       if (previous && isOpen(statusOf(previous))) return { error: "The previous run is still running", code: "busy" };
@@ -280,7 +277,6 @@ export function createMcpTaskHandler(): McpTaskHandler {
     if (hasPendingAskUser(messagesOf(chat.id))) return { error: "Answer the pending question with answer_question first" };
     const status = statusOf(chat);
     if (isOpen(status)) return { error: "Task is still running. Wait for it, answer its question or stop it." };
-    if (isOffline()) return { error: OFFLINE_MESSAGE };
     const actions = store().sessionActions[chat.id];
     if (!actions) return { error: "Task is not ready yet" };
     const result = actions.sendText(text);

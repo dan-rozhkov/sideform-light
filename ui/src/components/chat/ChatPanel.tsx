@@ -11,9 +11,10 @@ import {
 } from "@/components/icons";
 import { useChatStore, type ChatSummary, type ParallelCount } from "@/store/chatStore";
 import { useDesignChat } from "@/hooks/useDesignChat";
-import { useModelOptions } from "@/hooks/useModelOptions";
+import { useHasUsableModel, useModelOptions } from "@/hooks/useModelOptions";
 import { isModelOptionLocked } from "@/lib/chatModels";
 import { openSettings } from "@/lib/openSettings";
+import { ProviderRequiredNotice } from "./ProviderRequiredNotice";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { IconButton } from "@/components/ui/IconButton";
 import { Button } from "@/components/ui/button";
@@ -184,6 +185,7 @@ function ChatSession({
     isBusyLive,
   } = useDesignChat({ sessionId });
 
+  const providerRequired = !useHasUsableModel();
   usePendingScheduleActionsVersion(); // a pending schedule card counts once the precheck recorded it
   const awaitingAnswer = hasPendingWaitingCall(messages);
   const parallelCount = useChatStore((s) => s.parallelCount);
@@ -440,8 +442,10 @@ function ChatSession({
       <div
         className="relative z-10 m-3 mt-2 shrink-0 overflow-hidden rounded-2xl border border-border-default bg-surface-panel shadow-[0_1px_3px_rgba(0,0,0,0.08)] focus-within:border-accent-light"
       >
+        {providerRequired && <ProviderRequiredNotice />}
         <ChatInput
           sessionId={sessionId}
+          sendBlocked={providerRequired}
           input={input}
           setInput={setInput}
           onSubmit={handleSubmit}
@@ -489,7 +493,7 @@ export function ChatPanelContent({
   const optionLabel = (option: { label: string; byok?: true }) =>
     option.byok ? t("chat.ownKeyModel", { id: option.label }) : option.label;
   const activeOption = modelOptions.find((option) => option.value === model);
-  const activeModelLabel = activeOption ? optionLabel(activeOption) : model;
+  const activeModelLabel = activeOption ? optionLabel(activeOption) : model || t("chat.noModelSelected");
   const composerControls: ComposerControlsRenderer = ({
     formId,
     canSubmit,
@@ -517,6 +521,9 @@ export function ChatPanelContent({
           />
           <DropdownMenuContent side="top" align="end" className="w-56">
             <DropdownMenuRadioGroup value={model} onValueChange={setModel}>
+              {modelOptions.length === 0 && (
+                <div className="px-2 py-1.5 text-xs text-text-muted">{t("chat.noModels")}</div>
+              )}
               {modelOptions.map((option) => {
                 return (
                   <DropdownMenuRadioItem key={option.value} value={option.value} disabled={isModelOptionLocked(option)}>
@@ -527,7 +534,9 @@ export function ChatPanelContent({
             </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => openSettings("schedules")}>{t("chat.scheduledTasks")}</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => openSettings()}>{t("chat.settings")}</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openSettings(modelOptions.length === 0 ? "model" : undefined)}>
+              {t("chat.settings")}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

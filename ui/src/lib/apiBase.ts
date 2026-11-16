@@ -1,11 +1,13 @@
 // Resolves backend API URLs for every caller (chat, model list, browse helpers).
 //
-// - VITE_AI_API_URL: explicit full chat URL (e.g. https://host/api/chat). We
-//   strip the trailing /api/chat to recover the base for other endpoints.
-// - VITE_DESIGN_AGENT_BACKEND_URL: backend base URL.
-// - neither set: the local backend. There is no same-origin fallback: the page
-//   origin is app://sideform, which serves no API.
-export const DEFAULT_BACKEND_URL = "http://localhost:3001";
+// - Default: SAME ORIGIN (relative `/api/...`). In the app the page is
+//   app://sideform and the shell proxies `/api/*` to the bundled local backend;
+//   in dev the Vite server proxies `/api` (see vite.config.ts).
+// - VITE_AI_API_URL / VITE_DESIGN_AGENT_BACKEND_URL force an ABSOLUTE base. They are
+//   for a ui served OUTSIDE the app (Vite dev, a plain browser) only: the bundled
+//   `app://` page has a CSP whose connect-src is 'self' (plus data: and blob:), so an absolute base would be
+//   blocked there. VITE_AI_API_URL is a full chat URL (we strip the trailing
+//   /api/chat to recover the base); VITE_DESIGN_AGENT_BACKEND_URL is the base.
 
 function resolveBackendBase(): string {
   const explicitApiUrl = import.meta.env.VITE_AI_API_URL as string | undefined;
@@ -20,7 +22,7 @@ function resolveBackendBase(): string {
     return backendUrl.replace(/\/$/, "");
   }
 
-  return DEFAULT_BACKEND_URL;
+  return "";
 }
 
 export function resolveApiUrl(path: string): string {
@@ -38,18 +40,3 @@ export function apiFetchUrl(url: string, init?: RequestInit): Promise<Response> 
 export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   return apiFetchUrl(resolveApiUrl(path), init);
 }
-
-// Single source of truth for "is the backend reachable". Every network caller
-// (chat, image generation, ChatInput's send-button title) used to check
-// `!navigator.onLine` independently, which is easy to let drift. Centralizing
-// it here doesn't change behavior, just where it lives.
-export function isOffline(): boolean {
-  return !navigator.onLine;
-}
-
-// Canonical copy for the chat surface: useDesignChat's offlineError and
-// ChatInput's send-button title both describe the same "sending is
-// unavailable" condition. Other offline messages (e.g. image generation) are
-// genuinely surface-specific and keep their own wording.
-export const OFFLINE_MESSAGE =
-  "Offline. AI and backend features are disabled until the connection is restored.";

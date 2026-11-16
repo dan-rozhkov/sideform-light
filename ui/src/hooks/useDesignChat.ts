@@ -4,12 +4,11 @@ import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
 import { createToolExecutor } from "@sideform/agent-harness/executor";
 import type { RetryState } from "@sideform/agent-harness/retry-fetch";
 import { browseTaskInnerBoundMs } from "@sideform/browser-agent/loop";
-import { isOffline } from "@/lib/apiBase";
-import { t, useLanguage } from "@/i18n";
+import { useLanguage } from "@/i18n";
+import { mapChatError } from "@/lib/chatErrors";
 import { getRequestUserId } from "@/lib/auth/authState";
 import { createChatTransport, resolveChatApiUrl, CLIENT_CAPABILITIES } from "@/lib/chatTransport";
 import { resolveSessionModel } from "@/lib/sessionModel";
-import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { isBackgroundTaskChat, useChatStore } from "@/store/chatStore";
 import { toolHandlers, type ToolExecutionContext, type ToolHandler } from "@/lib/toolRegistry";
 import type { ChatLaunchPayload } from "@/types/chat";
@@ -38,7 +37,8 @@ export { resolveSessionModel };
 export function buildChatBody(sessionId?: string): object {
   return {
     agentMode: "browser",
-    model: resolveSessionModel(sessionId),
+    // "" (no provider) is omitted from the JSON; the backend then answers 400 provider_required.
+    model: resolveSessionModel(sessionId) || undefined,
     userId: getRequestUserId(),
     clientCapabilities: isBackgroundTaskChat(sessionId) ? CAPABILITIES_WITHOUT_SCHEDULES : CLIENT_CAPABILITIES,
   };
@@ -267,13 +267,6 @@ const ABORTED_RUN_OUTPUT = JSON.stringify({ status: "aborted", steps: 0 });
 
 export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   const [input, setInput] = useState("");
-  // Set when a send is refused because the browser is offline. The error
-  // itself is DERIVED from this plus live connectivity (see `offlineError`
-  // below) rather than stored: an "you are offline" banner is stale the
-  // moment the connection is back, so nothing has to clear it — in
-  // particular the send-drain effect doesn't, which is what keeps that
-  // effect free of setState.
-  const [offlineSendRefused, setOfflineSendRefused] = useState(false);
 
   // Non-null while the transport is auto-retrying a network failure; drives
   // the neutral "retrying…" status line instead of the red error banner.
@@ -474,10 +467,6 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
     [setChatMessages]
   );
 
-  // Drives re-running the send-drain effect below once connectivity returns
-  // (see the effect for why offline must not consume a pending send).
-  const isOnline = useOnlineStatus();
-
   // Register/unregister abort capability for this session
   const registerAbortController = useChatStore((s) => s.registerAbortController);
   const unregisterAbortController = useChatStore((s) => s.unregisterAbortController);
@@ -587,12 +576,6 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
       if (!text && (!images || images.length === 0)) {
         return false;
       }
-      // Fail fast and locally instead of issuing a request that will hang or
-      // reject once the browser notices it has no connection.
-      if (isOffline()) {
-        setOfflineSendRefused(true);
-        return false;
-      }
       // The agent is busy: live isolated QA runs, or a request in flight. The
       // send interrupts the turn exactly like Stop and the message is parked
       // until the stop settles (the drain effect below). The caller (ChatInput)
@@ -641,18 +624,7 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   // the same tick: the user's own message wins, and the launch payload goes out
   // on the next "ready" (which the send itself will eventually cause).
   useEffect(() => {
-    if (chat.status !== "ready" || !isOnline || isOffline()) {
-      // Consuming while offline would delete the queued payload from the
-      // store without ever sending it (sendPayload's offline guard rejects
-      // it), destroying a parallel-tab launch permanently. Leave it queued;
-      // the isOnline dependency reruns this effect once connectivity
-      // returns, at which point it's consumed and sent normally.
-      //
-      // The extra live `isOffline()` check guards the narrow race where the
-      // isOnline *state* is still stale-true (the browser's "offline" event
-      // hasn't landed yet) but connectivity is already gone: bail here,
-      // before any consume/send, so a payload is never handed to the
-      // transport for a connection that is already down.
+    if (chat.status !== "ready") {
       return;
     }
 
@@ -676,7 +648,7 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
     const queuedPayload = consumeLaunchPayload(sessionId);
     if (queuedPayload) {
       // `deliverPayload`, not `sendPayload`: every precondition sendPayload
-      // would re-check (online, status === "ready", non-empty) is already
+      // would re-check (status === "ready", non-empty) is already
       // established above, and going straight to the transport keeps this
       // effect from writing React state.
       deliverPayload(cloneLaunchPayload(queuedPayload));
@@ -684,7 +656,6 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   }, [
     chat.status,
     chat.messages,
-    isOnline,
     toolsBusy,
     consumeLaunchPayload,
     deliverPayload,
@@ -711,7 +682,6 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
   );
 
   const clearError = useCallback(() => {
-    setOfflineSendRefused(false);
     chat.clearError();
   }, [chat]);
 
@@ -725,15 +695,11 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
     abortTurn();
   }, [abortTurn]);
 
-  // Derived, not stored: the offline banner is exactly "a send was refused
-  // and we are still offline". Coming back online retires it on its own, so
-  // no send path — user-facing or the send drain — has to clear it.
-  // One instance per language: the offline error carries no per-attempt information, and a stable
-  // identity keeps it from re-rendering consumers that memo on `error`.
   const language = useLanguage();
+  // A readable message for a provider_required / local_backend_unavailable answer; stable per error and language.
+  const chatError = chat.error;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the message follows the interface language
-  const offlineSendError = useMemo(() => new Error(t("chat.offline")), [language]);
-  const offlineError = offlineSendRefused && !isOnline ? offlineSendError : undefined;
+  const mappedError = useMemo(() => (chatError ? mapChatError(chatError) : undefined), [chatError, language]);
 
   // Invariant: while isolated QA runs are live the hook reports "streaming" even
   // though `chat.status` is "ready" (the stream ended, the runs did not). Every
@@ -797,7 +763,7 @@ export function useDesignChat({ sessionId }: UseDesignChatOptions) {
     status,
     isLoading: status === "submitted" || status === "streaming",
     stop,
-    error: offlineError ?? chat.error,
+    error: mappedError,
     clearError,
     setMessages,
     retryState,

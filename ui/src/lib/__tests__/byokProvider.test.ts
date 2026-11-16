@@ -112,8 +112,20 @@ describe("byokProvider storage", () => {
       "deepseek",
       "together",
       "mistral",
+      "ollama",
+      "lmstudio",
       "custom",
     ]);
+  });
+
+  it("has local presets whose base URLs the validator accepts, and none is preselected", () => {
+    const ollama = BYOK_PRESETS.find((p) => p.id === "ollama");
+    const lmstudio = BYOK_PRESETS.find((p) => p.id === "lmstudio");
+    expect(ollama).toMatchObject({ label: "Ollama", baseUrl: "http://localhost:11434/v1", local: true });
+    expect(lmstudio).toMatchObject({ label: "LM Studio", baseUrl: "http://localhost:1234/v1", local: true });
+    expect(normalizeByokBaseUrl(ollama!.baseUrl)).toBe("http://localhost:11434/v1");
+    expect(normalizeByokBaseUrl(lmstudio!.baseUrl)).toBe("http://localhost:1234/v1");
+    expect(getByokConfig()).toEqual({ baseUrl: "", apiKey: "", models: [] });
   });
 
   it("normalizes model lists: trims, drops blanks and duplicates, keeps positive numeric windows", () => {

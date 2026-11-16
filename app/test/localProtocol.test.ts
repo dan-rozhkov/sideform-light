@@ -97,12 +97,12 @@ describe("mimeTypeFor", () => {
 });
 
 describe("buildCsp", () => {
-  it("is the contract policy with the backend origin in connect-src", () => {
-    expect(buildCsp("http://localhost:3001")).toBe(
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' data: blob: http://localhost:3001; frame-src 'none'; object-src 'none'; base-uri 'none'",
+  it("is the contract policy: connect-src is same origin only (/api is proxied, no backend origin)", () => {
+    expect(buildCsp()).toBe(
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' data: blob:; frame-src 'none'; object-src 'none'; base-uri 'none'",
     );
   });
-  it("names the configured backend", () => {
-    expect(buildCsp("https://api.example.com")).toContain("connect-src 'self' data: blob: https://api.example.com;");
+  it("names no http origin in connect-src", () => {
+    expect(buildCsp().match(/connect-src[^;]*/)?.[0]).not.toMatch(/https?:\/\//);
   });
 });

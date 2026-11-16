@@ -30,6 +30,8 @@ export interface ByokPreset {
   id: string;
   label: string;
   baseUrl: string;
+  /** A provider that runs on this computer and ignores the API key. */
+  local?: true;
 }
 
 export const BYOK_PRESETS: readonly ByokPreset[] = [
@@ -39,6 +41,10 @@ export const BYOK_PRESETS: readonly ByokPreset[] = [
   { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
   { id: "together", label: "Together", baseUrl: "https://api.together.xyz/v1" },
   { id: "mistral", label: "Mistral", baseUrl: "https://api.mistral.ai/v1" },
+  // Local providers (allowed: the local backend accepts a private/loopback base URL). They ignore the key, but
+  // the backend still requires a non-empty one, so Settings hints "any value, e.g. ollama".
+  { id: "ollama", label: "Ollama", baseUrl: "http://localhost:11434/v1", local: true },
+  { id: "lmstudio", label: "LM Studio", baseUrl: "http://localhost:1234/v1", local: true },
   { id: "custom", label: "Custom", baseUrl: "" },
 ];
 

@@ -1,6 +1,7 @@
 name: windows-smoke
 
-# Installs a released .exe on a Windows runner, starts the app against the production backend,
+# Installs a released .exe on a Windows runner, starts the app (its bundled local backend) on the provider from the
+# SMOKE_BYOK_BASE_URL / SMOKE_BYOK_KEY / SMOKE_BYOK_MODEL secrets,
 # sends one agent task and uploads screenshots. Run manually.
 on:
   workflow_dispatch:
@@ -32,6 +33,10 @@ jobs:
           Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Sideform Light.exe" | Select-Object -ExpandProperty FullName
       - name: Drive the app
         shell: pwsh
+        env:
+          SMOKE_BYOK_BASE_URL: ${{ secrets.SMOKE_BYOK_BASE_URL }}
+          SMOKE_BYOK_KEY: ${{ secrets.SMOKE_BYOK_KEY }}
+          SMOKE_BYOK_MODEL: ${{ secrets.SMOKE_BYOK_MODEL }}
         run: |
           $app = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Sideform Light.exe" | Select-Object -First 1
           New-Item -ItemType Directory -Force shots | Out-Null

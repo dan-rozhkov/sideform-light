@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest"; 
 import { reconcileModels, useChatStore, type ChatSummary } from "@/store/chatStore";
+import { addByokModel, clearByokConfig, setByokConnection } from "@/lib/byokProvider";
 import { getDefaultModel, getModelOptions } from "@/lib/chatModels";
 import { resetBrowseCheckpoints, useBrowseCheckpointStore } from "@/store/browseCheckpointStore";
 
@@ -341,6 +342,8 @@ describe("chatStore — model selection", () => {
   });
 
   it("reconcileModels leaves a valid selection alone", () => {
+    setByokConnection("https://api.example.com/v1", "k");
+    addByokModel({ id: "m" });
     const valid = getModelOptions()[0].value;
     useChatStore.setState((s) => ({
       model: valid,
@@ -350,6 +353,7 @@ describe("chatStore — model selection", () => {
     reconcileModels();
 
     expect(useChatStore.getState().model).toBe(valid);
+    clearByokConfig();
   });
 });
 

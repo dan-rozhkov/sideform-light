@@ -1,7 +1,9 @@
-// The chat model list and per-model capabilities. The backend is the source
-// of truth (GET /api/models): it serves the selectable models plus the one
-// that runs when a request names none, and this module fetches that once at
-// startup and caches it. The user's pick travels with every turn as
+// The chat model list and per-model capabilities. The only models in Light are the
+// ones on the user's own provider (`byok/<id>`, src/lib/byokProvider.ts): the local
+// backend has no model of its own, so GET /api/models answers an empty list and
+// `default: null`. A server list is still parsed (a dev backend may serve one), but
+// nothing is ever preselected: with no usable model the panel shows its
+// "provider required" state. The user's pick travels with every turn as
 // `model` (see useDesignChat's buildChatBody).
 //
 // `supportsVision` reports NATIVE vision only. Whether an image may be
@@ -29,95 +31,6 @@ export interface ChatModelOption {
   byok?: true;
 }
 
-// First-paint/offline safety net, mirroring the backend's DEFAULT_MODELS
-// (pen-editor-backend src/config.ts) — `modelContract.test.ts` pins the two
-// against each other from the sibling checkout. A drifting id here cannot
-// break a turn (the backend IGNORES an id outside its own list and runs its
-// default instead), but it would show the user a menu that doesn't match
-// what they get, so keep it honest.
-const FALLBACK_MODELS: ChatModelOption[] = [
-  {
-    value: "meta/muse-spark-1.3-contributor",
-    label: "Muse Spark 1.3",
-    supportsVision: true,
-    contextWindow: 1048576,
-  },
-  {
-    value: "qwen/qwen3.8-flash",
-    label: "Qwen3.8 Flash",
-    supportsVision: true,
-    contextWindow: 1000000,
-  },
-  {
-    value: "z-ai/glm-5.3-flash",
-    label: "GLM 5.3 Flash",
-    supportsVision: true,
-    contextWindow: 1310720,
-  },
-  {
-    value: "deepseek/deepseek-v4.1-flash",
-    label: "DeepSeek V4.1 Flash",
-    supportsVision: true,
-    contextWindow: 1048576,
-  },
-  {
-    value: "google/gemini-3.8-flash",
-    label: "Gemini 3.8 Flash",
-    supportsVision: true,
-    contextWindow: 1048576,
-  },
-  {
-    value: "tencent/hy4-preview",
-    label: "Hy4 Preview",
-    supportsVision: false,
-    contextWindow: 1048576,
-  },
-  {
-    value: "z-ai/glm-5.3",
-    label: "GLM 5.3",
-    supportsVision: false,
-    contextWindow: 1310720,
-  },
-  {
-    value: "openai/gpt-6-luna",
-    label: "GPT-6 Luna",
-    supportsVision: true,
-    contextWindow: 1050000,
-  },
-  {
-    value: "z-ai/glm-5.2",
-    label: "GLM 5.2",
-    supportsVision: false,
-    contextWindow: 1048576,
-  },
-  // Known caveat, kept in sync with the backend's note on this id: on the
-  // design-agent prompt MiniMax M3 fairly often ends a turn with reasoning
-  // only and no tool call, and nothing retries that (the retry fires only
-  // before the first content chunk). An empty-looking turn here is the model.
-  {
-    value: "minimax/minimax-m3",
-    label: "MiniMax M3",
-    supportsVision: true,
-    contextWindow: 1048576,
-  },
-  {
-    value: "xiaomi/mimo-v2.6-pro",
-    label: "MiMo V2.6 Pro",
-    supportsVision: true,
-    contextWindow: 1048576,
-  },
-  {
-    value: "xiaomi/mimo-v2.6-flash",
-    label: "MiMo V2.6 Flash",
-    supportsVision: true,
-    contextWindow: 1048576,
-  },
-];
-
-// Mirrors the backend's CHAT_MODEL default. Only used until GET /api/models
-// answers with its own `default`.
-const FALLBACK_DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash";
-
 // Backend wire shape (pen-editor-backend GET /api/models).
 interface ModelsResponse {
   models: {
@@ -127,12 +40,12 @@ interface ModelsResponse {
     requiresUserKey?: boolean;
     contextWindow?: number;
   }[];
-  default: string;
-  visionFallback: boolean;
+  /** null when the backend has no model of its own (always the case for the local backend). */
+  default?: string | null;
+  visionFallback?: boolean;
 }
 
-let currentModels: ChatModelOption[] = FALLBACK_MODELS;
-let defaultModel: string = FALLBACK_DEFAULT_MODEL;
+let currentModels: ChatModelOption[] = [];
 // Whether the backend has an auxiliary vision model configured, so it can
 // accept images even for a model without native vision (it describes them as
 // text server-side). Default false — conservative until the backend confirms
@@ -177,9 +90,23 @@ export function getModelOptions(): ChatModelOption[] {
   return mergedOptions;
 }
 
-/** The model a turn runs on when nothing is selected (the backend's own). */
+/** The options `canUseModel` accepts: an own-provider model with a working connection, or a listed server model. The ONE usability rule. */
+function usableOptions(): ChatModelOption[] {
+  return getModelOptions().filter((o) => canUseModel(o.value));
+}
+
+/**
+ * The model a selection falls back to: the first usable one, preferring an own-provider (`byok/`) model, or "" when
+ * none is usable. There is no server default, so nothing is ever preselected for a user without a provider.
+ */
 export function getDefaultModel(): string {
-  return defaultModel;
+  const usable = usableOptions();
+  return (usable.find((o) => o.byok) ?? usable[0])?.value ?? "";
+}
+
+/** Whether at least one model can run a turn right now (same rule as getDefaultModel: some option passes canUseModel). */
+export function hasUsableModel(): boolean {
+  return usableOptions().length > 0;
 }
 
 /** Whether `model` reads images itself, without the backend's text fallback. */
@@ -218,6 +145,7 @@ export function getModelContextWindow(model: string): number | undefined {
 // (chatStore.ts) to decide whether a saved selection must fall back to the default.
 // An own-provider model is usable only while a base URL and key are configured.
 export function canUseModel(value: string): boolean {
+  if (!value) return false;
   const option = getModelOptions().find((o) => o.value === value);
   if (!option) return false;
   if (option.byok) return isByokConfigured();
@@ -240,35 +168,34 @@ export function subscribeModels(listener: () => void): () => void {
   };
 }
 
-/** True once loadModels() has settled (the backend list, or the fallback after a failure, is final). */
+/** True once loadModels() has settled (the backend list, or an empty one after a failure, is final). */
 export function areModelsLoaded(): boolean {
   return modelsSettled;
 }
 
 // Fetch the model metadata from the backend once. Safe to call repeatedly —
-// the in-flight promise is shared. On any failure we silently keep the
-// fallback.
+// the in-flight promise is shared. On any failure the list stays empty.
 export function loadModels(): Promise<void> {
   if (loadPromise) return loadPromise;
   loadPromise = (async () => {
     try {
       const res = await apiFetch("/api/models");
       if (!res.ok) return;
-      const data = (await res.json()) as ModelsResponse;
-      if (Array.isArray(data.models) && data.models.length > 0) {
+      const data = (await res.json()) as ModelsResponse | null;
+      if (Array.isArray(data?.models)) {
         // Models that need the user's own key (OpenCode BYOK) are not offered: Light has no key dialog.
-        const usable = data.models.filter((m) => !m.requiresUserKey);
-        if (usable.length > 0) currentModels = usable.map((m) => ({
-          value: m.id,
-          label: m.label,
-          supportsVision: m.supportsVision,
-          ...(typeof m.contextWindow === "number" ? { contextWindow: m.contextWindow } : {}),
-        }));
+        currentModels = data.models
+          .filter((m) => !m.requiresUserKey)
+          .map((m) => ({
+            value: m.id,
+            label: m.label,
+            supportsVision: m.supportsVision,
+            ...(typeof m.contextWindow === "number" ? { contextWindow: m.contextWindow } : {}),
+          }));
       }
-      if (data.default) defaultModel = data.default;
-      visionFallback = data.visionFallback ?? false;
+      visionFallback = data?.visionFallback ?? false;
     } catch {
-      // Network/parse error — keep the hardcoded fallback.
+      // Network/parse error — keep the empty list.
     } finally {
       modelsSettled = true;
       notify();

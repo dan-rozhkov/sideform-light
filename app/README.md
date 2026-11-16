@@ -8,8 +8,11 @@ documents, workflows, accounts or desktop-app control.
 - `app/` — this Electron shell. `npm start` builds and runs it; `npm run dev` runs it against the ui dev server.
 - `../ui/` — the agent panel, trace page and settings page (Vite + React). Its build (`ui/dist`) is bundled
   into the app and served from the privileged `app://sideform` scheme; nothing is loaded from the network.
-- Backend: the agent talks to a `pen-editor-backend` (default `http://localhost:3001`, override with
-  `SIDEFORM_LIGHT_BACKEND_URL` for the CSP and the ui build's `VITE_DESIGN_AGENT_BACKEND_URL`).
+- Backend: the app bundles and runs the `pen-editor-backend` local build as a child process
+  (`dist/backend/server.mjs`); the ui calls `/api/*` on its own origin and the shell proxies it. Build the bundle
+  in the backend (`npm run build:local`) and pass its `dist-local` dir as `SIDEFORM_LIGHT_BACKEND_BUNDLE`.
+  For development set `SIDEFORM_LIGHT_BACKEND_URL=http://localhost:3001` (backend `npm run dev:local`): the shell
+  then forwards `/api/*` there and starts no backend. `SIDEFORM_LIGHT_SKIP_BACKEND=1` builds without a bundle.
 
 ```bash
 npm ci
