@@ -10,7 +10,10 @@ These items are stored in the `Sideform Light` user data folder and are never up
 - chats and chat history;
 - saved logins (passwords are encrypted with the operating system key store);
 - browsing history, settings and ad-block lists;
-- traces of agent runs.
+- traces of agent runs;
+- the agent's memory: short notes about you and your preferences that the agent saves to help you in
+  later chats. You can see, delete or turn them off in Settings > Memory. They are sent to your model
+  provider only as part of the agent's prompt.
 
 The agent never receives your saved passwords. When it signs in with a saved login, the app fills the
 password into the page itself.

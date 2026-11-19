@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import type { UIMessage } from "ai";
 import { isToolUIPart } from "ai";
 import {
@@ -28,6 +28,9 @@ import { ScheduleConfirmCard } from "./ScheduleConfirmCard";
 import { ScheduleActionCard } from "./ScheduleActionCard";
 import { pendingScheduleActions, usePendingScheduleActionsVersion } from "@/lib/tools/pendingScheduleActions";
 import { isScheduleActionTool, parseScheduleActionInput, parseScheduleCreateInput, type ScheduleActionTool } from "@/lib/tools/schedules";
+import { MemoryActivityRow } from "./MemoryActivityRow";
+import { isMemoryWriteSuccessful, memoryChangesFromInput, noteChangeList } from "@/lib/memoryActivity";
+import type { ChatActivityNote } from "@/store/chatStore";
 import { isPendingScheduleActionPart, isPendingScheduleCreatePart } from "./pendingScheduleCreate";
 
 interface ImagePreviewProps {
@@ -144,6 +147,35 @@ interface MessageListProps {
    * box and resets `scrollTop` to 0. Defaults to true for callers that are
    * always visible. */
   isVisible?: boolean;
+  /** UI-only rows for background-review memory writes, each rendered under the assistant message it is anchored to. */
+  activityNotes?: ChatActivityNote[];
+}
+
+/** Maps message id -> notes rendered under it. `afterMessageId` anchors directly; `turnMessageId` resolves to the
+ * last assistant message between that user message and the next user message (nothing if absent). */
+function groupNotesByMessage(messages: UIMessage[], notes: ChatActivityNote[] | undefined): Map<string, ChatActivityNote[]> {
+  const out = new Map<string, ChatActivityNote[]>();
+  if (!notes?.length) return out;
+  const add = (messageId: string, n: ChatActivityNote) => {
+    const list = out.get(messageId);
+    if (list) list.push(n);
+    else out.set(messageId, [n]);
+  };
+  for (const n of notes) {
+    if (n.afterMessageId !== undefined) {
+      add(n.afterMessageId, n);
+      continue;
+    }
+    const start = messages.findIndex((m) => m.id === n.turnMessageId && m.role === "user");
+    if (start === -1) continue;
+    let target: string | undefined;
+    for (let i = start + 1; i < messages.length; i++) {
+      if (messages[i].role === "user") break;
+      if (messages[i].role === "assistant") target = messages[i].id;
+    }
+    if (target !== undefined) add(target, n);
+  }
+  return out;
 }
 
 export function MessageList({
@@ -152,8 +184,10 @@ export function MessageList({
   onRollback,
   addToolOutput,
   isVisible = true,
+  activityNotes,
 }: MessageListProps) {
   const t = useT();
+  const notesByMessage = useMemo(() => groupNotesByMessage(messages, activityNotes), [messages, activityNotes]);
   usePendingScheduleActionsVersion(); // a card appears when the precheck records its schedule
   const containerRef = useRef<HTMLDivElement>(null);
   const isAutoScrollRef = useRef(true);
@@ -343,6 +377,14 @@ export function MessageList({
                     );
                   }
                 }
+                if (part.type === "tool-memory") {
+                  const tp = part as { toolCallId: string; state?: string; errorText?: string; input?: unknown; output?: unknown };
+                  // Server-executed and never throws: a failure is an ordinary output with { ok: false }. Only a real
+                  // success gets the "Memory updated" row; anything else falls through to the generic indicator.
+                  if (tp.state === "output-available" && !tp.errorText && isMemoryWriteSuccessful(tp.output)) {
+                    return <MemoryActivityRow key={tp.toolCallId} changes={memoryChangesFromInput(tp.input)} />;
+                  }
+                }
                 if (isToolUIPart(part)) {
                   const tp = part as { toolCallId: string };
                   if (part.type === "tool-browse_agent") {
@@ -354,6 +396,9 @@ export function MessageList({
                 }
                 return null;
               })}
+              {notesByMessage.get(msg.id)?.map((n) => (
+                <MemoryActivityRow key={n.id} changes={noteChangeList(n.changesByEvent)} />
+              ))}
               {isEmptyStreaming && <StreamingIndicator />}
             </div>
             <div className="ml-2 flex items-center">

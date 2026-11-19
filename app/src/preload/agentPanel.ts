@@ -122,7 +122,7 @@ const traces = {
     opts === undefined ? ipcRenderer.invoke("traces:read", id) : ipcRenderer.invoke("traces:read", id, opts),
 };
 
-// Settings tab (`settings:open`): `section` is one of appearance|model|browser|mcp|schedules (config.ts SETTINGS_SECTIONS); main ignores any other value.
+// Settings tab (`settings:open`): `section` is one of appearance|model|memory|browser|mcp|schedules (config.ts SETTINGS_SECTIONS); main ignores any other value.
 const settings = {
   open: (section?: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("settings:open", section),
 };

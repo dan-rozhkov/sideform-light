@@ -23,6 +23,7 @@ export const toolDisplayNames: Record<string, MessageKey> = {
   schedule_create: "tools.name.schedule_create",
   schedule_set_enabled: "tools.name.schedule_set_enabled",
   schedule_delete: "tools.name.schedule_delete",
+  memory: "tools.name.memory",
 };
 
 export function getToolDisplayName(toolName: string): string {

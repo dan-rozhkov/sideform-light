@@ -23,6 +23,7 @@ export const tools = {
   "tools.name.schedule_create": "Create Schedule",
   "tools.name.schedule_set_enabled": "Pause or Resume Schedule",
   "tools.name.schedule_delete": "Delete Schedule",
+  "tools.name.memory": "Memory",
   "tools.status.running": "Running...",
   "tools.status.done": "Done",
   "tools.status.error": "Error",

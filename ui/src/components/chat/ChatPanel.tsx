@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import {
   BrainIcon,
   PlusIcon,
@@ -9,8 +9,10 @@ import {
   CaretDownIcon,
   DotsThreeVerticalIcon,
 } from "@/components/icons";
-import { useChatStore, type ChatSummary, type ParallelCount } from "@/store/chatStore";
+import { NO_ACTIVITY_NOTES, useChatStore, type ChatSummary, type ParallelCount } from "@/store/chatStore";
+import { useAgentActivityNotes } from "@/hooks/useAgentActivityNotes";
 import { useDesignChat } from "@/hooks/useDesignChat";
+import { getRequestUserId } from "@/lib/auth/authState";
 import { useHasUsableModel, useModelOptions } from "@/hooks/useModelOptions";
 import { isModelOptionLocked } from "@/lib/chatModels";
 import { openSettings } from "@/lib/openSettings";
@@ -184,6 +186,15 @@ function ChatSession({
     isTurnStopped,
     isBusyLive,
   } = useDesignChat({ sessionId });
+
+  // Memory writes the background review makes after a turn finished: two delayed checks (see the hook).
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+  const getLastMessageId = useCallback(() => messagesRef.current.at(-1)?.id, []);
+  useAgentActivityNotes({ userId: getRequestUserId(), busy: isLoading, sessionId, getLastMessageId });
+  const activityNotes = useChatStore((s) => s.activityNotes[sessionId] ?? NO_ACTIVITY_NOTES);
 
   const providerRequired = !useHasUsableModel();
   usePendingScheduleActionsVersion(); // a pending schedule card counts once the precheck recorded it
@@ -436,6 +447,7 @@ function ChatSession({
           onRollback={isLoading ? undefined : handleRollback}
           addToolOutput={addToolOutput}
           isVisible={isVisible}
+          activityNotes={activityNotes}
         />
 
       {/* Composer */}

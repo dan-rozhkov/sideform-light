@@ -32,7 +32,7 @@ export { resolveSessionModel };
 
 /**
  * The per-request body fields: the picked model, the anonymous user id, and the client capabilities.
- * The main chat always runs in the `browser` agent mode (no canvas context, memory or skills). Exported for tests.
+ * The main chat always runs in the `browser` agent mode (no canvas context or skills; the backend's local memory still applies). Exported for tests.
  */
 export function buildChatBody(sessionId?: string): object {
   return {

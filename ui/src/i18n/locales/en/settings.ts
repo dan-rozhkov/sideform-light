@@ -8,6 +8,7 @@ export const settings = {
   "settings.nav.mcp": "MCP",
   "settings.nav.schedules": "Schedules",
   "settings.nav.model": "Model",
+  "settings.nav.memory": "Memory",
   "settings.appearance.theme": "Theme",
   "settings.appearance.themeDescription": "Applies to every open window.",
   "settings.appearance.light": "Light",

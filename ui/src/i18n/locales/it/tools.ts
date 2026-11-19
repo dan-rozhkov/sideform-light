@@ -23,6 +23,7 @@ export const tools: Translation<typeof en> = {
   "tools.name.schedule_create": "Crea pianificazione",
   "tools.name.schedule_set_enabled": "Pausa o ripresa pianificazione",
   "tools.name.schedule_delete": "Elimina pianificazione",
+  "tools.name.memory": "Memoria",
   "tools.status.running": "In corso…",
   "tools.status.done": "Fatto",
   "tools.status.error": "Errore",

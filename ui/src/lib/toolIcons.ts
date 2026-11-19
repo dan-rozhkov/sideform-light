@@ -1,5 +1,6 @@
 import {
   ArticleIcon,
+  BrainIcon,
   FilmStripIcon,
   ListMagnifyingGlassIcon,
   FlagCheckeredIcon,
@@ -44,6 +45,7 @@ const toolIcons: Record<string, Icon> = {
   schedule_create: ClockIcon,
   schedule_set_enabled: ClockIcon,
   schedule_delete: ClockIcon,
+  memory: BrainIcon,
 };
 
 /** Falls back to a generic tool icon for anything unmapped. */

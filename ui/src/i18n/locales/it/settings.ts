@@ -9,6 +9,7 @@ export const settings: Translation<typeof en> = {
   "settings.nav.mcp": "MCP",
   "settings.nav.schedules": "Pianificazioni",
   "settings.nav.model": "Modello",
+  "settings.nav.memory": "Memoria",
   "settings.appearance.theme": "Tema",
   "settings.appearance.themeDescription": "Si applica a tutte le finestre aperte.",
   "settings.appearance.light": "Chiaro",

@@ -4,6 +4,7 @@ import { onStorageKey } from "@/lib/storageSync";
 import { deriveChatTitle } from "@/lib/chatTitle";
 import { areModelsLoaded, canUseModel, getDefaultModel } from "@/lib/chatModels";
 import { subscribeByok } from "@/lib/byokProvider";
+import { mergeChangesByEvent, type ChangeDetail } from "@/lib/memoryActivity";
 import { useBrowseCheckpointStore } from "./browseCheckpointStore";
 import type { AttachedImage, ChatLaunchPayload } from "@/types/chat";
 
@@ -51,6 +52,36 @@ export interface ChatSummary {
 }
 
 export type ParallelCount = 1 | 2 | 3;
+
+/**
+ * A UI-only transcript row for a background-review memory write (see useAgentActivityNotes). Deliberately NOT a
+ * UIMessage: it lives beside the AI SDK `messages` array and is never sent to the backend.
+ */
+export type ChatActivityNote = {
+  /** Stable dedup key. */
+  id: string;
+  /** What the review changed, per activity event (key: `String(eventId)` or `noid:<content>`). */
+  changesByEvent?: Record<string, ChangeDetail[]>;
+} & (
+  | {
+      /** Old backends: the message the note renders after. */
+      afterMessageId: string;
+      turnMessageId?: never;
+    }
+  | {
+      afterMessageId?: never;
+      /** The USER message that started the reviewed turn; the note renders under that turn's last assistant message. */
+      turnMessageId: string;
+    }
+);
+
+/** Stable empty reference for chats with no activity notes. Never mutated. */
+export const NO_ACTIVITY_NOTES: ChatActivityNote[] = [];
+
+function mergeNoteChanges(existing: ChatActivityNote, incoming: ChatActivityNote): ChatActivityNote {
+  const merged = mergeChangesByEvent(existing.changesByEvent, incoming.changesByEvent);
+  return merged === existing.changesByEvent ? existing : { ...existing, changesByEvent: merged };
+}
 
 /** What a mounted session knows about its turn; the MCP task status is derived from it. */
 export interface ChatRunState {
@@ -107,6 +138,10 @@ interface ChatState {
    * goes inactive (inactive ChatSessions render null for performance).
    */
   attachedImages: Record<string, AttachedImage[]>;
+  /** Memory-update rows per chat. In memory only. */
+  activityNotes: Record<string, ChatActivityNote[]>;
+  /** Adds a note; a repeat of a known id (a later check of the same turn) merges its changes into the existing one. */
+  addActivityNote: (chatId: string, note: ChatActivityNote) => void;
   /**
    * The last completed turn's actual input-token count for a chat, keyed by
    * chat id — set from the `/api/chat` `finish` chunk's `messageMetadata.
@@ -267,6 +302,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
   launchQueue: {},
   sessionActions: {},
   attachedImages: {},
+  activityNotes: {},
+  addActivityNote: (chatId, note) => {
+    set((s) => {
+      // Dedup across every chat: the cursor is per user, so two chats with checks in flight can read the same event.
+      for (const [id, list] of Object.entries(s.activityNotes)) {
+        const at = list.findIndex((n) => n.id === note.id);
+        if (at === -1) continue;
+        const merged = mergeNoteChanges(list[at], note);
+        if (merged === list[at]) return s;
+        const next = [...list];
+        next[at] = merged;
+        return { activityNotes: { ...s.activityNotes, [id]: next } };
+      }
+      const existing = s.activityNotes[chatId] ?? NO_ACTIVITY_NOTES;
+      return { activityNotes: { ...s.activityNotes, [chatId]: [...existing, note] } };
+    });
+  },
   contextTokens: {},
 
   toggleOpen: () => set((s) => ({ isOpen: !s.isOpen })),
@@ -331,6 +383,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       controller.abort();
     }
     useBrowseCheckpointStore.getState().deleteChat(chatId);
+    const activityNotes = { ...get().activityNotes };
+    delete activityNotes[chatId];
 
     // If only one chat remains, replace it with a new empty chat
     if (chats.length <= 1) {
@@ -357,6 +411,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         launchQueue: newLaunchQueue,
         attachedImages: newAttachedImages,
         contextTokens: newContextTokens,
+        activityNotes,
       });
       return;
     }
@@ -382,6 +437,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       launchQueue: newLaunchQueue,
       attachedImages: newAttachedImages,
       contextTokens: newContextTokens,
+      activityNotes,
     });
   },
 
