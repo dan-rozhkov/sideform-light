@@ -37,6 +37,7 @@ export interface ByokPreset {
 export const BYOK_PRESETS: readonly ByokPreset[] = [
   { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1" },
   { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
+  { id: "opencode-go", label: "OpenCode Go", baseUrl: "https://opencode.ai/zen/go/v1" },
   { id: "groq", label: "Groq", baseUrl: "https://api.groq.com/openai/v1" },
   { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
   { id: "together", label: "Together", baseUrl: "https://api.together.xyz/v1" },

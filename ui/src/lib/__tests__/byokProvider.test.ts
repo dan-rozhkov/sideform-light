@@ -108,6 +108,7 @@ describe("byokProvider storage", () => {
     expect(BYOK_PRESETS.map((p) => p.id)).toEqual([
       "openai",
       "openrouter",
+      "opencode-go",
       "groq",
       "deepseek",
       "together",
@@ -116,6 +117,13 @@ describe("byokProvider storage", () => {
       "lmstudio",
       "custom",
     ]);
+  });
+
+  it("has an OpenCode Go preset that presetForUrl-style matching can find", () => {
+    const go = BYOK_PRESETS.find((p) => p.id === "opencode-go");
+    expect(go).toMatchObject({ label: "OpenCode Go", baseUrl: "https://opencode.ai/zen/go/v1" });
+    expect(go!.local).toBeUndefined();
+    expect(normalizeByokBaseUrl(go!.baseUrl)).toBe("https://opencode.ai/zen/go/v1");
   });
 
   it("has local presets whose base URLs the validator accepts, and none is preselected", () => {
