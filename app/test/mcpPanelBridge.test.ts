@@ -143,6 +143,18 @@ describe("parsePanelReply", () => {
   });
 });
 
+describe("parsePanelReply memory", () => {
+  it("normalizes a memory snapshot", () => {
+    const memory = { enabled: true, memory: ["a"], user: [], limits: { memory: 1, user: 2 } };
+    expect(parsePanelReply({ memory })).toEqual({ memory });
+    expect(parsePanelReply({ memory: { memory: ["a", 3], user: [], limits: { memory: 5, user: 6 } } })).toEqual({ memory: { enabled: true, memory: ["a"], user: [], limits: { memory: 5, user: 6 } } });
+    for (const limits of [undefined, {}, { memory: 0, user: 1 }, { memory: 1, user: -1 }, { memory: "1", user: 1 }, { memory: Infinity, user: 1 }]) {
+      expect("error" in parsePanelReply({ memory: { memory: [], user: [], limits } }), JSON.stringify(limits)).toBe(true);
+    }
+    expect("error" in parsePanelReply({ memory: 1 })).toBe(true);
+  });
+});
+
 describe("parsePanelReply busy code", () => {
   it("keeps code: busy on an error and drops any other code", () => {
     expect(parsePanelReply({ error: "still running", code: "busy" })).toEqual({ error: "still running", code: "busy" });

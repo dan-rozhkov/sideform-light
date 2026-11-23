@@ -81,8 +81,9 @@ The same persistent memory as in Pen Editor (pen-editor-backend `src/ai/memory/`
 
 - **Stored on the device only.** The local backend keeps it in `<userData>/backend/agent-memory.json` (`SIDEFORM_LOCAL_DATA_DIR`, atomic write, 0600), keyed by the anonymous `pen.userId`; nothing goes to a server of ours. The entries reach the user's model provider only as part of the agent's prompt.
 - **The user's model.** The turn and the background review both run on the chat's `byok/` model with its `X-BYOK-*` headers. No `byok/` model or no headers → no review (there is no server model to fall back to).
-- **Endpoints** (`userId` in the query, same shapes as Pen Editor): `GET /api/memory` → `{ available, enabled, memory: string[], user: string[], limits: { memory, user } }`; `DELETE /api/memory/entry` `{ target, text }` → `{ removed: true }` | 404; `DELETE /api/memory` → `{ cleared: { memory, user } }`; `PUT /api/memory/settings` `{ enabled }` → `{ enabled }`; `GET /api/memory/activity?sinceId=` → `{ events, latestId }` (no `sinceId` = baseline, `latestId` only). No data dir → `available: false` / 503.
-- **ui.** Settings > Memory (`?section=memory`): switch "agent remembers", the entries of both stores with delete, clear all. The chat shows a "memory updated" row for writes of the turn and of the background review. The shell itself never reads the file.
+- **Endpoints** (`userId` in the query, same shapes as Pen Editor): `GET /api/memory` → `{ available, enabled, memory: string[], user: string[], limits: { memory, user } }`; `DELETE /api/memory/entry` `{ target, text }` → `{ removed: true }` | 404; `DELETE /api/memory` → `{ cleared: { memory, user } }`; `PUT /api/memory/settings` `{ enabled }` → `{ enabled }`; `GET /api/memory/activity?sinceId=` → `{ events, latestId }` (no `sinceId` = baseline, `latestId` only); `POST /api/memory/operations` `{ target, operations: { action: "add"|"replace"|"remove", content?, old_text? }[] (1..20, atomic) }` → 200 `{ ok: true, memory, user, limits }` | 400 `{ error, code: "memory_rejected" }` (ambiguous or unknown `old_text`, over a limit) | 400 `{ error: "Invalid body" }` | 409 `{ error, code: "memory_disabled" }` | 503. No data dir → `available: false` / 503.
+- **ui.** Settings > Memory (`?section=memory`): switch "agent remembers", the entries of both stores with delete, clear all. The chat shows a "memory updated" row for writes of the turn and of the background review. The Settings page re-reads when it becomes visible or focused again, so writes made meanwhile appear. The shell itself never reads the file.
+- **MCP can write.** The memory tools give an MCP client read/write access to the agent memory that every chat uses (not only MCP chats); there is no separate consent setting beyond turning the bridge on. An MCP client reads and edits both stores with `memory_list`, `memory_add`, `memory_replace`, `memory_remove` (see "MCP agent bridge"); the writes go through the panel (it knows `pen.userId`) to `POST /api/memory/operations`. Such writes show in Settings > Memory, not as a chat row.
 
 ## penAgentPanel API (preload/agentPanel.ts) — v1 shape
 
@@ -127,7 +128,7 @@ An external agent (Hermes Agent, Claude Code, Codex, any MCP client on the same 
 
 **Endpoint.** `POST http://127.0.0.1:47821/mcp` (default port 47821; override for tests `SIDEFORM_LIGHT_MCP_PORT`; a busy port is a status error, never a fallback). JSON-RPC 2.0 with a plain `application/json` answer, server name `sideform-light`; methods `initialize`, `ping`, `tools/list`, `tools/call`, `notifications/initialized` (202). `GET` and any other method on `/mcp` answer 405, other paths 404. Loopback only; `Authorization: Bearer <token>` (constant-time); the `Host` header must be `127.0.0.1:<port>` or `localhost:<port>`; any `Origin` header is rejected; 1 MB body cap. OFF by default. Settings file `<userData>/mcp-bridge.json` `{ enabled, token }` (0600, token = 64 hex, generated once). Connection file `~/.sideform-light/mcp.json` `{ url, token, port }` (dir 0700, file 0600), written on start and removed on stop/quit only while it still holds our token.
 
-**Tools:** `start_task{prompt, title?}`, `get_task{taskId, waitSeconds?}`, `answer_question{taskId, answers}`, `send_message{taskId, text}`, `stop_task{taskId}`, `list_tasks{limit?}`. Inputs are validated in main (prompt 1..20000, title <= 200, text 1..20000, taskId `^[A-Za-z0-9_-]{1,128}$`, answers <= 50, limit 1..100, waitSeconds 0..55) and again in the panel. Results are JSON text; failures are `isError` results.
+**Tools:** `start_task{prompt, title?}`, `get_task{taskId, waitSeconds?}`, `answer_question{taskId, answers}`, `send_message{taskId, text}`, `stop_task{taskId}`, `list_tasks{limit?}`, plus four memory tools: `memory_list{}`, `memory_add{target, text}`, `memory_replace{target, oldText, text}`, `memory_remove{target, oldText}` (`target` = `"user"` (who the person is) or `"memory"` (the agent's own notes); `text`, `oldText` 1..600 chars; `oldText` is a substring that matches exactly one entry). `memory_list` → `{ enabled, memory, user, limits, usage: { memory: "<used>/<limit> chars", user } }` (used = entries joined with `\n§\n`); a write returns the same JSON after the write. Inputs are validated in main (prompt 1..20000, title <= 200, text 1..20000, taskId `^[A-Za-z0-9_-]{1,128}$`, answers <= 50, limit 1..100, waitSeconds 0..55) and again in the panel. Results are JSON text; failures are `isError` results.
 
 **Main <-> panel.** `penAgentPanel.mcp = { onRequest(handler) -> unsubscribe, notifyChanged(taskId) }`. `onRequest` registers THE handler (a second call replaces it) and sends `mcp:panel-ready`; main sends `mcp:task-request` `{ requestId, request }`, the page answers `mcp:task-reply` `{ requestId, reply }` (the preload does this from the handler's resolved value; a rejected handler gives `{ error }`); `notifyChanged` sends `mcp:task-changed` `{ taskId }` and wakes waiting `get_task` calls. All three panel -> main channels are accepted only from the panel's own webContents and panel page. Main routes to the ONE panel that registered last; none (or a reload in progress) -> `{ error: "Sideform Light has no open window" }`; no reply within 15 s -> `{ error: "Sideform Light did not answer" }`.
 
@@ -138,14 +139,19 @@ type McpPanelRequest =
   | { op: "answer"; taskId: string; answers: { id: string; value: string | string[]; note?: string }[] }
   | { op: "message"; taskId: string; text: string }
   | { op: "stop"; taskId: string }
-  | { op: "list"; limit: number };
+  | { op: "list"; limit: number }
+  | { op: "memory-list" }
+  | { op: "memory-apply"; target: "memory" | "user"; operations: ({ action: "add"; content: string } | { action: "replace"; old_text: string; content: string } | { action: "remove"; old_text: string })[] };
 type TaskStatus = "running" | "needs_answer" | "done" | "stopped" | "error";
 interface TaskState { taskId: string; title: string; status: TaskStatus; updatedAt: number;
   question?: { questions: unknown[] }; result?: string; error?: string;
   traces: { traceId: string; title?: string; status?: string }[] }
 type McpPanelReply = { error: string } | { task: TaskState } | { ok: true }
+  | { memory: { enabled: boolean; memory: string[]; user: string[]; limits: { memory: number; user: number } } }
   | { tasks: Pick<TaskState, "taskId" | "title" | "status" | "updatedAt">[] };
 ```
+
+Memory ops run even when no task exists. `memory-list` = `GET /api/memory`; `memory-apply` = `POST /api/memory/operations` (the panel validates again). Error mapping: the backend's `error` text (400 `memory_rejected`, 409 `memory_disabled` "Memory is turned off in Settings > Memory.", 503, network) becomes `{ error }` and so an `isError` tool result; success carries the snapshot after the write (`enabled: true`). `memory-list` with memory turned off answers `enabled: false` and empty lists. A write waits at most 12 s for the backend; on timeout the error says the change may still have been saved and to call `memory_list` before retrying. A reply whose limits are not positive finite numbers is dropped as "answered in an unexpected way".
 
 `get_task` with `waitSeconds` re-reads the task (op `get`) on each `mcp:task-changed` for it (and at least every 5 s) and returns early only when the status is not `running` in two reads one second apart.
 

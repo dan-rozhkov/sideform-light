@@ -1,4 +1,4 @@
-// The six MCP tools of the bridge: manifest (names, descriptions, JSON Schemas) and the dispatcher that validates
+// The MCP tools of the bridge: manifest (names, descriptions, JSON Schemas) and the dispatcher that validates
 // the input, asks the agent panel over `McpPanelPort` and turns the reply into an MCP tool result.
 // Results are JSON text; failures are `isError` results. Pure: no Electron.
 
@@ -6,6 +6,7 @@ import type { ToolManifestEntry } from "./jsonRpc";
 import {
   MAX_ANSWERS,
   MAX_LIST_LIMIT,
+  MAX_MEMORY_TEXT_CHARS,
   MAX_PROMPT_CHARS,
   MAX_TEXT_CHARS,
   MAX_TITLE_CHARS,
@@ -13,6 +14,9 @@ import {
   parseAnswerQuestion,
   parseGetTask,
   parseListTasks,
+  parseMemoryAdd,
+  parseMemoryRemove,
+  parseMemoryReplace,
   parseSendMessage,
   parseStartTask,
   parseStopTask,
@@ -21,6 +25,15 @@ import { TASK_ID_PATTERN, type McpPanelPort, type McpPanelReply, type McpPanelRe
 import { getTaskWaiting } from "./waitTask";
 
 const TASK_ID_SCHEMA = { type: "string", pattern: TASK_ID_PATTERN, description: "The task id returned by start_task." };
+
+const MEMORY_TARGET_SCHEMA = {
+  type: "string",
+  enum: ["memory", "user"],
+  description: 'Which store: "user" = who the person is (preferences, role, communication style); "memory" = the agent\'s own notes (environment, conventions, lessons learned).',
+};
+const MEMORY_ABOUT =
+  "Sideform Light keeps a small persistent agent memory on this device in two stores: \"user\" (who the person is: preferences, role, communication style) and \"memory\" (the agent's own notes: environment, conventions, lessons learned). " +
+  "Both are injected into every turn of the in-app agent, so keep entries short, durable and factual; never store secrets, passwords or one-off task details. ";
 
 const WHAT_IT_DOES =
   "Sideform Light is a desktop browser with a built-in AI agent. The agent opens websites, reads them, clicks and types, tests web pages (assertions, request logs, screenshots), " +
@@ -133,18 +146,92 @@ export const MCP_TOOL_MANIFEST: ToolManifestEntry[] = [
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
+  {
+    name: "memory_list",
+    title: "List agent memory",
+    description:
+      `${MEMORY_ABOUT}Return the current entries of both stores, the character limits and the usage, as { enabled, memory, user, limits, usage }. ` +
+      "enabled is false when the person turned memory off in Settings > Memory (writes then fail). Call it before memory_add, to avoid duplicates and to copy the exact text you want to replace or remove.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "memory_add",
+    title: "Add a memory entry",
+    description:
+      `${MEMORY_ABOUT}Add one entry to a store and return the stores after the write. It fails when the store would go over its limit (remove or replace an entry first) or when memory is turned off.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: MEMORY_TARGET_SCHEMA,
+        text: { type: "string", minLength: 1, maxLength: MAX_MEMORY_TEXT_CHARS, description: "The entry, one short fact or note." },
+      },
+      required: ["target", "text"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "memory_replace",
+    title: "Replace a memory entry",
+    description:
+      `${MEMORY_ABOUT}Replace the entry that contains oldText with text and return the stores after the write. ` +
+      "oldText is a substring that identifies exactly one entry; it fails when it matches none or several entries (use a longer substring).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: MEMORY_TARGET_SCHEMA,
+        oldText: { type: "string", minLength: 1, maxLength: MAX_MEMORY_TEXT_CHARS, description: "A substring that matches exactly one existing entry." },
+        text: { type: "string", minLength: 1, maxLength: MAX_MEMORY_TEXT_CHARS, description: "The new full text of that entry." },
+      },
+      required: ["target", "oldText", "text"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: "memory_remove",
+    title: "Remove a memory entry",
+    description:
+      `${MEMORY_ABOUT}Remove the entry that contains oldText and return the stores after the write. ` +
+      "oldText is a substring that identifies exactly one entry; it fails when it matches none or several entries.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: MEMORY_TARGET_SCHEMA,
+        oldText: { type: "string", minLength: 1, maxLength: MAX_MEMORY_TEXT_CHARS, description: "A substring that matches exactly one existing entry." },
+      },
+      required: ["target", "oldText"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
 ];
+
+/** The backend counts a store as its entries joined with this separator. */
+const MEMORY_SEPARATOR = "\n§\n";
+const used = (entries: string[]) => entries.join(MEMORY_SEPARATOR).length;
 
 const json = (value: unknown): McpToolResult => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
 const fail = (message: string): McpToolResult => ({ content: [{ type: "text", text: message }], isError: true });
 
 /** The reply of one op as a tool result. A reply of the wrong kind is an internal error (never forwarded raw). */
-function resultOf(reply: McpPanelReply, shape: "task" | "started" | "ok" | "tasks"): McpToolResult {
+function resultOf(reply: McpPanelReply, shape: "task" | "started" | "ok" | "tasks" | "memory"): McpToolResult {
   if ("error" in reply) return fail(typeof reply.error === "string" ? reply.error : "Unknown error.");
   if (shape === "task" && "task" in reply) return json(reply.task);
   if (shape === "started" && "task" in reply) return json({ taskId: reply.task.taskId, status: reply.task.status });
   if (shape === "ok" && "ok" in reply) return json({ ok: true });
   if (shape === "tasks" && "tasks" in reply) return json({ tasks: reply.tasks });
+  if (shape === "memory" && "memory" in reply) {
+    const m = reply.memory;
+    return json({
+      enabled: m.enabled,
+      memory: m.memory,
+      user: m.user,
+      limits: m.limits,
+      usage: { memory: `${used(m.memory)}/${m.limits.memory} chars`, user: `${used(m.user)}/${m.limits.user} chars` },
+    });
+  }
   return fail("Sideform Light answered in an unexpected way.");
 }
 
@@ -184,6 +271,20 @@ export function createToolDispatcher(deps: ToolDispatcherDeps): (name: string, a
         case "list_tasks": {
           const p = parseListTasks(args);
           return p.ok ? resultOf(await ask(p.value), "tasks") : fail(p.error);
+        }
+        case "memory_list":
+          return resultOf(await ask({ op: "memory-list" }), "memory");
+        case "memory_add": {
+          const p = parseMemoryAdd(args);
+          return p.ok ? resultOf(await ask(p.value), "memory") : fail(p.error);
+        }
+        case "memory_replace": {
+          const p = parseMemoryReplace(args);
+          return p.ok ? resultOf(await ask(p.value), "memory") : fail(p.error);
+        }
+        case "memory_remove": {
+          const p = parseMemoryRemove(args);
+          return p.ok ? resultOf(await ask(p.value), "memory") : fail(p.error);
         }
         default:
           return fail(`Unknown tool: ${name}`);

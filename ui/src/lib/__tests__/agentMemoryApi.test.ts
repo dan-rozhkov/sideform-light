@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  applyMemoryOperations,
   clearAgentMemory,
   deleteMemoryEntry,
   fetchAgentMemory,
@@ -91,5 +92,36 @@ describe("agentMemoryApi", () => {
     expect(memoryUsage([])).toBe(0);
     expect(memoryUsage(["abc"])).toBe(3);
     expect(memoryUsage(["abc", "de"])).toBe("abc\n§\nde".length);
+  });
+
+  it("POSTs the operations to /api/memory/operations with the userId", async () => {
+    fetchMock.mockResolvedValue(json({ ok: true, memory: ["a", 1], user: [], limits: { memory: 2200, user: 1375 } }));
+    const ops = [{ action: "replace", old_text: "a", content: "b" }] as const;
+    const res = await applyMemoryOperations("memory", [...ops]);
+    expect(res).toEqual({ ok: true, data: { memory: ["a"], user: [], limits: { memory: 2200, user: 1375 } } });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/memory/operations?userId=u1");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ target: "memory", operations: ops });
+    expect(init.credentials).toBe("omit");
+  });
+
+  it("applyMemoryOperations reports the backend's error text and status", async () => {
+    fetchMock.mockResolvedValue(json({ error: "too long", code: "memory_rejected" }, 400));
+    expect(await applyMemoryOperations("user", [{ action: "add", content: "x" }])).toEqual({ ok: false, error: "too long", status: 400 });
+  });
+
+  it("applyMemoryOperations sends an abort signal and maps a timeout to the retry-after-list text", async () => {
+    fetchMock.mockImplementation((_u: string, init: RequestInit) => {
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      return Promise.reject(new DOMException("t", "TimeoutError"));
+    });
+    const res = await applyMemoryOperations("user", [{ action: "add", content: "x" }]);
+    expect(res).toMatchObject({ ok: false, error: expect.stringContaining("call memory_list before retrying") });
+  });
+
+  it("applyMemoryOperations rejects a reply without positive limits", async () => {
+    fetchMock.mockResolvedValue(json({ ok: true, memory: [], user: [] }));
+    expect((await applyMemoryOperations("user", [{ action: "add", content: "x" }])).ok).toBe(false);
   });
 });

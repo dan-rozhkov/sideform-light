@@ -9,6 +9,21 @@ export interface McpAnswer {
   note?: string;
 }
 
+export type McpMemoryTarget = "memory" | "user";
+
+export type McpMemoryOperation =
+  | { action: "add"; content: string }
+  | { action: "replace"; old_text: string; content: string }
+  | { action: "remove"; old_text: string };
+
+/** The agent memory as the panel read it from the backend (after a write: the state after it). */
+export interface McpMemorySnapshot {
+  enabled: boolean;
+  memory: string[];
+  user: string[];
+  limits: { memory: number; user: number };
+}
+
 export type McpPanelRequest =
   | { op: "start"; prompt: string; title?: string }
   | { op: "get"; taskId: string }
@@ -16,6 +31,8 @@ export type McpPanelRequest =
   | { op: "message"; taskId: string; text: string }
   | { op: "stop"; taskId: string }
   | { op: "list"; limit: number }
+  | { op: "memory-list" }
+  | { op: "memory-apply"; target: McpMemoryTarget; operations: McpMemoryOperation[] }
   // Main-only op (the scheduler); the MCP tools never build it.
   | { op: "schedule-start"; scheduleId: string; prompt: string; title: string; previousChatId?: string };
 
@@ -34,6 +51,7 @@ export type McpPanelReply =
   | { error: string; code?: "busy" }
   | { task: McpTaskState }
   | { ok: true }
+  | { memory: McpMemorySnapshot }
   | { tasks: Pick<McpTaskState, "taskId" | "title" | "status" | "updatedAt">[] };
 
 export interface McpToolContent {

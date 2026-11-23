@@ -44,6 +44,21 @@ export function parsePanelReply(raw: unknown): McpPanelReply {
   if (!isObject(raw)) return { error: "Sideform Light answered in an unexpected way." };
   if (typeof raw.error === "string") return { error: raw.error.slice(0, 2000), ...(raw.code === "busy" ? { code: "busy" as const } : {}) };
   if (isObject(raw.task) && typeof raw.task.taskId === "string") return { task: raw.task as unknown as McpTaskState };
+  if (isObject(raw.memory) && Array.isArray(raw.memory.memory) && Array.isArray(raw.memory.user)) {
+    const m = raw.memory;
+    const lim = isObject(m.limits) ? m.limits : {};
+    const positive = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n > 0;
+    if (!positive(lim.memory) || !positive(lim.user)) return { error: "Sideform Light answered in an unexpected way." };
+    const strs = (v: unknown[]) => v.filter((x): x is string => typeof x === "string");
+    return {
+      memory: {
+        enabled: m.enabled !== false,
+        memory: strs(m.memory as unknown[]),
+        user: strs(m.user as unknown[]),
+        limits: { memory: typeof lim.memory === "number" ? lim.memory : 0, user: typeof lim.user === "number" ? lim.user : 0 },
+      },
+    };
+  }
   if (raw.ok === true) return { ok: true };
   if (Array.isArray(raw.tasks)) return { tasks: raw.tasks as Extract<McpPanelReply, { tasks: unknown }>["tasks"] };
   return { error: "Sideform Light answered in an unexpected way." };

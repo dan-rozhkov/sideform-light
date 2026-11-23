@@ -103,14 +103,14 @@ test("the connection file is written with the url, token and port (0600)", async
   if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
 });
 
-test("initialize and tools/list: server sideform-light with the six tools", async () => {
+test("initialize and tools/list: server sideform-light with the ten tools", async () => {
   const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "e2e", version: "1" } });
   expect(init.result.serverInfo.name).toBe("sideform-light");
   expect(init.result.capabilities).toEqual({ tools: {} });
   const note = await raw({ body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
   expect(note.status).toBe(202);
   const list = await rpc("tools/list");
-  expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(["start_task", "get_task", "answer_question", "send_message", "stop_task", "list_tasks"]);
+  expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(["start_task", "get_task", "answer_question", "send_message", "stop_task", "list_tasks", "memory_list", "memory_add", "memory_replace", "memory_remove"]);
 });
 
 test("start_task and get_task go through the panel's handler", async () => {
@@ -152,6 +152,19 @@ test("a panel error and a bad input come back as isError results; bad input neve
   }
   const after = (await app.agentPage.evaluate(() => (window as unknown as { __mcpRequests: unknown[] }).__mcpRequests)).length;
   expect(after - before).toBe(1); // only the "nope" lookup was forwarded
+});
+
+test("memory tools round-trip through the panel; a backend rejection is an isError result", async () => {
+  const listed = await tool("memory_list");
+  expect(listed.json).toEqual({ enabled: true, memory: ["note"], user: ["person"], limits: { memory: 2200, user: 1375 }, usage: { memory: "4/2200 chars", user: "6/1375 chars" } });
+  const added = await tool("memory_add", { target: "user", text: "prefers tea" });
+  expect(added.isError).toBeUndefined();
+  expect(added.json.user).toEqual(["prefers tea"]);
+  const rejected = await tool("memory_remove", { target: "memory", oldText: "zzz" });
+  expect(rejected).toMatchObject({ isError: true, text: "old_text matches no entry" });
+  const requests = await app.agentPage.evaluate(() => (window as unknown as { __mcpRequests: unknown[] }).__mcpRequests);
+  expect(requests).toContainEqual({ op: "memory-apply", target: "user", operations: [{ action: "add", content: "prefers tea" }] });
+  expect((await tool("memory_add", { target: "bad", text: "x" })).isError).toBe(true);
 });
 
 test("rejections: no token, wrong token, Origin, bad Host, wrong path, GET", async () => {

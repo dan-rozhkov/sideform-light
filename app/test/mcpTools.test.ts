@@ -13,8 +13,8 @@ const text = (r: { content: { text: string }[] }) => r.content[0].text;
 const task = { taskId: "t1", title: "T", status: "done" as const, updatedAt: 5, traces: [], result: "R" };
 
 describe("tool manifest", () => {
-  it("has exactly the six tools with object schemas and real descriptions", () => {
-    expect(MCP_TOOL_MANIFEST.map((t) => t.name)).toEqual(["start_task", "get_task", "answer_question", "send_message", "stop_task", "list_tasks"]);
+  it("has exactly the ten tools with object schemas and real descriptions", () => {
+    expect(MCP_TOOL_MANIFEST.map((t) => t.name)).toEqual(["start_task", "get_task", "answer_question", "send_message", "stop_task", "list_tasks", "memory_list", "memory_add", "memory_replace", "memory_remove"]);
     for (const t of MCP_TOOL_MANIFEST) {
       expect((t.inputSchema as { type: string }).type).toBe("object");
       expect(t.description.length).toBeGreaterThan(60);
@@ -33,6 +33,20 @@ describe("tool manifest", () => {
     expect(req("send_message")).toEqual(["taskId", "text"]);
     expect(req("stop_task")).toEqual(["taskId"]);
     expect(req("list_tasks")).toBeUndefined();
+    expect(req("memory_list")).toBeUndefined();
+    expect(req("memory_add")).toEqual(["target", "text"]);
+    expect(req("memory_replace")).toEqual(["target", "oldText", "text"]);
+    expect(req("memory_remove")).toEqual(["target", "oldText"]);
+    const props = (n: string) => (MCP_TOOL_MANIFEST.find((t) => t.name === n)!.inputSchema as { properties: Record<string, { enum?: string[]; maxLength?: number }> }).properties;
+    expect(props("memory_add").target.enum).toEqual(["memory", "user"]);
+    expect(props("memory_add").text.maxLength).toBe(600);
+  });
+  it("memory tool descriptions explain the two stores", () => {
+    for (const n of ["memory_list", "memory_add", "memory_replace", "memory_remove"]) {
+      const d = MCP_TOOL_MANIFEST.find((t) => t.name === n)!.description;
+      expect(d).toContain("who the person is");
+      expect(d).toContain("injected into every turn");
+    }
   });
 });
 
@@ -129,5 +143,59 @@ describe("dispatcher", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("memory tools", () => {
+  const snap = { enabled: true, memory: ["ab", "cd"], user: ["x"], limits: { memory: 2200, user: 1375 } };
+
+  it("memory_list asks memory-list and adds usage counted with the backend separator", async () => {
+    const p = panel({ memory: snap });
+    const r = await createToolDispatcher({ panel: p })("memory_list", {});
+    expect(p.request).toHaveBeenCalledWith({ op: "memory-list" });
+    expect(JSON.parse(text(r))).toEqual({ ...snap, usage: { memory: "7/2200 chars", user: "1/1375 chars" } });
+  });
+
+  it("memory_add, memory_replace and memory_remove build memory-apply and return the snapshot", async () => {
+    const p = panel({ memory: snap });
+    const call = createToolDispatcher({ panel: p });
+    expect(JSON.parse(text(await call("memory_add", { target: "user", text: "likes tea", extra: 1 }))).user).toEqual(["x"]);
+    await call("memory_replace", { target: "memory", oldText: "ab", text: "ef" });
+    await call("memory_remove", { target: "memory", oldText: "cd" });
+    expect(p.request.mock.calls.map((c) => c[0])).toEqual([
+      { op: "memory-apply", target: "user", operations: [{ action: "add", content: "likes tea" }] },
+      { op: "memory-apply", target: "memory", operations: [{ action: "replace", old_text: "ab", content: "ef" }] },
+      { op: "memory-apply", target: "memory", operations: [{ action: "remove", old_text: "cd" }] },
+    ]);
+  });
+
+  it("bad input never reaches the panel", async () => {
+    const p = panel({ memory: snap });
+    const call = createToolDispatcher({ panel: p });
+    for (const [name, args] of [
+      ["memory_add", { target: "other", text: "a" }],
+      ["memory_add", { text: "a" }],
+      ["memory_add", { target: "user", text: "" }],
+      ["memory_add", { target: "user", text: "   " }],
+      ["memory_add", { target: "user", text: "a".repeat(601) }],
+      ["memory_replace", { target: "user", text: "a" }],
+      ["memory_replace", { target: "user", oldText: "", text: "a" }],
+      ["memory_replace", { target: "user", oldText: "a" }],
+      ["memory_remove", { target: "user" }],
+      ["memory_remove", { target: "user", oldText: "a".repeat(601) }],
+    ] as const) {
+      expect((await call(name, args as Record<string, unknown>)).isError, name).toBe(true);
+    }
+    expect(p.request).not.toHaveBeenCalled();
+  });
+
+  it("a panel error (backend rejection) is an isError result with its text", async () => {
+    const r = await createToolDispatcher({ panel: panel({ error: "old_text matches 2 entries" }) })("memory_remove", { target: "memory", oldText: "a" });
+    expect(r).toMatchObject({ isError: true });
+    expect(text(r)).toBe("old_text matches 2 entries");
+  });
+
+  it("a reply of the wrong kind is an isError result", async () => {
+    expect((await createToolDispatcher({ panel: panel({ ok: true }) })("memory_list", {})).isError).toBe(true);
   });
 });

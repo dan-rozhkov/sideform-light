@@ -4,6 +4,7 @@
 
 import type { UIMessage } from "ai";
 import { findPendingAskUser, hasPendingAskUser } from "@/components/chat/pendingAskUser";
+import { applyMemoryOperations, fetchAgentMemory, type MemoryOperation } from "@/lib/agentMemoryApi";
 import { takeInitialMessages } from "@/lib/chats/desktopChatPersistence";
 import type { McpPanelReply, McpPanelRequest, TaskState, TaskStatus, TaskTrace } from "@/lib/mcpTypes";
 import { isMcpTaskChat, useChatStore, type ChatSummary } from "@/store/chatStore";
@@ -13,6 +14,8 @@ export const MAX_ACTIVE_SCHEDULE_CHATS = 3;
 export const MAX_PROMPT_CHARS = 20_000;
 export const MAX_TITLE_CHARS = 200;
 export const MAX_ANSWERS = 50;
+export const MAX_MEMORY_TEXT_CHARS = 600;
+export const MAX_MEMORY_OPERATIONS = 20;
 const TASK_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
 export interface TaskStatusInput {
@@ -307,6 +310,42 @@ export function createMcpTaskHandler(): McpTaskHandler {
     return { tasks };
   }
 
+  async function memoryList(): Promise<McpPanelReply> {
+    const res = await fetchAgentMemory();
+    if (!res.ok) return { error: res.error };
+    const d = res.data;
+    if (!d.available) return { error: "Agent memory is not available on this device." };
+    const positive = (n: number) => Number.isFinite(n) && n > 0;
+    if (!positive(d.limits.memory) || !positive(d.limits.user)) return { error: "Sideform Light answered in an unexpected way." };
+    // Memory off: the agent does not see the entries either, so none are shown.
+    if (!d.enabled) return { memory: { enabled: false, memory: [], user: [], limits: d.limits } };
+    return { memory: { enabled: true, memory: d.memory, user: d.user, limits: d.limits } };
+  }
+
+  async function memoryApply(req: Extract<McpPanelRequest, { op: "memory-apply" }>): Promise<McpPanelReply> {
+    if (req.target !== "memory" && req.target !== "user") return { error: 'Target must be "memory" or "user"' };
+    const ops = req.operations;
+    if (!Array.isArray(ops) || ops.length < 1 || ops.length > MAX_MEMORY_OPERATIONS) return { error: `Operations must be 1 to ${MAX_MEMORY_OPERATIONS} entries` };
+    const okText = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= MAX_MEMORY_TEXT_CHARS;
+    for (const op of ops) {
+      const valid =
+        (op?.action === "add" && okText(op.content)) ||
+        (op?.action === "replace" && okText(op.old_text) && okText(op.content)) ||
+        (op?.action === "remove" && okText(op.old_text));
+      if (!valid) return { error: `Each operation needs text of 1 to ${MAX_MEMORY_TEXT_CHARS} characters` };
+    }
+    const clean: MemoryOperation[] = ops.map((op) =>
+      op.action === "add"
+        ? { action: "add", content: op.content }
+        : op.action === "replace"
+          ? { action: "replace", old_text: op.old_text, content: op.content }
+          : { action: "remove", old_text: op.old_text },
+    );
+    const res = await applyMemoryOperations(req.target, clean);
+    if (!res.ok) return { error: res.error };
+    return { memory: { enabled: true, memory: res.data.memory, user: res.data.user, limits: res.data.limits } };
+  }
+
   return {
     async handle(request) {
       try {
@@ -325,6 +364,10 @@ export function createMcpTaskHandler(): McpTaskHandler {
             return stop(request);
           case "list":
             return list(request);
+          case "memory-list":
+            return await memoryList();
+          case "memory-apply":
+            return await memoryApply(request);
           case "schedule-start":
             return scheduleStart(request);
           default:

@@ -169,4 +169,50 @@ describe("MemorySection", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("Could not change this setting.");
     expect(screen.getByRole("switch", { name: "Agent remembers" }).getAttribute("aria-checked")).toBe("false");
   });
+
+  describe("background refresh", () => {
+    const refreshEvents = () => {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+
+    it("focus and visibilitychange together make one read, and new entries show up", async () => {
+      fetchMock.mockResolvedValueOnce(json(state())).mockResolvedValueOnce(json(state({ user: ["From MCP"] })));
+      render(<MemorySection />);
+      await screen.findByText("Lives in Berlin");
+      refreshEvents();
+      expect(await screen.findByText("From MCP")).toBeTruthy();
+      await new Promise((r) => setTimeout(r, 300));
+      expect(calls().filter(([u]) => u === "/api/memory?userId=u1")).toHaveLength(2);
+    });
+
+    it("keeps the list, with no error screen, when a background read fails", async () => {
+      fetchMock.mockResolvedValueOnce(json(state())).mockResolvedValueOnce(json({ error: "x" }, 500));
+      render(<MemorySection />);
+      await screen.findByText("Lives in Berlin");
+      refreshEvents();
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.getByText("Lives in Berlin")).toBeTruthy();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("ignores a read that started before a local delete", async () => {
+      let release!: (r: Response) => void;
+      fetchMock
+        .mockResolvedValueOnce(json(state()))
+        .mockImplementationOnce(() => new Promise<Response>((r) => (release = r)))
+        .mockResolvedValueOnce(json({ removed: true }));
+      render(<MemorySection />);
+      await screen.findByText("Lives in Berlin");
+      refreshEvents();
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      fireEvent.click(screen.getByRole("button", { name: "Delete: Lives in Berlin" }));
+      await waitFor(() => expect(screen.queryByText("Lives in Berlin")).toBeNull());
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+      release(json(state()));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.queryByText("Lives in Berlin")).toBeNull();
+    });
+  });
 });

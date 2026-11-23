@@ -144,6 +144,41 @@ function MemoryBody() {
     };
   }, [tick]);
 
+  // The agent (or an MCP client) may write while this page is in the background: re-read when it is shown again.
+  // Refreshes are debounced (focus and visibilitychange fire together), skipped while a read is in flight, and a
+  // result is dropped when a local write started or ended after the read began. A failed background read keeps the list.
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
+  const writeEpoch = useRef(0);
+  const refreshing = useRef(false);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const run = () => {
+      timer = undefined;
+      if (document.visibilityState !== "visible" || busyRef.current || refreshing.current) return;
+      if (loadRef.current.status !== "ready") return;
+      refreshing.current = true;
+      const epoch = writeEpoch.current;
+      void fetchAgentMemory().then((res) => {
+        refreshing.current = false;
+        if (!alive.current || !res.ok || epoch !== writeEpoch.current || busyRef.current) return;
+        setLoad({ status: "ready", memory: res.data });
+      });
+    };
+    const refresh = () => {
+      if (timer === undefined) timer = setTimeout(run, 150);
+    };
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, []);
+
   const retry = useCallback(() => {
     setLoad({ status: "loading" });
     setTick((n) => n + 1);
@@ -159,12 +194,14 @@ function MemoryBody() {
   async function write(fn: () => Promise<void>) {
     if (busyRef.current) return;
     busyRef.current = true;
+    writeEpoch.current += 1;
     setBusy(true);
     setActionError(null);
     try {
       await fn();
     } finally {
       busyRef.current = false;
+      writeEpoch.current += 1;
       if (alive.current) setBusy(false);
     }
   }

@@ -1,7 +1,7 @@
 // Validation of the MCP tool inputs. Pure. Main validates BEFORE a request reaches the panel (the panel validates
 // again). Limits are the contract of CONTRACT.md "MCP agent bridge"; extra keys are dropped.
 
-import { TASK_ID_RE as TASK_ID, type McpAnswer, type McpPanelRequest } from "./types";
+import { TASK_ID_RE as TASK_ID, type McpAnswer, type McpMemoryTarget, type McpPanelRequest } from "./types";
 
 export const MAX_PROMPT_CHARS = 20_000;
 export const MAX_TITLE_CHARS = 200;
@@ -13,6 +13,7 @@ export const MAX_ANSWER_ID_CHARS = 200;
 export const MAX_LIST_LIMIT = 100;
 export const DEFAULT_LIST_LIMIT = 20;
 export const MAX_WAIT_SECONDS = 55;
+export const MAX_MEMORY_TEXT_CHARS = 600;
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 const bad = (error: string): { ok: false; error: string } => ({ ok: false, error });
@@ -116,4 +117,35 @@ export function parseListTasks(args: Record<string, unknown>): Parsed<Extract<Mc
     limit = l;
   }
   return { ok: true, value: { op: "list", limit } };
+}
+
+function targetOf(v: unknown): Parsed<McpMemoryTarget> {
+  if (v !== "memory" && v !== "user") return bad('target must be "memory" or "user".');
+  return { ok: true, value: v };
+}
+
+export function parseMemoryAdd(args: Record<string, unknown>): Parsed<Extract<McpPanelRequest, { op: "memory-apply" }>> {
+  const target = targetOf(args.target);
+  if (!target.ok) return target;
+  const text = textOf(args.text, "text", MAX_MEMORY_TEXT_CHARS);
+  if (!text.ok) return text;
+  return { ok: true, value: { op: "memory-apply", target: target.value, operations: [{ action: "add", content: text.value }] } };
+}
+
+export function parseMemoryReplace(args: Record<string, unknown>): Parsed<Extract<McpPanelRequest, { op: "memory-apply" }>> {
+  const target = targetOf(args.target);
+  if (!target.ok) return target;
+  const oldText = textOf(args.oldText, "oldText", MAX_MEMORY_TEXT_CHARS);
+  if (!oldText.ok) return oldText;
+  const text = textOf(args.text, "text", MAX_MEMORY_TEXT_CHARS);
+  if (!text.ok) return text;
+  return { ok: true, value: { op: "memory-apply", target: target.value, operations: [{ action: "replace", old_text: oldText.value, content: text.value }] } };
+}
+
+export function parseMemoryRemove(args: Record<string, unknown>): Parsed<Extract<McpPanelRequest, { op: "memory-apply" }>> {
+  const target = targetOf(args.target);
+  if (!target.ok) return target;
+  const oldText = textOf(args.oldText, "oldText", MAX_MEMORY_TEXT_CHARS);
+  if (!oldText.ok) return oldText;
+  return { ok: true, value: { op: "memory-apply", target: target.value, operations: [{ action: "remove", old_text: oldText.value }] } };
 }

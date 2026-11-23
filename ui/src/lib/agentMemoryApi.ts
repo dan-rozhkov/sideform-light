@@ -14,6 +14,11 @@ export interface AgentMemory {
 
 export type MemoryResult<T> = { ok: true; data: T } | { ok: false; error: string; status?: number };
 
+export const MEMORY_TIMEOUT_ERROR =
+  "Sideform Light did not get an answer from memory in time; the change may still have been saved — call memory_list before retrying.";
+/** Below the 15 s the MCP bridge waits for the panel. */
+export const MEMORY_WRITE_TIMEOUT_MS = 12_000;
+
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 function url(path: string): string {
@@ -21,11 +26,14 @@ function url(path: string): string {
 }
 
 /** Never throws: network failures and non-2xx answers become `{ ok: false }`. */
-async function request<T>(path: string, init?: RequestInit): Promise<MemoryResult<T>> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<MemoryResult<T>> {
   let res: Response;
   try {
-    res = await apiFetch(url(path), init);
+    res = await apiFetch(url(path), timeoutMs === undefined ? init : { ...init, signal: AbortSignal.timeout(timeoutMs) });
   } catch (e) {
+    if (timeoutMs !== undefined && e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) {
+      return { ok: false, error: MEMORY_TIMEOUT_ERROR };
+    }
     return { ok: false, error: e instanceof Error ? e.message : "Network error" };
   }
   let body: unknown;
@@ -86,4 +94,34 @@ export function clearAgentMemory(): Promise<MemoryResult<{ cleared: { memory: nu
 /** PUT /api/memory/settings */
 export function setAgentMemoryEnabled(enabled: boolean): Promise<MemoryResult<{ enabled: boolean }>> {
   return request("/api/memory/settings", { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ enabled }) });
+}
+
+export type MemoryOperation =
+  | { action: "add"; content: string }
+  | { action: "replace"; old_text: string; content: string }
+  | { action: "remove"; old_text: string };
+
+export interface AppliedMemory {
+  memory: string[];
+  user: string[];
+  limits: { memory: number; user: number };
+}
+
+/**
+ * POST /api/memory/operations: 1..20 operations on one store, applied atomically. A 400 `memory_rejected`
+ * (ambiguous or unknown `old_text`, over the limit), a 409 `memory_disabled` and a 503 come back as `{ ok: false, error }`
+ * with the backend's text.
+ */
+export async function applyMemoryOperations(target: MemoryTarget, operations: MemoryOperation[], timeoutMs = MEMORY_WRITE_TIMEOUT_MS): Promise<MemoryResult<AppliedMemory>> {
+  const res = await request<Partial<AppliedMemory>>("/api/memory/operations", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ target, operations }),
+  }, timeoutMs);
+  if (!res.ok) return res;
+  const d = res.data ?? {};
+  const lim = d.limits;
+  const positive = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n > 0;
+  if (!lim || !positive(lim.memory) || !positive(lim.user)) return { ok: false, error: "Sideform Light answered in an unexpected way." };
+  return { ok: true, data: { memory: strings(d.memory), user: strings(d.user), limits: { memory: lim.memory, user: lim.user } } };
 }

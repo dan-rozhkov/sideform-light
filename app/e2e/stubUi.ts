@@ -23,6 +23,10 @@ window.penAgentPanel.mcp.onRequest(async (req) => {
       return { task: task("task-1", "done", { result: "canned result" }) };
     case "answer": case "message": case "stop": return { ok: true };
     case "list": return { tasks: [{ taskId: "task-1", title: "Stub task", status: "done", updatedAt: 1 }] };
+    case "memory-list": return { memory: { enabled: true, memory: ["note"], user: ["person"], limits: { memory: 2200, user: 1375 } } };
+    case "memory-apply":
+      if (req.operations[0].action === "remove") return { error: "old_text matches no entry" };
+      return { memory: { enabled: true, memory: req.target === "memory" ? [req.operations[0].content] : ["note"], user: req.target === "user" ? [req.operations[0].content] : ["person"], limits: { memory: 2200, user: 1375 } } };
     default: return { error: "unknown op" };
   }
 });
