@@ -20,15 +20,16 @@ export function desktopBrowserBridge(): BrowserBridge | undefined {
 
 /**
  * The bridge every browse_* handler talks to. `browserSession` (a browse_agent run's id) selects the run's
- * isolated bridge: the shell's `browser.isolated(id)`. Ignored when isolation is unavailable.
+ * isolated bridge: the shell's `browser.isolated(id, { seedCookies })`. Ignored when isolation is unavailable.
  */
-export function getBrowserBridge(_chatId?: string, browserSession?: string): BrowserBridge | undefined {
+export function getBrowserBridge(_chatId?: string, browserSession?: string, opts?: { seedCookies?: boolean }): BrowserBridge | undefined {
   const desktop = desktopBrowserBridge();
   if (desktop && browserSession && typeof desktop.isolated === "function") {
     if (closedSessions.has(browserSession)) return closedBridge;
     let bridge = isolatedBridges.get(browserSession);
     if (!bridge) {
-      bridge = desktop.isolated(browserSession);
+      // The seed option matters only for the call that creates the bridge (the run's first one).
+      bridge = opts?.seedCookies === undefined ? desktop.isolated(browserSession) : desktop.isolated(browserSession, { seedCookies: opts.seedCookies });
       isolatedBridges.set(browserSession, bridge);
     }
     return bridge;

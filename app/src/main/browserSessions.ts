@@ -29,6 +29,9 @@ export const DRAIN_TIMEOUT_MS = 30_000;
 export const TOMBSTONE_LIMIT = 10_000;
 
 export const ERR_INVALID_SESSION_ID = "invalid session id";
+/** Longest wait of `acquire` for a session's `ready` step; late work must be harmless (cancelled at teardown). */
+export const READY_TIMEOUT_MS = 5000;
+export const ERR_INVALID_SEED_COOKIES = "invalid seedCookies";
 export const ERR_INVALID_CHAT_ID = "Invalid chat id.";
 export const ERR_TOO_MANY_SESSIONS =
   "too many parallel browser sessions: all browser slots stayed busy for 60 s; run fewer browse_agent calls at once and call again";
@@ -56,6 +59,24 @@ export function parseSessionId(payload: Record<string, unknown>): ParsedSession 
   const value = payload.session;
   if (typeof value !== "string" || !SESSION_ID_PATTERN.test(value)) return { ok: false, error: ERR_INVALID_SESSION_ID };
   return { ok: true, id: value };
+}
+
+export type ParsedSeed = { ok: true; seed: boolean } | { ok: false; error: string };
+
+/**
+ * The optional `seedCookies` field of a `browser:command` payload: the session being
+ * created starts with a copy of the shared profile's cookies. Absent = false (a clean
+ * session, the QA default); present it must be a boolean.
+ */
+export function parseSeedCookies(payload: Record<string, unknown>): ParsedSeed {
+  if (!Object.hasOwn(payload, "seedCookies")) return { ok: true, seed: false };
+  if (typeof payload.seedCookies !== "boolean") return { ok: false, error: ERR_INVALID_SEED_COOKIES };
+  return { ok: true, seed: payload.seedCookies };
+}
+
+/** The `ready` hook for a new session: the seeding step when the creating command asked for it, else none. */
+export function planSessionReady<C>(seedCookies: boolean, seed: (ctx: C) => Promise<void>): ((ctx: C) => Promise<void>) | undefined {
+  return seedCookies ? seed : undefined;
 }
 
 export type ParsedChat = { ok: true; id: string | undefined } | { ok: false; error: string };
@@ -254,11 +275,10 @@ export class BrowserSessions<C> {
   stateOf(id: string, sender: number): SessionState {
     if (this.tombstones.has(this.tombstoneKey(id, sender))) return "closed";
     const s = this.sessions.get(id);
-    if (!s) {
-      const p = this.pending.get(id);
-      if (!p) return "missing";
-      return p.owner === sender ? "pending" : "foreign";
-    }
+    const p = this.pending.get(id);
+    // A session still being prepared (`ready`) counts as pending: no command enters it yet.
+    if (p && (!s || !s.closing)) return p.owner === sender ? "pending" : "foreign";
+    if (!s) return "missing";
     if (s.closing) return "closed";
     return s.owner === sender ? "live" : "foreign";
   }
@@ -302,7 +322,14 @@ export class BrowserSessions<C> {
    * slot goes back, ERR_SESSION_CLOSED); a throwing `create` releases the slot
    * and every waiter gets ERR_SESSION_CREATE_FAILED.
    */
-  async acquire(id: string, sender: number, allowCreate: boolean, create: (partition: string) => C): Promise<Entered<C>> {
+  async acquire(
+    id: string,
+    sender: number,
+    allowCreate: boolean,
+    create: (partition: string) => C,
+    /** Async setup run before ANY command enters the new session (e.g. cookies); must not reject. */
+    ready?: (ctx: C) => Promise<void>,
+  ): Promise<Entered<C>> {
     for (;;) {
       const state = this.stateOf(id, sender);
       if (state === "closed") return { ok: false, error: ERR_SESSION_CLOSED };
@@ -342,6 +369,20 @@ export class BrowserSessions<C> {
           else this.pool.release(slot);
           return ERR_SESSION_CREATE_FAILED;
         }
+        if (ready) {
+          try {
+            let timer: unknown;
+            await Promise.race([
+              ready(this.sessions.get(id)!.ctx),
+              new Promise<void>((resolve) => {
+                timer = this.timers.set(resolve, READY_TIMEOUT_MS);
+              }),
+            ]);
+            this.timers.clear(timer);
+          } catch (err) {
+            this.onError("prepare session", err);
+          }
+        }
         return null;
       })();
       this.pending.set(id, entry);
@@ -353,7 +394,7 @@ export class BrowserSessions<C> {
       }
       if (failed) return { ok: false, error: failed };
       const made = this.sessions.get(id);
-      if (!made) return { ok: false, error: ERR_SESSION_CLOSED };
+      if (!made || made.closing) return { ok: false, error: ERR_SESSION_CLOSED };
       return made.owner === sender ? this.enter(made) : { ok: false, error: ERR_SESSION_NOT_OWNED };
     }
   }

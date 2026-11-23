@@ -31,6 +31,14 @@ export function isIsolatedBrowseCall(args: Record<string, unknown>): boolean {
   return typeof args.goal === "string" && args.goal.trim() !== "" && isolatedBrowseAvailable();
 }
 
+/**
+ * Whether the run's isolated session starts with a copy of the shared profile's cookies (the user's
+ * logins): regular agent runs only. QA (`qa: true`) and any `resume` (QA-only) start clean.
+ */
+export function seedsSharedCookies(args: Record<string, unknown>): boolean {
+  return args.qa !== true && (args.resume === undefined || args.resume === null);
+}
+
 /** `<prefix>-<hash of chat>-<tool call id>-<nonce>`, at most 64 chars; an over-long tool call id is cut and ends in its own hash. */
 function sessionIdWithPrefix(prefix: string, chatId: string, toolCallId: string | undefined): string {
   const head = `${prefix}-${hashString(chatId).slice(0, CHAT_HASH_CHARS)}-`;

@@ -17,7 +17,7 @@ const SUPPORTED_LANGUAGES: string[] = ["en", "ru", "de", "it", "fr"];
 // 2026-10-17-isolated-parallel-browse-design.md). Main validates the id.
 // `isolated(undefined)` must NOT fall back to the shared browser: the scope is a
 // wrapper, so a missing/invalid id still travels as `session` and main rejects it.
-const makeBrowser = (scope?: { session: unknown }) => {
+const makeBrowser = (scope?: { session: unknown; seedCookies?: boolean }) => {
   const call = (payload: { command: string; args?: unknown }): Promise<unknown> =>
     ipcRenderer.invoke("browser:command", scope === undefined ? payload : { ...payload, ...scope });
   return {
@@ -93,7 +93,10 @@ const browser = {
   // A private browser: own cookies, tabs, fixture, journal. Same methods as
   // `browser`; every call carries the session id. Created lazily by its first
   // page command in main. Close it with `closeSession` (idempotent).
-  isolated: (sessionId: string) => makeBrowser({ session: sessionId }),
+  // `seedCookies: true` = a session created by this scope starts with a copy of the shared
+  // profile's cookies (regular agent runs). Absent/false = clean (QA). Main validates it.
+  isolated: (sessionId: string, opts?: { seedCookies?: boolean }) =>
+    makeBrowser({ session: sessionId, ...(opts?.seedCookies === undefined ? {} : { seedCookies: opts.seedCookies }) }),
   closeSession: (sessionId: string): Promise<unknown> =>
     ipcRenderer.invoke("browser:command", { command: "closeSession", session: sessionId }),
   // Bring the agent's browser tab to the front (a click on a tool chip). No id = the

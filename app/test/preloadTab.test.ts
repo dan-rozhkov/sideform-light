@@ -244,6 +244,14 @@ describe("preload/agentPanel.ts (penAgentPanel v3)", () => {
     }
   });
 
+  it("isolated(id, { seedCookies }) carries the flag; without it the key is absent", async () => {
+    await exposedApi.browser.isolated("run-1", { seedCookies: true }).snapshot();
+    expect(invokeMock.mock.calls[0][1]).toMatchObject({ session: "run-1", seedCookies: true });
+    invokeMock.mockClear();
+    await exposedApi.browser.isolated("run-1").snapshot();
+    expect("seedCookies" in invokeMock.mock.calls[0][1]).toBe(false);
+  });
+
   it("isolated(undefined) still carries a session key, so main rejects it instead of using the shared browser", async () => {
     await exposedApi.browser.isolated(undefined).snapshot();
     expect("session" in invokeMock.mock.calls[0][1]).toBe(true);

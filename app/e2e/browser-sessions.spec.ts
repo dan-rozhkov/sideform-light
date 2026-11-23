@@ -12,6 +12,8 @@ let editorServer: http.Server;
 let siteServer: http.Server;
 let editorBaseUrl: string;
 let site: string;
+/** The Cookie header of every request to /seeded, in arrival order. */
+const seededHits: (string | undefined)[] = [];
 
 test.beforeAll(async () => {
   editorServer = http.createServer((_req, res) => {
@@ -30,6 +32,11 @@ test.beforeAll(async () => {
       return;
     }
     res.setHeader("content-type", "text/html");
+    if (url.pathname === "/seeded") {
+      seededHits.push(req.headers.cookie);
+      res.end("<!doctype html><title>seeded</title><p>seeded</p>");
+      return;
+    }
     if (url.pathname === "/set") {
       res.setHeader("set-cookie", `who=${url.searchParams.get("v") ?? ""}; Path=/`);
       res.end("<!doctype html><title>set</title><p>cookie set</p>");
@@ -66,6 +73,18 @@ function call(page: Page, session: string | null, method: string, ...args: unkno
       return (target[method] as (...a: unknown[]) => Promise<unknown>)(...args);
     },
     { session, method, args },
+  ) as Promise<Res>;
+}
+
+/** Like `call`, for an isolated session created with `{ seedCookies }`. */
+function callSeeded(page: Page, session: string, seedCookies: boolean, method: string, ...args: unknown[]): Promise<Res> {
+  return page.evaluate(
+    ({ session, seedCookies, method, args }) => {
+      const b = (window as unknown as { penAgentPanel: { browser: { isolated(id: string, o: { seedCookies: boolean }): Record<string, unknown> } } })
+        .penAgentPanel.browser;
+      return (b.isolated(session, { seedCookies })[method] as (...a: unknown[]) => Promise<unknown>)(...args);
+    },
+    { session, seedCookies, method, args },
   ) as Promise<Res>;
 }
 
@@ -346,6 +365,46 @@ test("a denied navigation in the owner editor tab keeps its sessions", async () 
     expect(pagesAt(app, `${site}/set`).length).toBe(1);
     expect((await call(editor, "d1", "snapshot")).error).toBeUndefined();
     await closeSession(editor, "d1");
+  } finally {
+    await app.close();
+  }
+});
+
+test("a seeded isolated session starts with the shared profile's cookies; nothing flows back; a clean one has none", async () => {
+  const { app, editor } = await launch();
+  try {
+    // A host-only, httpOnly cookie in the shared profile (the user's normal tab).
+    await app.evaluate(async ({ session }, url) => {
+      await session.fromPartition("persist:penbrowser").cookies.set({ url, name: "sid", value: "shared1", httpOnly: true });
+    }, `${site}/`);
+
+    // QA-style session (no flag): clean, the very first request carries no cookie.
+    seededHits.length = 0;
+    expect((await callSeeded(editor, "clean1", false, "open", { url: `${site}/seeded` })).error).toBeUndefined();
+    expect(seededHits).toEqual([undefined]);
+    await closeSession(editor, "clean1");
+
+    // Seeded session: the first request of the session already has the cookie.
+    seededHits.length = 0;
+    expect((await callSeeded(editor, "seed1", true, "open", { url: `${site}/seeded` })).error).toBeUndefined();
+    expect(seededHits).toEqual(["sid=shared1"]);
+
+    // A cookie the session sets must not reach the shared profile.
+    expect((await call(editor, "seed1", "open", { url: `${site}/set?v=agent` })).error).toBeUndefined();
+    const shared = await app.evaluate(async ({ session }) => {
+      const cs = await session.fromPartition("persist:penbrowser").cookies.get({});
+      return cs.map((c) => `${c.name}=${c.value}`);
+    });
+    expect(shared).toEqual(["sid=shared1"]);
+
+    // Close: every pool partition is empty again.
+    expect((await closeSession(editor, "seed1")).ok).toBe(true);
+    const left = await app.evaluate(async ({ session }) => {
+      const out: number[] = [];
+      for (let i = 0; i < 6; i++) out.push((await session.fromPartition(`qa-${i}`).cookies.get({})).length);
+      return out;
+    });
+    expect(left).toEqual([0, 0, 0, 0, 0, 0]);
   } finally {
     await app.close();
   }

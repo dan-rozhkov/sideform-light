@@ -50,7 +50,7 @@ import { createChatTransport, CLIENT_CAPABILITIES } from "@/lib/chatTransport";
 import type { ToolHandler } from "../../toolRegistry";
 import { CLOSE_SESSION_TIMEOUT_MS, closeBrowserSession, getBrowserBridge, type BrowserBridge } from "./bridge";
 import { peBase } from "./shared";
-import { isIsolatedBrowseCall, rememberRunSession, runSessionId } from "./isolation";
+import { isIsolatedBrowseCall, rememberRunSession, runSessionId, seedsSharedCookies } from "./isolation";
 import { acquireBrowseSlot } from "@/lib/browseRunLimiter";
 import { getTraceMode, shouldRecordTrace } from "@/lib/browseTracePref";
 import { isBackgroundTaskChat } from "@/store/chatStore";
@@ -474,6 +474,8 @@ const runWithCleanup = async (
     }
     const runSession = runSessionId(context?.sessionId, context?.toolCallId);
     if (context?.toolCallId) rememberRunSession(context.toolCallId, runSession);
+    // Creates (and caches) the run's bridge with the seed decision: every later lookup reuses it.
+    getBrowserBridge(context?.sessionId, runSession, { seedCookies: seedsSharedCookies(args) });
     try {
       return await runBrowseAgent(args, context, runSession, deadlineMs, outerEnd, judgeSignal);
     } finally {
@@ -786,6 +788,7 @@ const runBrowseAgentBody = async (
         fixture: taken.fixture,
         // Holds the test account's cookies: resumable only in an isolated run.
         ...(runSession ? { isolated: true as const } : {}),
+        ...(runSession && seedsSharedCookies(args) ? { seeded: true as const } : {}),
         ...(network && network.length > 0 ? { network } : {}),
         complete: taken.complete,
         ...(taken.gap !== undefined ? { gap: taken.gap } : {}),
@@ -955,6 +958,11 @@ const runBrowseAgentBody = async (
         parsed = {
           ok: false,
           error: `checkpoint ${resumeId} not found — older checkpoints are dropped when newer ones arrive, and all checkpoints are lost when the editor reloads; start again with url or setup`,
+        };
+      } else if (entry.seeded) {
+        parsed = {
+          ok: false,
+          error: `checkpoint ${resumeId} holds the user's own browser logins and cannot be resumed; start again with url or setup`,
         };
       } else if (entry.isolated && !runSession) {
         parsed = {

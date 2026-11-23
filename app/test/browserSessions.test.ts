@@ -15,6 +15,9 @@ import {
   TOMBSTONE_LIMIT,
   commandMayCreateSession,
   parseSessionId,
+  parseSeedCookies,
+  READY_TIMEOUT_MS,
+  planSessionReady,
   parseAppChat,
   ERR_INVALID_CHAT_ID,
   planSessionCommand,
@@ -41,6 +44,23 @@ describe("parseAppChat", () => {
     ["object", {}],
   ])("rejects %s (never falls back)", (_name, value) => {
     expect(parseAppChat({ chat: value })).toEqual({ ok: false, error: ERR_INVALID_CHAT_ID });
+  });
+});
+
+describe("planSessionReady", () => {
+  it("returns the seeding step only when seeding was asked for", async () => {
+    const seed = vi.fn(async () => {});
+    expect(planSessionReady(false, seed)).toBeUndefined();
+    expect(planSessionReady(true, seed)).toBe(seed);
+  });
+});
+
+describe("parseSeedCookies", () => {
+  it("absent is false, a boolean passes, anything else is an error", () => {
+    expect(parseSeedCookies({})).toEqual({ ok: true, seed: false });
+    expect(parseSeedCookies({ seedCookies: true })).toEqual({ ok: true, seed: true });
+    expect(parseSeedCookies({ seedCookies: false })).toEqual({ ok: true, seed: false });
+    for (const v of ["true", 1, null, undefined]) expect(parseSeedCookies({ seedCookies: v }).ok).toBe(false);
   });
 });
 
@@ -209,6 +229,23 @@ describe("BrowserSessions", () => {
     expect(first).toMatchObject({ ok: true, session: { partition: "qa-0", ctx: { p: "qa-0" } } });
     expect(again).toMatchObject({ ok: true, session: { partition: "qa-0" } });
     expect(reg.size).toBe(1);
+  });
+
+  it("a concurrent command waits for `ready`; a hung `ready` is given up after READY_TIMEOUT_MS", async () => {
+    const { reg } = make();
+    let release: () => void = () => {};
+    const order: string[] = [];
+    const first = reg.acquire("r", 7, true, create, () => new Promise<void>((r) => (release = r))).then(() => order.push("first"));
+    const second = reg.acquire("r", 7, true, create).then(() => order.push("second"));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(order).toEqual([]);
+    release();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["first", "second"]);
+
+    const hung = reg.acquire("h", 7, true, create, () => new Promise<void>(() => {}));
+    await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS + 1);
+    expect(await hung).toMatchObject({ ok: true });
   });
 
   it("a missing session is not created without allowCreate", async () => {

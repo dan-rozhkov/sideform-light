@@ -1058,6 +1058,20 @@ without sharing cookies, tabs, fixtures or mocks. The shared browser
   only then the slot returns. Cap = pool size. With no free slot the creating
   command waits FIFO up to 60 s (`SIDEFORM_LIGHT_SESSION_SLOT_WAIT_MS` overrides, for
   tests), then `{error: ERR_TOO_MANY_SESSIONS} ("too many parallel browser sessions: all browser slots stayed busy for 60 s; ...", readable by the model; the call never hangs past SLOT_WAIT_MS)`.
+- **Cookie seeding (regular agent runs only).** `browser.isolated(id, { seedCookies: true })` (the ui passes it
+  for a `browse_agent` call that is not QA and has no `resume`; absent/false = a clean session, QA's default;
+  `parseSeedCookies` rejects a non-boolean) makes the session start with a COPY of the shared profile's
+  (`persist:penbrowser`) cookies, so a user logged in in a normal tab is logged in for the agent. Only cookies
+  (memory only; localStorage/IndexedDB are not copied; wiped with the slot at the end; nothing flows back).
+  `src/main/browser/cookieCopy.ts` (pure `toSetDetails`: host-only stays host-only, `domain` only for domain cookies, `__Host-`/`__Secure-`
+  handled, expired skipped; `copyCookies`: allSettled, bounded 3 s, logs counts never values). It runs as the `ready`
+  step of `BrowserSessions.acquire` after the slot is prepared: while it runs the session counts as `pending`
+  (every command, including the creator's own `open`, waits), so the first navigation already carries the cookies.
+  Teardown awaits a still-running copy before the wipe. Electron 43 `Cookie` has no `partitionKey`: partitioned
+  (CHIPS) cookies are not exposed by `cookies.get`, so they are not copied. A `fresh` fixture still clears the
+  session's own copy. Tests: `test/cookieCopy.test.ts`, `e2e/browser-sessions.spec.ts`.
+- **MCP tasks and schedules are seeded too (intended).** Seeding applies to EVERY non-QA run, including chats started over the MCP bridge and scheduled chats: an MCP task or a schedule run can act with the user's browser logins. Do not gate it.
+- **Late copy is harmless.** `startCookieCopy` returns `{ done, wait, cancel }`: the creator waits at most 3 s (`wait`), and `acquire` bounds the whole `ready` step at 5 s (`READY_TIMEOUT_MS`), but the work is not abandoned: teardown calls `cancel()` (no further `set` starts) and awaits `done` BEFORE the wipe, so no write lands after it. The seed/no-seed choice is `planSessionReady` (pure). A checkpoint of a seeded run holds the user's real cookies, so it is flagged `seeded` and can never be resumed (ui).
 - **Per-session state:** its own `BrowserController` (built by the same
   `makeController` factory as the shared one), `BrowserTarget`, `FetchRouter`
   (a mock never touches another session or the shared tabs) and `JournalOwners`

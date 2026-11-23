@@ -26,6 +26,11 @@ export interface BrowseCheckpoint {
    * so only another isolated run may resume it. Never sent to the model.
    */
   isolated?: true;
+  /**
+   * Recorded in a run whose session was seeded with the user's real cookies: the fixture holds
+   * them, so it is never resumable (a QA run must not start logged in as the user). Never sent to the model.
+   */
+  seeded?: true;
   createdAt: number;
 }
 

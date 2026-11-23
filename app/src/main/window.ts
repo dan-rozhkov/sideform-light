@@ -60,6 +60,7 @@ import type { BrowserSettingsIpc } from "./browserSettingsIpc";
 import type { PanelBridge } from "./mcp/panelBridge";
 import { isMcpPanelSender } from "./mcp/mcpPanelIpc";
 import { awaitSettled, type FixtureBypassRegistry } from "./browser/adBlock";
+import { startCookieCopy, type CookieCopy } from "./browser/cookieCopy";
 
 const FIXTURE_RELEASE_DRAIN_MS = 30_000;
 import { AGENT_PANEL_SETTINGS_FILE, readAgentPanelSettings, writeAgentPanelSettings } from "./agentPanelSettings";
@@ -105,6 +106,8 @@ import {
   ScopeCounter,
   planSessionCommand,
   parseSessionId,
+  parseSeedCookies,
+  planSessionReady,
 } from "./browserSessions";
 
 // One chat store per PROCESS (the agent panel's chats, chatStore.ts).
@@ -201,6 +204,8 @@ interface SessionCtx {
   journal: JournalOwners;
   /** Set when the drain timed out and the tabs were closed early. */
   tabsClosed?: Promise<boolean>;
+  /** The shared-profile cookie copy; teardown waits for it before wiping. Never rejects. */
+  cookieCopy?: CookieCopy;
 }
 
 /** App-scoped saved-logins services (created once in index.ts, like mcpService). */
@@ -2047,6 +2052,13 @@ export function createMainWindow(
     const controller = makeController(makeBrowserTarget(id, ses, router));
     return { ses, router, controller, journal: new JournalOwners(controller) };
   };
+  // The session starts with a copy of the shared profile's cookies (memory only, wiped at
+  // the end). Runs inside `sessions.acquire` before any command enters the session, so the
+  // first navigation already carries them. Bounded (3 s) and never throws.
+  const copySharedCookies = async (ctx: SessionCtx): Promise<void> => {
+    ctx.cookieCopy = startCookieCopy(session.fromPartition("persist:penbrowser"), ctx.ses, { log: (m) => console.error(m) });
+    await ctx.cookieCopy.wait();
+  };
   // Closes a session's tabs and resolves true once every webContents is really
   // destroyed (a wipe must not race a live page still writing storage).
   const waitDestroyed = (wcId: number): Promise<boolean> =>
@@ -2069,6 +2081,9 @@ export function createMainWindow(
   // keeps the slot out of the pool.
   const teardownSession = async (id: string, s: { owner: number; ctx: SessionCtx }): Promise<boolean> => {
     const { controller, journal, ses } = s.ctx;
+    // A copy that outlived its 3 s wait must neither start another write nor still be writing at the wipe.
+    s.ctx.cookieCopy?.cancel();
+    await s.ctx.cookieCopy?.done;
     await controller.releaseFixture().catch((err) => console.error("browser session: releaseFixture failed", err));
     journal.stopOwnedBy(s.owner);
     runBoundary.forget(id);
@@ -2145,6 +2160,8 @@ export function createMainWindow(
     const parsedSession = parseSessionId(payload);
     if (!parsedSession.ok) return { error: parsedSession.error };
     const sessionId = parsedSession.id;
+    const parsedSeed = parseSeedCookies(payload);
+    if (!parsedSeed.ok) return { error: parsedSeed.error };
     if (payload.command === "closeSession") {
       if (sessionId === undefined) return { error: ERR_INVALID_SESSION_ID };
       const owner = sessions.ownerOf(sessionId);
@@ -2160,7 +2177,7 @@ export function createMainWindow(
     if (sessionId !== undefined) {
       const plan = planSessionCommand(payload.command, payload.args, sessions.stateOf(sessionId, sender));
       if (plan.action === "reply") return plan.value;
-      const entered = await sessions.acquire(sessionId, sender, plan.create, (partition) => createSessionCtx(sessionId, partition));
+      const entered = await sessions.acquire(sessionId, sender, plan.create, (partition) => createSessionCtx(sessionId, partition), planSessionReady(parsedSeed.seed, copySharedCookies));
       if (!entered.ok) return { error: entered.error };
       exitSession = entered.exit;
       controller = entered.session.ctx.controller;

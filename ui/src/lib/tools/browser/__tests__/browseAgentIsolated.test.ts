@@ -81,11 +81,16 @@ const SETUP = { steps: [{ action: "click", selector: "#go" }] };
 describe("browse_agent isolated QA run", () => {
   it("drives the pre-open and snapshot through the isolated bridge and closes the session", async () => {
     await browseAgent({ goal: "g", url: "https://a.test", qa: true }, ctx);
-    expect(isolated).toHaveBeenCalledWith(runId());
+    expect(isolated).toHaveBeenCalledWith(runId(), { seedCookies: false });
     expect(iso.open).toHaveBeenCalled();
     expect(shared.open).not.toHaveBeenCalled();
     expect(shared.snapshot).not.toHaveBeenCalled();
     expect(closeSession).toHaveBeenCalledWith(runId());
+  });
+
+  it("a regular (non-QA) run seeds the session with the shared cookies; QA does not", async () => {
+    await browseAgent({ goal: "g", url: "https://a.test" }, ctx);
+    expect(isolated).toHaveBeenCalledWith(runId(), { seedCookies: true });
   });
 
   it("applies and releases the fixture on the isolated bridge, then closes the session", async () => {
@@ -286,10 +291,27 @@ describe("browse_agent isolated QA run", () => {
       useBrowseCheckpointStore.getState().add("chat-1", { fixture: CAPTURED as never, complete: true, summary: "s", isolated: true });
       const out = JSON.parse(await browseAgent({ goal: "g", qa: true, resume: "cp_1" }, ctx));
       expect(out).toMatchObject({ status: "done", setupApplied: true });
-      expect(isolated).toHaveBeenCalledWith(runId());
+      expect(isolated).toHaveBeenCalledWith(runId(), { seedCookies: false });
       expect(iso.applyFixture).toHaveBeenCalledTimes(1);
       expect(shared.applyFixture).not.toHaveBeenCalled();
       expect(closeSession).toHaveBeenCalledWith(runId());
+    });
+
+    it("a checkpoint of a seeded run (the user's real cookies) cannot be resumed, not even by QA", async () => {
+      useBrowseCheckpointStore.getState().add("chat-1", { fixture: CAPTURED as never, complete: true, summary: "s", isolated: true, seeded: true });
+      const out = JSON.parse(await browseAgent({ goal: "g", qa: true, resume: "cp_1" }, ctx));
+      expect(out.status).toBe("setup_failed");
+      expect(JSON.stringify(out)).toContain("cannot be resumed");
+      expect(iso.applyFixture).not.toHaveBeenCalled();
+    });
+
+    it("a regular run's checkpoint is flagged seeded; a QA run's is not", async () => {
+      journalOn(iso);
+      await browseAgent({ goal: "g", url: "https://a.test", setup: SETUP }, ctx);
+      expect(stored()[0]?.seeded).toBe(true);
+      resetBrowseCheckpoints();
+      await browseAgent({ goal: "g", url: "https://a.test", qa: true, setup: SETUP }, { sessionId: "chat-1", toolCallId: "tc-2" });
+      expect(stored()[0]?.seeded).toBeUndefined();
     });
 
     it("a shared-browser checkpoint may be resumed in an isolated run", async () => {

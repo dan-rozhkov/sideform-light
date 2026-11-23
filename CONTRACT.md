@@ -91,7 +91,10 @@ window.penAgentPanel = {
   version: 3,
   browser,            // makeBrowser(): open, act, findImages, snapshot, perform, assert, read, screenshot, tabs,
                       // applyFixture, releaseFixture, clearActEmulation, fillLogin, startJournal, stopJournal,
-                      // captureCheckpoint, requests, capture, isolated(sessionId), closeSession(sessionId), revealAgentTab
+                      // captureCheckpoint, requests, capture, isolated(sessionId, { seedCookies? }), closeSession(sessionId), revealAgentTab
+                      // `seedCookies: true` (regular agent runs, never QA): the isolated session starts with a COPY of the
+                      // shared profile's cookies (persist:penbrowser), memory only, wiped at the end; localStorage is not
+                      // copied and nothing flows back. Absent/false = clean session. Main rejects a non-boolean value.
                       // `capture({ forTrace: true })` is used only for trace DOM snapshots of failed steps.
                       // REMOVED: launchApp, releaseApp, nativeApps, forChat
   chats,              // list, read, save, remove
@@ -117,6 +120,8 @@ The Electron shell (native menus, dialogs, notifications, tab bar, empty start, 
 - The shell never changes the ui's language; the persisted file only makes the next start paint the shell right before the ui has loaded.
 
 ## MCP agent bridge (v1)
+
+Note: the agent's browser runs (also those of an MCP task and of a scheduled chat) start with a copy of the user's shared-profile cookies (`isolated(id, { seedCookies: true })`, every non-QA run), so an MCP task or a schedule run can act with the user's browser logins. This is intended. QA runs start clean; a checkpoint of a seeded run is never resumable.
 
 An external agent (Hermes Agent, Claude Code, Codex, any MCP client on the same machine) gives a task in plain words to the RUNNING app, follows it and collects the result. It is a task giver, not a remote control: no browser tools over MCP. Design: `docs/superpowers/specs/2026-11-15-mcp-agent-bridge-design.md`. Code: `app/src/main/mcp/`.
 

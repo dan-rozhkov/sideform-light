@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { browseAssertAvailable, isolatedBrowseAvailable } from "@/lib/tools/browser/isolation";
+import { browseAssertAvailable, isolatedBrowseAvailable, seedsSharedCookies } from "@/lib/tools/browser/isolation";
 import { closeBrowserSession, getBrowserBridge, isDesktopBrowserAvailable, resetBrowserBridgeCacheForTests } from "@/lib/tools/browser/bridge";
 import { setPenDesktop, stubBrowser } from "./helpers";
 
@@ -32,6 +32,15 @@ describe("getBrowserBridge", () => {
     expect(isolated.mock.calls.map((c) => c[0])).toEqual(["qa-a", "qa-b"]);
   });
 
+  it("passes the seed option only when the isolated bridge is created", () => {
+    const isolated = vi.fn((_id: string, _o?: { seedCookies?: boolean }) => stubBrowser());
+    setPenDesktop(stubBrowser({ isolated }));
+    getBrowserBridge("chat", "run-a", { seedCookies: true });
+    getBrowserBridge("chat", "run-a");
+    getBrowserBridge("chat", "run-b");
+    expect(isolated.mock.calls).toEqual([["run-a", { seedCookies: true }], ["run-b"]]);
+  });
+
   it("answers a closed session with an error bridge and never revives it", async () => {
     const isolated = vi.fn((_id: string) => stubBrowser());
     const closeSession = vi.fn(async () => ({ ok: true as const }));
@@ -59,5 +68,14 @@ describe("capabilities derived from the bridge", () => {
     expect(isolatedBrowseAvailable()).toBe(false);
     setPenDesktop(stubBrowser({ isolated: () => stubBrowser() }));
     expect(isolatedBrowseAvailable()).toBe(true);
+  });
+});
+
+describe("seedsSharedCookies", () => {
+  it("seeds regular runs only: QA and resume start clean", () => {
+    expect(seedsSharedCookies({ goal: "g" })).toBe(true);
+    expect(seedsSharedCookies({ goal: "g", qa: false })).toBe(true);
+    expect(seedsSharedCookies({ goal: "g", qa: true })).toBe(false);
+    expect(seedsSharedCookies({ goal: "g", resume: "cp-1" })).toBe(false);
   });
 });

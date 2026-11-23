@@ -299,7 +299,8 @@ describe("browser:command commands", () => {
 
   it("the panel's bridge carries the session scope and has no desktop-app or chat-binding members", () => {
     expect(panelPreload).toContain("...scope");
-    expect(panelPreload).toContain("isolated: (sessionId: string) => makeBrowser({ session: sessionId })");
+    expect(panelPreload).toContain("isolated: (sessionId: string, opts?: { seedCookies?: boolean }) =>");
+    expect(panelPreload).toContain("makeBrowser({ session: sessionId,");
     for (const gone of ["forChat", "launchApp", "releaseApp", "nativeApps"]) expect(panelPreload, gone).not.toContain(gone);
     // `capture` is back: the trace DOM snapshot (traceDomSource) needs it.
     expect(panelPreload).toContain('command: "capture"');

@@ -11,8 +11,9 @@ export interface PenAgentPanelApi {
     /**
      * Isolated browser session for one browse_agent run (parallel runs). Same methods as `browser`, each
      * call targets the session. `sessionId` matches `^[A-Za-z0-9_-]{1,64}$`.
+     * `seedCookies: true` starts the session with a copy of the shared profile's cookies (regular runs); absent = clean (QA).
      */
-    isolated?(sessionId: string): DesktopBrowserBridge;
+    isolated?(sessionId: string, opts?: { seedCookies?: boolean }): DesktopBrowserBridge;
     /** Closes the isolated session (tabs, fixture, storage). Idempotent. */
     closeSession?(sessionId: string): Promise<{ ok: true } | { error: string }>;
     /**
