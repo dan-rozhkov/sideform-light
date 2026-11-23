@@ -1410,3 +1410,43 @@ describe("TabManager with zero tabs (closing the last tab leaves the window empt
     expect(tm.getSnapshot().activeQuiet).toBeUndefined();
   });
 });
+
+describe("closePopupTab (a popup that closed itself)", () => {
+  const mk = () => new TabManager({ uiOrigin: "app://x", onStateChanged: () => {}, createView: () => makeFakeView() });
+
+  it("shows the opener again (not the left neighbour) and re-pins the agent on it", () => {
+    const tm = mk();
+    const opener = tm.newTab("browser");
+    const other = tm.newTab("browser");
+    tm.activate(opener);
+    const popup = tm.newTab("browser");
+    tm.setAgentBrowserTabId(popup);
+    tm.closePopupTab(popup, opener);
+    expect(tm.getSnapshot().activeId).toBe(opener);
+    expect(tm.currentBrowserTabId()).toBe(opener);
+    expect(other).not.toBe(opener);
+  });
+
+  it("leaves the agent pin and the active tab alone when the popup was neither", () => {
+    const tm = mk();
+    const opener = tm.newTab("browser");
+    const popup = tm.newTab("browser", undefined, { activate: false });
+    const third = tm.newTab("browser");
+    tm.setAgentBrowserTabId(third);
+    tm.closePopupTab(popup, opener);
+    expect(tm.getSnapshot().activeId).toBe(third);
+    expect(tm.currentBrowserTabId()).toBe(third);
+  });
+
+  it("never activates a session opener; a gone opener falls back to closeTab", () => {
+    const tm = mk();
+    const plain = tm.newTab("browser");
+    const opener = tm.newTab("browser", "s1");
+    const popup = tm.newTab("browser", "s1");
+    tm.closePopupTab(popup, opener);
+    expect(tm.getSnapshot().activeId).toBe(plain);
+    const p2 = tm.newTab("browser");
+    tm.closePopupTab(p2, 9999);
+    expect(tm.getSnapshot().tabs.some((t) => t.id === p2)).toBe(false);
+  });
+});

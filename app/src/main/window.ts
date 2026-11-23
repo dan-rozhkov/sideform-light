@@ -4,6 +4,7 @@ import { captureWithRetry } from "./captureRetry";
 import { normalizePageColor, PAGE_BG_FALLBACK, SAMPLE_PAGE_BG_SCRIPT } from "./pageBackground";
 import path from "node:path";
 import { access } from "node:fs/promises";
+import type { WebContents } from "electron";
 import { app, BaseWindow, View, WebContentsView, Menu, Notification, dialog, ipcMain, nativeTheme, session, shell, systemPreferences, webContents } from "electron";
 import {
   TabManager,
@@ -780,15 +781,21 @@ export function createMainWindow(
     return s;
   };
   // Assigned once the session helpers exist; createView's handlers call it.
+  /** Popups opened as `window.open()` (about:blank): their initial document counts as committed. */
+  const blankPopups = new WeakSet<WebContents>();
   let closeSessionsOwnedBy: (owner: number, gone?: boolean) => void = () => {};
   const tabs = new TabManager({
     uiOrigin,
     onStateChanged: pushState,
-    createView: (kind: TabKind, sessionId?: string): TabViewHandle => {
+    createView: (kind: TabKind, sessionId?: string, adopt?: WebContents): TabViewHandle => {
       // An isolated session's tab: its own in-memory partition, its own router.
       const sessionCtx = sessionId ? sessions.peek(sessionId)?.ctx : undefined;
       const view = new WebContentsView(
-        kind === "browser"
+        adopt
+          ? // A popup (`window.open`): Electron already created its contents as a child of the opener, with the
+            // opener's session and the browser-tab hardening forced by `attachBrowserTabPolicy`.
+            { webContents: adopt }
+          : kind === "browser"
           ? {
               webPreferences: secureWebPreferences(undefined, {
                 // Dedicated session partition — the security boundary for
@@ -828,7 +835,8 @@ export function createMainWindow(
       // default black text over #1a1a1a. So a browser tab is only themed
       // while blank: its first main-frame navigation drops it back to white
       // for good.
-      let browserTabBlank = kind === "browser";
+      let browserTabBlank = kind === "browser" && !adopt;
+      if (adopt) view.setBackgroundColor("#ffffff"); // a popup is a page, not a blank tab
       if (kind === "browser") {
         view.webContents.on("did-start-navigation", (details) => {
           // The placeholder document (ensureDocument below) keeps the tab blank.
@@ -881,6 +889,9 @@ export function createMainWindow(
         },
       });
       let placeholderLoad: Promise<void> | null = null;
+      // Defensive: Electron normally commits the initial about:blank itself (did-navigate / dom-ready), this only
+      // guarantees the gate never waits 10 s on a popup whose initial document the opener's script owns.
+      if (adopt && blankPopups.has(adopt)) commitGate.onNavigated(BLANK_DOCUMENT_URL);
       const ensureDocument = (timeoutMs?: number): Promise<void> =>
         kind === "browser" ? commitGate.ensure(timeoutMs === undefined ? undefined : { timeoutMs }) : Promise.resolve();
       const sendGated = async (method: string, params?: Record<string, unknown>, gateTimeoutMs?: number): Promise<unknown> => {
@@ -947,7 +958,8 @@ export function createMainWindow(
         // moment after creation, not in this tick: `open` creates a tab and loads its URL
         // straight away (the placeholder would only race it), and a committed about:blank
         // makes Playwright report the page before its real URL is known.
-        const placeholderTimer = setTimeout(() => commitGate.startPlaceholderIfIdle(), 100);
+        // Not for a popup: its opener's script owns the document (`window.open()` + document.write).
+        const placeholderTimer = adopt ? undefined : setTimeout(() => commitGate.startPlaceholderIfIdle(), 100);
         wc.once("destroyed", () => clearTimeout(placeholderTimer));
       }
       const loadWc = view.webContents;
@@ -1290,54 +1302,79 @@ export function createMainWindow(
       if (kind === "browser") {
         // Browser tabs: no preload and no IPC callbacks. Popups open as a new
         // browser tab instead of escaping to the system browser.
-        attachBrowserTabPolicy(view.webContents, (url) => {
+        attachBrowserTabPolicy(view.webContents, {
           // A popup of a session that is closing is dropped.
-          if (sessionId && !sessions.isLive(sessionId)) return;
-          // Review finding 7: only repoint the agent when *this* tab (the
-          // one whose popup policy just fired) is the tab the agent is
-          // currently driving. Before this check, a popup from *any* browser
-          // tab repointed the agent — so a tab the user had open on the side,
-          // unrelated to whatever the agent was doing, could silently steal
-          // it. `browserHandle()` already embodies "agentBrowserTabId, or
-          // today's fallback rule if unset", so comparing against it (rather
-          // than agentBrowserTabId directly) covers both cases the same way
-          // the rest of this bridge does.
-          const openedByAgentTab = tabs.browserHandle(sessionId)?.getWebContentsId() === viewId;
-          if (!openedByAgentTab) {
-            // Second-pass review finding 2: pin the agent's CURRENT tab id
-            // before `newTab` below runs its own `setActive` — which would
-            // otherwise make the popup the *active* tab in the strip.
-            // `agentBrowserTabId` was commonly left `null` up to this point
-            // (see finding 2's other half, in `ensurePage` below), which let
-            // `browserHandle()`'s "active tab if it's a browser tab" fallback
-            // silently follow this popup even though its opener has nothing
-            // to do with the agent at all.
-            const currentAgentTabId = tabs.currentBrowserTabId(sessionId);
-            if (currentAgentTabId !== null) tabs.setAgentBrowserTabId(currentAgentTabId, sessionId);
-          }
-          // A popup of a session tab stays in that session (same partition).
-          const popupId = tabs.newTab("browser", sessionId);
-          if (openedByAgentTab) {
-            // Fixes upstream jev-ultrafast #61: a popup opened from the tab
-            // the agent is driving becomes the agent's new current tab, so
-            // the very next browser command targets it instead of the tab
-            // that spawned it.
-            tabs.setAgentBrowserTabId(popupId, sessionId);
-          }
-          // The popup still becomes the *active* tab in the strip either
-          // way (newTab's own setActive call) — only whether the agent
-          // follows it is conditional. newTab's internal setActive (not the
-          // public activate()) deliberately does not itself touch
-          // agentBrowserTabId — see activate()'s doc comment (finding 4) —
-          // so a non-agent popup opens without stealing the agent even
-          // though it's now the visibly active tab.
-          // Load through the popup's OWN handle: a session popup opens in the
-          // background, so the active tab is the user's own.
-          tabs
-            .browserTabHandleById(popupId, sessionId)
-            ?.loadURL(url)
-            .catch((err) => console.error("browser tab: popup navigation failed", err));
+          canOpen: () => !win.isDestroyed() && (!sessionId || sessions.isLive(sessionId)),
+          open: (options, url) => {
+            const popup = (options as { webContents?: WebContents }).webContents;
+            try {
+              // Electron passes the child's contents in `options.webContents`; without it there is nothing to host.
+              if (!popup) throw new Error("browser tab: popup created without webContents");
+              return adoptPopup(popup, url);
+            } catch (err) {
+              // Never let a throw escape into Electron's handler: drop the guest contents instead.
+              console.error("browser tab: popup could not be opened", err);
+              if (!popup) throw err;
+              try {
+                if (!popup.isDestroyed()) popup.close();
+              } catch {
+                // already gone
+              }
+              return popup;
+            }
+          },
         });
+      }
+      // Hosts Electron's child contents `popup` (a `window.open` of THIS tab) as a browser tab.
+      function adoptPopup(popup: WebContents, url: string): WebContents {
+            // Review finding 7: only repoint the agent when *this* tab (the
+            // one whose popup policy just fired) is the tab the agent is
+            // currently driving. Before this check, a popup from *any* browser
+            // tab repointed the agent — so a tab the user had open on the side,
+            // unrelated to whatever the agent was doing, could silently steal
+            // it. `browserHandle()` already embodies "agentBrowserTabId, or
+            // today's fallback rule if unset", so comparing against it (rather
+            // than agentBrowserTabId directly) covers both cases the same way
+            // the rest of this bridge does.
+            const openedByAgentTab = tabs.browserHandle(sessionId)?.getWebContentsId() === viewId;
+            if (!openedByAgentTab) {
+              // Second-pass review finding 2: pin the agent's CURRENT tab id
+              // before `newTab` below runs its own `setActive` — which would
+              // otherwise make the popup the *active* tab in the strip.
+              // `agentBrowserTabId` was commonly left `null` up to this point
+              // (see finding 2's other half, in `ensurePage` below), which let
+              // `browserHandle()`'s "active tab if it's a browser tab" fallback
+              // silently follow this popup even though its opener has nothing
+              // to do with the agent at all.
+              const currentAgentTabId = tabs.currentBrowserTabId(sessionId);
+              if (currentAgentTabId !== null) tabs.setAgentBrowserTabId(currentAgentTabId, sessionId);
+            }
+            // A popup of a session tab stays in that session (same partition). The tab hosts Electron's own
+            // child contents (the opener link stays); Chromium loads the popup's URL itself.
+            // `window.open()` with no URL: the opener's script fills the initial document (never committed
+            // by a navigation), so the commit gate treats it as committed (createView).
+            if (url === BLANK_DOCUMENT_URL) blankPopups.add(popup);
+            const openerTabId = tabs.tabIdForWebContents(viewId);
+            const popupId = tabs.newTab("browser", sessionId, { adopt: popup });
+            // `window.close()` in the popup destroys its contents: the strip must not keep a dead tab
+            // (a no-op for a tab that is already gone, e.g. closed by the user). Like Chrome, the agent
+            // and the user's view go back to the opener.
+            popup.once("destroyed", () => tabs.closePopupTab(popupId, openerTabId));
+            if (openedByAgentTab) {
+              // Fixes upstream jev-ultrafast #61: a popup opened from the tab
+              // the agent is driving becomes the agent's new current tab, so
+              // the very next browser command targets it instead of the tab
+              // that spawned it.
+              tabs.setAgentBrowserTabId(popupId, sessionId);
+            }
+            // The popup still becomes the *active* tab in the strip either
+            // way (newTab's own setActive call) — only whether the agent
+            // follows it is conditional. newTab's internal setActive (not the
+            // public activate()) deliberately does not itself touch
+            // agentBrowserTabId — see activate()'s doc comment (finding 4) —
+            // so a non-agent popup opens without stealing the agent even
+            // though it's now the visibly active tab.
+            return popup;
       }
 
       let navListener: ((s: { url: string; title: string; canGoBack: boolean; canGoForward: boolean }) => void) | null =
@@ -1501,7 +1538,8 @@ export function createMainWindow(
           navEventListeners.clear();
           unregisterFromFetchRouter?.();
           cdpEventListeners.clear();
-          if (debuggerAttached) {
+          const gone = view.webContents.isDestroyed(); // a popup that closed itself (`window.close()`)
+          if (debuggerAttached && !gone) {
             try {
               view.webContents.debugger.detach();
             } catch (err) {
@@ -1511,7 +1549,7 @@ export function createMainWindow(
             }
           }
           win.contentView.removeChildView(view);
-          view.webContents.close();
+          if (!gone) view.webContents.close();
         },
         sendSettingsSection: (section) => view.webContents.send("settings:section", section),
         focus: () => view.webContents.focus(),

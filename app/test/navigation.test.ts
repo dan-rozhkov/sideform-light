@@ -5,6 +5,7 @@ import {
   attachPanelNavigationPolicy,
   attachNavigationPolicy,
   attachBrowserTabPolicy,
+  decideBrowserPopup,
   attachLocalOnlyPolicy,
   shouldForwardNavigationEvent,
 } from "../src/main/navigation";
@@ -84,41 +85,63 @@ describe("attachNavigationPolicy", () => {
   });
 });
 
+describe("decideBrowserPopup", () => {
+  it("allows http(s) and the exact about:blank, denies every other scheme", () => {
+    expect(decideBrowserPopup("https://accounts.google.com/o/oauth2/auth")).toBe("allow");
+    expect(decideBrowserPopup("http://localhost:3000/cb")).toBe("allow");
+    expect(decideBrowserPopup("about:blank")).toBe("allow");
+    for (const bad of ["about:blank#x", "about:srcdoc", "javascript:alert(1)", "file:///etc/passwd", "data:text/html,x", "chrome://gpu", "app://sideform/", "%%%", ""]) {
+      expect(decideBrowserPopup(bad), bad).toBe("deny");
+    }
+  });
+});
+
 describe("attachBrowserTabPolicy", () => {
+  const host = (canOpen = true) => ({ canOpen: vi.fn(() => canOpen), open: vi.fn((o: unknown) => o as never) });
+  type Allow = { action: string; outlivesOpener?: boolean; createWindow?: (o: unknown) => unknown; overrideBrowserWindowOptions?: { webPreferences?: Record<string, unknown> } };
+
   it("lets in-place http(s) navigation through", () => {
     const contents = fakeContents();
-    const openInNewBrowserTab = vi.fn();
-    attachBrowserTabPolicy(contents as never, openInNewBrowserTab);
+    attachBrowserTabPolicy(contents as never, host());
     const ev = { preventDefault: vi.fn() };
     contents.emit("will-navigate", ev, "https://example.com/x");
     expect(ev.preventDefault).not.toHaveBeenCalled();
-    expect(openInNewBrowserTab).not.toHaveBeenCalled();
   });
 
   it("denies in-place navigation to non-http(s) schemes", () => {
     const contents = fakeContents();
-    const openInNewBrowserTab = vi.fn();
-    attachBrowserTabPolicy(contents as never, openInNewBrowserTab);
+    attachBrowserTabPolicy(contents as never, host());
     const ev = { preventDefault: vi.fn() };
     contents.emit("will-navigate", ev, "file:///etc/passwd");
     expect(ev.preventDefault).toHaveBeenCalled();
-    expect(openInNewBrowserTab).not.toHaveBeenCalled();
   });
 
-  it("popups open as a new browser tab (never shell.openExternal) for http(s), and are always denied in-window", () => {
+  it("popups are ALLOWED as real child windows (createWindow hosts them as tabs), outliving the opener, with hardened webPreferences", () => {
     const contents = fakeContents();
-    const openInNewBrowserTab = vi.fn();
-    attachBrowserTabPolicy(contents as never, openInNewBrowserTab);
-    expect(contents.open("https://example.com/x")).toEqual({ action: "deny" });
-    expect(openInNewBrowserTab).toHaveBeenCalledWith("https://example.com/x");
+    const h = host();
+    attachBrowserTabPolicy(contents as never, h);
+    for (const url of ["https://example.com/x", "about:blank"]) {
+      const r = contents.open(url) as Allow;
+      expect(r.action).toBe("allow");
+      expect(r.outlivesOpener).toBe(true);
+      expect(r.overrideBrowserWindowOptions?.webPreferences).toEqual({ contextIsolation: true, nodeIntegration: false, sandbox: true });
+      expect(h.open).not.toHaveBeenCalled(); // only when Electron calls createWindow
+    }
+    const options = { webContents: {} };
+    const r = contents.open("https://example.com/x") as Allow;
+    expect(r.createWindow?.(options)).toBe(options);
+    expect(h.open).toHaveBeenCalledWith(options, "https://example.com/x");
   });
 
-  it("popups to non-http(s) schemes are denied without opening a new browser tab", () => {
+  it("popups to other schemes, and popups the host refuses, are denied", () => {
     const contents = fakeContents();
-    const openInNewBrowserTab = vi.fn();
-    attachBrowserTabPolicy(contents as never, openInNewBrowserTab);
+    const h = host();
+    attachBrowserTabPolicy(contents as never, h);
     expect(contents.open("javascript:alert(1)")).toEqual({ action: "deny" });
-    expect(openInNewBrowserTab).not.toHaveBeenCalled();
+    expect(contents.open("file:///etc/passwd")).toEqual({ action: "deny" });
+    const closing = fakeContents();
+    attachBrowserTabPolicy(closing as never, host(false));
+    expect(closing.open("https://example.com/x")).toEqual({ action: "deny" });
   });
 });
 

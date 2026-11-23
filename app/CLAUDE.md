@@ -408,10 +408,30 @@ never on `did-start-navigation`, which also fires for navigations the panel poli
 denies, 204s and downloads (`isOrphaningEvent`, `orphanRelease.ts`).
 
 Popups (`target="_blank"`, `window.open`) inside a browser tab open as a new
-browser tab (`navigation.ts`'s `attachBrowserTabPolicy` /
-`decideBrowserNavigation` — any http(s) URL is allowed, anything else is
-denied) rather than escaping to the system browser via `shell.openExternal`,
-unlike the ui pages' `attachNavigationPolicy` (origin clamp, everything else external).
+browser tab, rather than escaping to the system browser via `shell.openExternal`
+(unlike the ui pages' `attachNavigationPolicy`: origin clamp, everything else external).
+They are real child windows: `navigation.ts`'s `attachBrowserTabPolicy` returns
+`{ action: "allow", createWindow, outlivesOpener: true, overrideBrowserWindowOptions }`
+(NOT `deny` + a separate `loadURL`: an unrelated WebContents has no `window.opener`, so
+"Sign in with Google" / OAuth popups, which answer through `opener.postMessage` and poll
+`popup.closed`, never reached the page, and a `null` from `window.open` made them retry
+= two tabs). `createWindow` hands Electron's own child contents (`options.webContents`)
+to `window.ts` (`BrowserPopupHost.open`), which adopts it as a normal browser tab:
+`TabManager.newTab("browser", session, { adopt })` -> `createView(kind, session, adopt)` ->
+`new WebContentsView({ webContents })`, with all the usual browser-tab wiring (history,
+ad block, CDP, titles, session rules; the placeholder document is NOT loaded, Chromium
+loads the popup's URL). Security: the child inherits the opener's session (so a session
+tab's popup stays in that session) and `overrideBrowserWindowOptions` forces
+`secureWebPreferences()` (no preload, sandbox, contextIsolation, no Node); never widen it.
+`decideBrowserPopup` allows http(s) plus the exact `about:blank` (`window.open()` before
+the script navigates it); every other scheme is denied. `canOpen()` drops a popup of a
+closing session. `window.close()` in the popup destroys its contents; `window.ts` listens
+for `destroyed` and calls `tabs.closePopupTab(popupId, openerTabId)`: like `closeTab`, but the agent's
+pin (if it was the popup) and the shown tab (if the popup was active; never a session tab) go back to the
+opener instead of the left neighbour (the handle's `destroy` skips `close()` on already-destroyed contents).
+A throw inside `createWindow` is caught (the guest contents is closed). An `about:blank` popup counts as committed for the commit gate. The popup outlives its closed opener, like Chrome.
+`e2e/browser-popup-opener.spec.ts` pins one tab per call, `opener.postMessage`,
+`popup.closed`, close and hardening.
 **`open` resolves at DOM-ready, not at full load.** `webContents.loadURL()`'s
 own promise only resolves at `did-finish-load` — every subresource,
 including ads/trackers/video on a heavy commercial page, which routinely
@@ -552,7 +572,7 @@ sequential id) the agent is currently driving. `browserHandle()` prefers this
 tab while it's still a live browser tab, falling back to the pre-existing
 "active if browser, else most-recently-created browser tab" rule otherwise.
 Fixes upstream jev-ultrafast #61 ("the agent sticks to the old tab"): a popup
-opened from a browser tab (`window.ts`'s `attachBrowserTabPolicy` callback)
+opened from a browser tab (`window.ts`'s `attachBrowserTabPolicy` `open` host callback)
 sets this to the new tab, so the very next browser command targets it even
 before the user has looked at the strip; `tabs({action:"switch"|"new"})`
 also set it. Cleared when
@@ -573,7 +593,7 @@ immediately below, which needs a popup's activation to *not* by itself
 repoint the agent.
 
 Review finding 7: a popup's target now matters. `window.ts`'s
-`attachBrowserTabPolicy` callback fires per browser tab (one closure per
+`attachBrowserTabPolicy` host `open` callback fires per browser tab (one closure per
 `createView` call), so before this fix *any* browser tab's popup — even one
 the agent wasn't driving — repointed `agentBrowserTabId` to the new tab,
 letting a tab the user had open on the side steal the agent from whatever it

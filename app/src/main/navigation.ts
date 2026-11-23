@@ -1,6 +1,7 @@
 import { decideBrowserNavigation } from "@sideform/browser-agent/controller";
-import type { WebContents } from "electron";
+import type { BrowserWindowConstructorOptions, WebContents } from "electron";
 import { originOf } from "./config";
+import { secureWebPreferences } from "./webPreferences";
 
 export type NavigationDecision = "allow" | "external" | "deny";
 
@@ -85,22 +86,51 @@ export function attachPanelNavigationPolicy(
 }
 
 /**
+ * Pure policy for a popup (`target="_blank"`, `window.open`) of a browser tab:
+ * http(s) is allowed like any in-place navigation, plus the exact `about:blank`
+ * that `window.open()` / `window.open("")` reports before the page script
+ * navigates the new window itself (that later navigation still goes through
+ * the popup's own `will-navigate` policy). Every other scheme is denied.
+ */
+export function decideBrowserPopup(targetUrl: string): "allow" | "deny" {
+  return targetUrl === "about:blank" || decideBrowserNavigation(targetUrl) === "allow" ? "allow" : "deny";
+}
+
+/** What a browser tab needs from the window to host its popups as tabs (`window.ts`). */
+export interface BrowserPopupHost {
+  /** False when the popup must be dropped (e.g. its isolated session is closing). */
+  canOpen(): boolean;
+  /**
+   * Adopts the WebContents Electron created for the popup (`options.webContents`) as a browser tab and returns
+   * it. The new contents is a real child of the opener (`window.opener`, `postMessage`, `closed`, `window.close()`).
+   */
+  open(options: BrowserWindowConstructorOptions, url: string): WebContents;
+}
+
+/**
  * Wires a browser tab's WebContents per `decideBrowserNavigation`: in-place
  * http(s) navigation is left alone, everything else is blocked. Popups
  * (`target="_blank"`, `window.open`) open as a new browser tab instead of
  * escaping to the system browser — the whole point of the built-in browser is
- * to keep the user's session inside the app.
+ * to keep the user's session inside the app. They are ALLOWED with
+ * `createWindow`, so the popup keeps its opener (OAuth / "Sign in with
+ * Google" report back through `window.opener.postMessage`) and `window.open`
+ * returns a window, not `null`. The popup's webPreferences are forced to the
+ * browser-tab hardening (no preload, sandbox, context isolation, no Node); it
+ * inherits the opener's session. Like in Chrome a popup outlives its opener.
  */
-export function attachBrowserTabPolicy(
-  contents: WebContents,
-  openInNewBrowserTab: (url: string) => void,
-): void {
+export function attachBrowserTabPolicy(contents: WebContents, host: BrowserPopupHost): void {
   contents.on("will-navigate", (event, url) => {
     if (decideBrowserNavigation(url) === "deny") event.preventDefault();
   });
   contents.setWindowOpenHandler(({ url }) => {
-    if (decideBrowserNavigation(url) === "allow") openInNewBrowserTab(url);
-    return { action: "deny" };
+    if (decideBrowserPopup(url) === "deny" || !host.canOpen()) return { action: "deny" };
+    return {
+      action: "allow",
+      outlivesOpener: true,
+      overrideBrowserWindowOptions: { webPreferences: secureWebPreferences() },
+      createWindow: (options) => host.open(options, url),
+    };
   });
 }
 

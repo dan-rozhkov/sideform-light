@@ -1,3 +1,4 @@
+import type { WebContents } from "electron";
 import type { BrowserPageHandle, BrowserTabInfo } from "@sideform/browser-agent/controller";
 import { isSettingsPageOn, isValidSettingsSection, isValidTraceId, resolveSettingsTabUrl, resolveTraceTabUrl, traceIdOfUrl } from "./config";
 export type UITheme = "light" | "dark";
@@ -409,7 +410,7 @@ export class TabManager {
 
   constructor(
     private readonly opts: {
-      createView: (kind: TabKind, session?: string) => TabViewHandle;
+      createView: (kind: TabKind, session?: string, adopt?: WebContents) => TabViewHandle;
       /** Origin of the bundled ui (`app://sideform`, or the dev server): page tabs load from it. */
       uiOrigin: string;
       onStateChanged: (s: TabsSnapshot) => void;
@@ -425,13 +426,14 @@ export class TabManager {
    * That tab is shown without taking keyboard focus (`ActivationOptions`).
    * `opts.forAgent` (a browser tab the agent asked for, shared or session): with no active tab it
    * becomes active too, without keyboard focus or address-bar focus (`planNewTab`).
+   * `opts.adopt` (browser tabs only): an EXISTING WebContents (a popup Electron created for `window.open`) to host instead of a new one; the page is not loaded by us.
    * `opts.focus: false` makes a normally activated tab visible without taking keyboard focus (`traces:open`).
    */
-  newTab(kind: TabKind = "browser", session?: string, opts: { activate?: boolean; traceId?: string; section?: string; focus?: boolean; forAgent?: boolean } = {}): number {
+  newTab(kind: TabKind = "browser", session?: string, opts: { activate?: boolean; traceId?: string; section?: string; focus?: boolean; forAgent?: boolean; adopt?: WebContents } = {}): number {
     // A trace tab is always opened for one trace (`traces:open`): no id, no tab (and no view is created).
     if (kind === "trace" && !isValidTraceId(opts.traceId)) throw new Error("trace tab needs a valid trace id");
     const id = this.nextId++;
-    const view = this.opts.createView(kind, kind === "browser" ? session : undefined);
+    const view = this.opts.createView(kind, kind === "browser" ? session : undefined, kind === "browser" ? opts.adopt : undefined);
     const entry: TabEntry = {
       id,
       session: kind === "browser" ? session : undefined,
@@ -496,6 +498,29 @@ export class TabManager {
       this.setActive(id, { focus: plan.focus, quiet: plan.quiet });
     }
     return id;
+  }
+
+  /** TabManager id of the tab hosting the WebContents `webContentsId` (null when there is none). */
+  tabIdForWebContents(webContentsId: number): number | null {
+    return this.tabs.find((t) => t.view.getWebContentsId?.() === webContentsId)?.id ?? null;
+  }
+
+  /**
+   * A popup closed itself (`window.close()`), like Chrome: if it was the agent's tab the agent goes back to
+   * its opener, and if it was the tab the user was looking at the opener is shown again (not the left
+   * neighbour). Session tabs are never auto-activated. Plain `closeTab` for a gone popup or opener.
+   */
+  closePopupTab(id: number, openerId: number | null): void {
+    const popup = this.tabs.find((t) => t.id === id);
+    if (!popup) return;
+    const scope = popup.kind === "browser" ? popup.session : undefined;
+    const wasActive = this.activeId === id;
+    const wasPinned = this.pinnedAgentTab(scope) === id;
+    const opener = openerId === null ? undefined : this.tabs.find((t) => t.id === openerId && this.inScope(t, scope));
+    this.closeTab(id);
+    if (!opener) return;
+    if (wasPinned) this.pinAgentTab(scope, opener.id);
+    if (wasActive && scope === undefined) this.setActive(opener.id);
   }
 
   closeTab(id: number): void {
