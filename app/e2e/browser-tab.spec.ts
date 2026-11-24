@@ -4761,7 +4761,8 @@ test("browser snapshot/perform: a plain text field's floating role=button sugges
     // distance, so a warm-up on "Count" first makes the baseline a
     // zero-distance move and "Notes" a short hop. (Until browser-agent v0.2.7
     // sped the cursor up, a long baseline move hid most of the window and an
-    // older `< 250` bound passed by accident.)
+    // older `< 250` bound passed by accident.) Short text goes in key by key
+    // (about 17ms per character), so both texts have the same length.
     const snap3 = (await callBrowser(editorPage, "snapshot")) as SnapshotResult;
     const timeType = async (label: string, text: string) => {
       const target = snap3.elements.find((e) => e.label === label)!;
@@ -4777,7 +4778,7 @@ test("browser snapshot/perform: a plain text field's floating role=button sugges
     };
     await timeType("Count", "1");
     const baselineMs = await timeType("Count", "12345");
-    const plainMs = await timeType("Notes", "Some plain note");
+    const plainMs = await timeType("Notes", "plain");
     expect(plainMs - baselineMs).toBeLessThan(700);
   } finally {
     await app.close().catch(() => {});
