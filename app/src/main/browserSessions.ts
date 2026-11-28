@@ -27,6 +27,11 @@ export const DRAIN_TIMEOUT_MS = 30_000;
  * evicted id needs 10 000 newer closes first).
  */
 export const TOMBSTONE_LIMIT = 10_000;
+/**
+ * Quarantined slots replaced by a fresh partition per app run (`PartitionPool.retire`). Each
+ * quarantine leaves one in-memory partition behind for good; the cap bounds that memory.
+ */
+export const MAX_SLOT_REPLACEMENTS = 64;
 
 export const ERR_INVALID_SESSION_ID = "invalid session id";
 /** Longest wait of `acquire` for a session's `ready` step; late work must be harmless (cancelled at teardown). */
@@ -158,13 +163,21 @@ export class PartitionPool {
   private readonly free: string[];
   private readonly waiters: { resolve: (slot: string | null) => void; timer: unknown }[] = [];
   private readonly used = new Set<string>();
+  /** Slots handed out and not yet released or retired: a slot goes back at most once. */
+  private readonly leased = new Set<string>();
+  /** Next never-used partition number (replacements of retired slots). */
+  private nextIndex: number;
+  private replacements = 0;
 
   constructor(
     size: number = PARTITION_POOL_SIZE,
     private readonly waitMs: number = SLOT_WAIT_MS,
     private readonly timers: Timers = realTimers,
+    /** Most retired slots replaced per app run; past it a retired slot shrinks the pool (bounds abandoned in-memory partitions). */
+    private readonly maxReplacements: number = MAX_SLOT_REPLACEMENTS,
   ) {
     this.free = Array.from({ length: size }, (_, i) => `qa-${i}`);
+    this.nextIndex = size;
   }
 
   acquire(): Promise<string | null> {
@@ -174,7 +187,10 @@ export class PartitionPool {
   /** Like `acquire`, with a `cancel` that takes the waiter out of the queue (it then gets null). */
   ticket(): { promise: Promise<string | null>; cancel: () => void } {
     const slot = this.free.shift();
-    if (slot !== undefined) return { promise: Promise.resolve(slot), cancel: () => {} };
+    if (slot !== undefined) {
+      this.leased.add(slot);
+      return { promise: Promise.resolve(slot), cancel: () => {} };
+    }
     let cancel: () => void = () => {};
     const promise = new Promise<string | null>((resolve) => {
       const waiter = {
@@ -195,11 +211,32 @@ export class PartitionPool {
     return { promise, cancel };
   }
 
-  /** The slot's partition is clean: the next waiter (if any) gets it. */
+  /** The slot's partition is clean: the next waiter (if any) gets it. A slot not on lease is ignored (no double release). */
   release(slot: string): void {
+    if (!this.leased.delete(slot)) return;
+    this.handOut(slot);
+  }
+
+  /**
+   * The slot's partition can never be used again (quarantined: a wipe failed, a command may still
+   * touch it, or its permission policy failed). Its name is dropped for good and a NEVER-USED
+   * in-memory partition takes its place, so capacity is kept. A slot not on lease is ignored.
+   * Returns the replacement, or null past `maxReplacements` (the pool then shrinks by one).
+   */
+  retire(slot: string): string | null {
+    if (!this.leased.delete(slot)) return null;
+    if (this.replacements >= this.maxReplacements) return null;
+    this.replacements++;
+    const fresh = `qa-${this.nextIndex++}`;
+    this.handOut(fresh);
+    return fresh;
+  }
+
+  private handOut(slot: string): void {
     const waiter = this.waiters.shift();
     if (waiter) {
       this.timers.clear(waiter.timer);
+      this.leased.add(slot);
       waiter.resolve(slot);
     } else {
       this.free.push(slot);
@@ -365,7 +402,8 @@ export class BrowserSessions<C> {
         } catch (err) {
           this.onError("create session", err);
           // An unusable slot (no permission policy) is never handed out again.
-          if (err instanceof SlotUnusableError) this.onError("quarantined partition", slot);
+          // A fresh partition takes its place, so the pool keeps its capacity.
+          if (err instanceof SlotUnusableError) this.retireSlot(slot, "permission policy failed");
           else this.pool.release(slot);
           return ERR_SESSION_CREATE_FAILED;
         }
@@ -475,10 +513,16 @@ export class BrowserSessions<C> {
     return s.closePromise;
   }
 
-  /** Drops the session from the registry; its slot is NOT returned to the pool. */
+  /** Drops the session from the registry; its slot is NEVER returned to the pool (a fresh partition replaces it). */
   private quarantine(s: BrowserSession<C>, why: string): void {
     if (this.sessions.get(s.id) === s) this.sessions.delete(s.id);
-    this.onError("quarantined partition", `${s.partition}: ${why}`);
+    this.retireSlot(s.partition, why);
+  }
+
+  private retireSlot(slot: string, why: string): void {
+    this.onError("quarantined partition", `${slot}: ${why}`);
+    const fresh = this.pool.retire(slot);
+    if (fresh === null) this.onError("pool shrinks: no replacement for quarantined partition", slot);
   }
 
   /** The session is torn down and its partition wiped: free the slot. */

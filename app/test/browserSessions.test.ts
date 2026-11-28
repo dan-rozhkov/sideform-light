@@ -496,7 +496,7 @@ describe("BrowserSessions", () => {
       expect(await pool.acquire()).toBe("qa-0");
     });
 
-    it("still stuck after the second wait: the slot is quarantined and the session dropped", async () => {
+    it("still stuck after the second wait: the slot is quarantined (never reused, a fresh partition replaces it) and the session dropped", async () => {
       const onError = vi.fn();
       const pool = new PartitionPool(1, 1_000_000);
       const reg = new BrowserSessions<{ p: string }>(pool, undefined, onError);
@@ -509,14 +509,12 @@ describe("BrowserSessions", () => {
       expect(teardown).not.toHaveBeenCalled();
       expect(reg.size).toBe(0);
       expect(reg.peek("a")).toBeUndefined();
-      let got: string | null | undefined;
-      void pool.acquire().then((x) => (got = x));
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(got).toBeUndefined(); // still waiting: the slot never came back
+      // A stuck command may still touch qa-0: it never comes back; a never-used partition does.
+      expect(await pool.acquire()).toBe("qa-1");
       expect(onError).toHaveBeenCalledWith("quarantined partition", "qa-0: commands still in flight");
     });
 
-    it("a failed wipe quarantines the slot but frees the session", async () => {
+    it("a failed wipe quarantines the slot (a fresh partition replaces it) but frees the session", async () => {
       const onError = vi.fn();
       const pool = new PartitionPool(1, 100);
       const reg = new BrowserSessions<{ p: string }>(pool, undefined, onError);
@@ -524,13 +522,11 @@ describe("BrowserSessions", () => {
       if (a.ok) a.exit();
       await reg.close("a", 1, hooks(async () => false));
       expect(reg.size).toBe(0);
-      const next = pool.acquire();
-      await vi.advanceTimersByTimeAsync(100);
-      expect(await next).toBeNull();
+      expect(await pool.acquire()).toBe("qa-1");
       expect(onError).toHaveBeenCalledWith("quarantined partition", "qa-0: wipe failed");
     });
 
-    it("a throwing teardown also quarantines", async () => {
+    it("a throwing teardown also quarantines (qa-0 never comes back)", async () => {
       const pool = new PartitionPool(1, 100);
       const reg = new BrowserSessions<{ p: string }>(pool);
       const a = await reg.acquire("a", 1, true, create);
@@ -542,9 +538,71 @@ describe("BrowserSessions", () => {
           throw new Error("x");
         }),
       );
+      expect(await pool.acquire()).toBe("qa-1");
+    });
+
+    it("past the replacement cap a quarantined slot is not replaced: the pool shrinks instead of reusing it", async () => {
+      const onError = vi.fn();
+      const pool = new PartitionPool(1, 100, undefined, 0);
+      const reg = new BrowserSessions<{ p: string }>(pool, undefined, onError);
+      const a = await reg.acquire("a", 1, true, create);
+      if (a.ok) a.exit();
+      await reg.close("a", 1, hooks(async () => false));
       const next = pool.acquire();
       await vi.advanceTimersByTimeAsync(100);
       expect(await next).toBeNull();
+      expect(onError).toHaveBeenCalledWith("pool shrinks: no replacement for quarantined partition", "qa-0");
+    });
+  });
+
+  describe("capacity after quarantines (Nov 28: 6 x 'cookies left after the wipe' emptied the pool)", () => {
+    const hooks = (teardown: () => Promise<boolean>) => ({ abort: () => {}, teardown });
+
+    it("every slot failing its wipe in turn never shrinks the pool, never reuses a quarantined partition, leaves healthy sessions alone", async () => {
+      const onError = vi.fn();
+      const pool = new PartitionPool(PARTITION_POOL_SIZE, 1000);
+      const reg = new BrowserSessions<{ p: string }>(pool, undefined, onError);
+      // A healthy run holds one slot the whole time.
+      const healthy = await reg.acquire("healthy", 1, true, create);
+      if (!healthy.ok) throw new Error("setup");
+      const quarantined = new Set<string>();
+      // Twelve runs in a row, each one's wipe fails (two full turns of the pool).
+      for (let i = 0; i < PARTITION_POOL_SIZE * 2; i++) {
+        const run = await reg.acquire(`run${i}`, 1, true, create);
+        expect(run, `run ${i}`).toMatchObject({ ok: true });
+        if (!run.ok) return;
+        expect(quarantined.has(run.session.partition), `run ${i} got quarantined ${run.session.partition}`).toBe(false);
+        run.exit();
+        await reg.close(`run${i}`, 1, hooks(async () => false));
+        quarantined.add(run.session.partition);
+      }
+      expect(onError).toHaveBeenCalledWith("quarantined partition", expect.stringContaining("wipe failed"));
+      // Full capacity is still there: PARTITION_POOL_SIZE - 1 more sessions at once next to the healthy one.
+      const more = await Promise.all(Array.from({ length: PARTITION_POOL_SIZE - 1 }, (_, i) => reg.acquire(`m${i}`, 1, true, create)));
+      for (const m of more) {
+        expect(m).toMatchObject({ ok: true });
+        if (m.ok) expect(quarantined.has(m.session.partition)).toBe(false);
+      }
+      // The cap still holds: one more waits, then gets ERR_TOO_MANY_SESSIONS.
+      const over = reg.acquire("over", 1, true, create);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await over).toEqual({ ok: false, error: ERR_TOO_MANY_SESSIONS });
+      // The healthy session was never touched.
+      expect(reg.stateOf("healthy", 1)).toBe("live");
+      expect(reg.peek("healthy")?.partition).toBe(healthy.session.partition);
+    });
+
+    it("a slot is returned at most once: a second release or a retire after a release is ignored", async () => {
+      const pool = new PartitionPool(1, 100);
+      const slot = (await pool.acquire())!;
+      pool.release(slot);
+      pool.release(slot); // a double release must not create a second lease of qa-0
+      pool.retire(slot);
+      const a = await pool.acquire();
+      const b = pool.acquire();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(a).toBe("qa-0");
+      expect(await b).toBeNull();
     });
   });
 
@@ -567,7 +625,7 @@ describe("BrowserSessions", () => {
   });
 
   describe("unusable slot", () => {
-    it("a create that throws SlotUnusableError keeps the slot out of the pool", async () => {
+    it("a create that throws SlotUnusableError keeps the slot out of the pool; a fresh partition replaces it", async () => {
       const onError = vi.fn();
       const pool = new PartitionPool(1, 100);
       const reg = new BrowserSessions<null>(pool, undefined, onError);
@@ -575,9 +633,8 @@ describe("BrowserSessions", () => {
         throw new SlotUnusableError("no deny-all");
       });
       expect(r).toEqual({ ok: false, error: ERR_SESSION_CREATE_FAILED });
-      const next = pool.acquire();
-      await vi.advanceTimersByTimeAsync(100);
-      expect(await next).toBeNull();
+      expect(await pool.acquire()).toBe("qa-1");
+      expect(onError).toHaveBeenCalledWith("quarantined partition", "qa-0: permission policy failed");
     });
   });
 

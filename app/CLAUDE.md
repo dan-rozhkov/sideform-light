@@ -1131,6 +1131,12 @@ without sharing cookies, tabs, fixtures or mocks. The shared browser
   the second wait, a failed wipe step, a leftover cookie or a failed destroy
   **quarantine the slot** for the rest of the app run (logged); the session itself is
   dropped from the registry (controller and router freed) and does not count in `size`.
+  A quarantined partition name is never handed out again, but the pool keeps its capacity:
+  `PartitionPool.retire` puts a NEVER-USED in-memory partition (`qa-6`, `qa-7`, …) in its
+  place (at most `MAX_SLOT_REPLACEMENTS` = 64 per app run, then the pool shrinks, logged).
+  Without this, six "cookies left after the wipe" quarantines over two days emptied the pool
+  (2026-11-28: every new run waited 60 s, then `ERR_TOO_MANY_SESSIONS`). The pool tracks leased
+  slots, so a slot is released or retired at most once.
   A slot whose deny-all permission policy threw (`SlotUnusableError`) is quarantined
   too: the policy is marked only after it worked. Once closing, a command or popup can
   no longer open a tab for the session (`requireLiveSession`). Orphans (owner
